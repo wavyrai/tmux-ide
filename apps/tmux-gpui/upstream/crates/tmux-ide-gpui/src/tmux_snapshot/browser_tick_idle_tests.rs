@@ -185,3 +185,80 @@ fn queued_work_outlasts_the_grace_period(cx: &mut TestAppContext) {
         .any(|command| matches!(command, browser::Command::Presence { active: false, .. }));
     assert!(flushed, "the queued presence change was never sent");
 }
+
+/// Each kind of queued work keeps the tick armed after the grace period,
+/// while nothing else would wake the task to flush it.
+#[gpui::test]
+fn each_kind_of_queued_work_arms_the_tick_past_the_grace(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let wanted = |cx: &mut VisualTestContext| {
+        let now = cx.executor().now();
+        cx.update(|_, cx| snapshot.read(cx).tick_wanted(now))
+    };
+    assert!(!wanted(cx), "nothing queued");
+    type Queue = fn(&mut SnapshotView, std::time::Instant);
+    let cases: [(&str, Queue); 7] = [
+        ("held input", |view, _| {
+            view.pending_input = Some(super::super::pending_input::Pending::held_for_test(7));
+        }),
+        ("a resize gesture", |view, _| {
+            view.resize_gesture = super::super::divider::tests::busy_owner();
+        }),
+        ("a settling fit", |view, now| {
+            let fit = |cols| super::super::geometry::Fit {
+                request: 7,
+                cols,
+                rows: 24,
+                pixels: (0, 0, 0, 0),
+            };
+            assert!(
+                !view
+                    .fit_settle
+                    .ready(fit(80), Some((7, 100, 24)), false, now)
+            );
+        }),
+        ("an attention close", |view, _| {
+            view.attention.queue_cancel(7, 1)
+        }),
+        ("a debounced palette query", |view, now| {
+            view.palette
+                .debounce_for_test(now + Duration::from_millis(120));
+        }),
+        ("a palette close", |view, _| view.palette.close_for_test()),
+        ("an image to repaint", |view, _| {
+            view.graphics.store.invalidate_native(&["gone".into()]);
+        }),
+    ];
+    for (name, queue) in cases {
+        let now = cx.executor().now();
+        cx.update(|_, cx| snapshot.update(cx, |view, _| queue(view, now)));
+        assert!(wanted(cx), "{name} did not arm the tick");
+        // Flushed or expired by later ticks, the window goes idle again.
+        cx.update(|_, cx| {
+            snapshot.update(cx, |view, _| {
+                view.pending_input = None;
+                view.resize_gesture = Default::default();
+                view.fit_settle.clear();
+                view.attention = Default::default();
+                view.palette = Default::default();
+                let _ = view.graphics.store.take_changed();
+            })
+        });
+        assert!(!wanted(cx), "{name}: still armed once flushed");
+    }
+}
+
+#[gpui::test]
+fn a_mouse_press_restarts_the_tick(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    cx.simulate_mouse_down(
+        point(px(40.), px(40.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    assert_ticking(&snapshot, cx, "a mouse press");
+}

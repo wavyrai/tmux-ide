@@ -45,9 +45,12 @@ pub(super) async fn run_browser(
         // Idle before deciding, so a nudge during the decision still wakes us.
         mailbox.set_idle(true);
         let now = cx.background_executor().now();
-        let tick = entity
-            .update(cx, |view, _| view.tick_wanted(now))
-            .unwrap_or(false);
+        // An off-thread nudge that landed after the last wake and before
+        // `set_idle` found the task busy and only left its activity flag.
+        let tick = mailbox.has_activity()
+            || entity
+                .update(cx, |view, _| view.tick_wanted(now))
+                .unwrap_or(false);
         if tick {
             mailbox.set_idle(false);
             let tick = cx.background_executor().timer(Duration::from_millis(16));

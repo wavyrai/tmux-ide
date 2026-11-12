@@ -359,6 +359,9 @@ fn show_owned(
                         if let Some(sender) = &view.browser_commands {
                             view.presence.flush(sender);
                         }
+                        // A minimized window may not draw; a full queue still
+                        // needs the tick to send the background transition.
+                        view.idle_tick.nudge();
                         cx.notify();
                     });
                     let appearance = cx.observe_window_appearance(window, |view, _, cx| {

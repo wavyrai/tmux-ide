@@ -74,6 +74,10 @@ impl MailboxSlot {
     pub(in crate::tmux_snapshot) fn set_idle(&self, idle: bool) {
         self.idle.store(idle, Ordering::Release);
     }
+    /// A nudge or publication the task has not taken yet.
+    pub(in crate::tmux_snapshot) fn has_activity(&self) -> bool {
+        self.activity.load(Ordering::Acquire)
+    }
     /// True once after a nudge or publication.
     pub(in crate::tmux_snapshot) fn take_activity(&self) -> bool {
         self.activity.swap(false, Ordering::AcqRel)

@@ -58,7 +58,7 @@ impl Owner {
     pub(in crate::tmux_snapshot) fn closing(&self) -> bool {
         self.pending_close.is_some()
     }
-    pub(super) fn queue_cancel(&mut self, request: u64, scope: u64) {
+    pub(in crate::tmux_snapshot) fn queue_cancel(&mut self, request: u64, scope: u64) {
         self.pending_close = Some((request, scope, 0));
     }
 }
