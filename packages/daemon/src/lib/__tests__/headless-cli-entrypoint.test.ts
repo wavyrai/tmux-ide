@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -459,6 +460,17 @@ describe.sequential("shipped tmux-ide --headless entrypoint", () => {
     const result = await waitForExit(owner);
     expect(result).toMatchObject({ code: 0, signal: null });
     await waitUntil(() => (existsSync(daemonInfoPath()) ? null : true));
+    // #839: a normal stop drains inside the signal deadline, so the forced
+    // exit never speaks, and nothing of the owner is left behind: no record,
+    // no startup claim, no listening socket.
+    expect(result.stdout + result.stderr).not.toContain("stop missed the signal deadline");
+    // `--headless --json` keeps its promise of one status line on stdout: a
+    // routine start and stop add no log line to it.
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({ status: "ready", pid: owner.pid });
+    expect(
+      readdirSync(env.TMUX_IDE_DAEMON_INFO_DIR!).filter((name) => /daemon|claim/u.test(name)),
+    ).toEqual([]);
+    await expect(fetch(`http://127.0.0.1:${info.port}/health`)).rejects.toThrow();
   }, 15_000);
 });
 

@@ -18,6 +18,11 @@ import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs"
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import {
+  assessSignalledDaemonStop,
+  collectDaemonStopDiagnostics,
+  daemonReportNodeOptions,
+} from "./lib/daemon-stop-diagnostics.mjs";
+import {
   captureGeneratedCliSource,
   restoreGeneratedCliSource,
 } from "./lib/generated-cli-source.mjs";
@@ -127,6 +132,7 @@ const privateEnvironment = privatePackedInstallEnvironment(capturedEnvironment, 
   cache: join(tmpRoot, "npm-cache"),
 });
 const mockReleaseDir = join(tmpRoot, "mock-release");
+const daemonReportDir = /\s/u.test(tmpRoot) ? null : join(tmpRoot, "daemon-reports");
 const runtimeName = `tmux-ide-tui-${platformTag}`;
 const mockReleaseBinaryPath = join(mockReleaseDir, runtimeName);
 const mockReleaseAssetPath = join(mockReleaseDir, `${runtimeName}.gz`);
@@ -143,6 +149,7 @@ mkdirSync(projectDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 mkdirSync(launchDir, { recursive: true });
 mkdirSync(mockReleaseDir, { recursive: true });
+if (daemonReportDir) mkdirSync(daemonReportDir, { recursive: true });
 chmodSync(tmuxTmpDir, 0o700);
 writeFileSync(
   mockFetchPreloadPath,
@@ -347,6 +354,7 @@ function sha256File(path) {
 
 function spawnInstalledCli(installedCli) {
   cancellation.check();
+  const daemonEnvironment = tmuxEnv(dirname(installedCli));
   const child = spawn(installedCli, ["--headless", "--json"], {
     cwd: projectDir,
     // The elected daemon and the later installed TUI must observe the same
@@ -354,8 +362,19 @@ function spawnInstalledCli(installedCli) {
     // workspace catalog is reading the developer's default tmux socket.
     env: {
       ...privateEnvironment,
-      ...tmuxEnv(dirname(installedCli)),
+      ...daemonEnvironment,
       npm_config_cache: join(tmpRoot, "npm-cache"),
+      // Costs nothing until a daemon ignores SIGTERM; then waitForChild asks
+      // it for a diagnostic report instead of failing with no evidence (#839).
+      // Appended, so the mock-release preload in NODE_OPTIONS stays in force.
+      ...(daemonReportDir
+        ? {
+            NODE_OPTIONS: daemonReportNodeOptions(
+              daemonReportDir,
+              daemonEnvironment.NODE_OPTIONS ?? "",
+            ),
+          }
+        : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -380,25 +399,78 @@ function spawnInstalledCli(installedCli) {
   return child;
 }
 
+/**
+ * A daemon this gate stopped with SIGTERM must drain and exit 0. Since the
+ * daemon bounds its own stop, a hung teardown also "closes" in time (forced
+ * exit 1 after the deadline), so closing alone proves nothing (#839).
+ */
+async function waitForSignalledDaemon(child, phase) {
+  // Longer than the daemon's own 25 s total stop bound, so a hung teardown is
+  // reported by the daemon (stuck stage and open steps) rather than cut off here.
+  const result = await waitForChild(child, phase, 30_000);
+  const failure = assessSignalledDaemonStop(result);
+  if (!failure) return result;
+  if (evidenceDir) {
+    try {
+      mkdirSync(evidenceDir, { recursive: true });
+      writeFileSync(
+        join(evidenceDir, `daemon-stop-failed-${String(child.pid)}.json`),
+        `${JSON.stringify({ phase, pid: child.pid, ...failure, ...result }, null, 2)}\n`,
+      );
+    } catch {
+      // The error below still carries the bounded copy.
+    }
+  }
+  throw new Error(
+    `Installed daemon did not stop cleanly during ${phase}: ${failure.reason}: ${JSON.stringify({
+      pid: child.pid,
+      code: result.code,
+      signal: result.signal,
+      deadline: failure.deadlineLine,
+      stdout: result.stdout.slice(-4096),
+      stderr: result.stderr.slice(-4096),
+    })}`,
+  );
+}
+
 async function waitForChild(child, phase, timeoutMs = 20_000) {
   try {
     const exit = await cancellation.waitFor(childExits.get(child), timeoutMs);
     return { ...exit, ...childOutput.get(child) };
   } catch (cause) {
     const output = childOutput.get(child);
-    throw new Error(
-      `Installed daemon did not close during ${phase}: ${JSON.stringify({
-        pid: child.pid,
-        exitCode: child.exitCode,
-        signalCode: child.signalCode,
-        signalSent: child.killed,
-        stdoutClosed: child.stdout?.closed,
-        stderrClosed: child.stderr?.closed,
-        stdout: output?.stdout.slice(-4096),
-        stderr: output?.stderr.slice(-4096),
-      })}`,
-      { cause },
-    );
+    // The process is still there: record what it is doing before the gate's
+    // cleanup kills it. Process tree, thread states and a Node report tell a
+    // hung teardown from a blocked event loop.
+    const diagnostics =
+      child.pid !== undefined && child.exitCode === null && child.signalCode === null
+        ? await collectDaemonStopDiagnostics({ pid: child.pid, reportDirectory: daemonReportDir })
+        : null;
+    const failure = {
+      pid: child.pid,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+      signalSent: child.killed,
+      stdoutClosed: child.stdout?.closed,
+      stderrClosed: child.stderr?.closed,
+      stdout: output?.stdout.slice(-4096),
+      stderr: output?.stderr.slice(-4096),
+      diagnostics,
+    };
+    if (evidenceDir) {
+      try {
+        mkdirSync(evidenceDir, { recursive: true });
+        writeFileSync(
+          join(evidenceDir, `daemon-stop-timeout-${String(child.pid)}.json`),
+          `${JSON.stringify({ phase, ...failure, stdout: output?.stdout, stderr: output?.stderr }, null, 2)}\n`,
+        );
+      } catch {
+        // The error below still carries the bounded copy.
+      }
+    }
+    throw new Error(`Installed daemon did not close during ${phase}: ${JSON.stringify(failure)}`, {
+      cause,
+    });
   }
 }
 
@@ -814,6 +886,54 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       return [];
     }
   };
+  // Card #764: what tmux, the daemon and a second click say after the
+  // recreated agent's click did not navigate. Diagnostics only: the journey
+  // still fails, so a repaired retry never hides the bug.
+  const recreatedAgentClickReport = async (before, after, nativePane, semanticPane) => {
+    const panes = tmuxResult([
+      "list-panes",
+      "-s",
+      "-t",
+      "=journey-beta",
+      "-F",
+      "#{pane_id} window=#{window_id} window_active=#{window_active} pane_active=#{pane_active} semantic=#{@tmux_ide_pane_id} command=#{pane_current_command}",
+    ]).stdout.trim();
+    const shell = await daemonApplicationShell("journey-beta");
+    const resource = shell?.resource;
+    const daemonView = JSON.stringify({
+      selectedPane:
+        resource?.workspace?.selectedPaneId ?? resource?.workspace?.activePaneId ?? null,
+      agents: (resource?.workspace?.sidebar?.agents ?? []).map(({ id, paneId, status }) => ({
+        id,
+        paneId,
+        status,
+      })),
+      inventory: (resource?.terminalInventory?.resources ?? []).map(
+        ({ id, kind }) => `${kind}:${id}`,
+      ),
+    });
+    clickText(one, agentClickLabel);
+    await cancellation.pause(3_000);
+    const retried = activePane("journey-beta") === nativePane;
+    if (evidenceDir) {
+      mkdirSync(evidenceDir, { recursive: true });
+      const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
+      if (existsSync(trace))
+        writeFileSync(
+          join(evidenceDir, "recreated-agent-daemon.performance.jsonl"),
+          readFileSync(trace),
+        );
+      writeFileSync(join(evidenceDir, "recreated-agent-frame-before-click.txt"), before);
+      writeFileSync(join(evidenceDir, "recreated-agent-frame-after-click.txt"), after);
+    }
+    return [
+      `recreated agent: native ${nativePane} semantic ${semanticPane}`,
+      `tmux panes:\n${panes}`,
+      `daemon: ${daemonView}`,
+      `frame 300 ms after the click:\n${after}`,
+      `a second click navigated: ${retried}`,
+    ].join("\n");
+  };
   const daemonApplicationShell = async (sessionName) => {
     const infoPath = join(homeDir, ".tmux-ide", "daemon.json");
     if (!existsSync(infoPath)) return null;
@@ -1011,7 +1131,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // waiting for app readiness before that restart would never reach the chooser.
   await createSession("_tmux-ide-pack-empty-seed");
   initialOwner.kill("SIGTERM");
-  await waitForChild(initialOwner, "empty chooser server rebind");
+  await waitForSignalledDaemon(initialOwner, "empty chooser server rebind");
   const emptyCatalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds empty chooser tmux server",
@@ -1047,7 +1167,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
   emptyCatalogOwner.kill("SIGTERM");
-  await waitForChild(emptyCatalogOwner, "populated catalog server rebind");
+  await waitForSignalledDaemon(emptyCatalogOwner, "populated catalog server rebind");
   const catalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds recreated tmux server",
@@ -1212,21 +1332,81 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     "=journey-beta:20",
   ]);
   if (linked.status !== 0) throw new Error(`Cannot link fixture window: ${linked.stderr}`);
+  // Wall-clock time of the trigger, to line up with the renderer's
+  // performance rows ("at") in the diagnostics when the wait times out.
+  const linkedAt = new Date().toISOString();
   const linkedDiagnostics = () => {
     const frame = capture(many.targetPane);
     if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
-    return many.diagnostics();
+    return `window linked at ${linkedAt}\n${many.diagnostics()}`;
   };
-  await observe(
-    "linked window actionable refusal",
-    15000,
-    () => {
-      const frame = capture(many.targetPane);
-      if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
-      return /unlink/i.test(frame);
-    },
-    linkedDiagnostics,
-  );
+  try {
+    await observe(
+      "linked window actionable refusal",
+      15000,
+      () => {
+        const frame = capture(many.targetPane);
+        if (evidenceDir) writeFileSync(join(evidenceDir, "linked-refusal-frame.txt"), frame);
+        return /unlink/i.test(frame);
+      },
+      linkedDiagnostics,
+    );
+  } catch (error) {
+    // Card #764: does anything push the shared window, or does only the
+    // next operation find it? Diagnostics only; the journey still fails.
+    const windows = tmuxResult([
+      "list-windows",
+      "-a",
+      "-F",
+      "#{session_name} #{window_id} linked=#{window_linked} sessions=#{window_linked_sessions} active=#{window_active}",
+    ]).stdout.trim();
+    const shells = {};
+    for (const name of ["journey-alpha", "journey-beta"]) {
+      const shell = await daemonApplicationShell(name);
+      shells[name] = shell
+        ? Object.keys(shell.resource ?? {}).length
+          ? {
+              runtime:
+                shell.resource?.terminalRuntime?.status ?? shell.resource?.runtime?.status ?? null,
+              keys: Object.keys(shell.resource).sort(),
+            }
+          : null
+        : null;
+    }
+    const before = capture(many.targetPane);
+    const poke = tmuxResult([
+      "send-keys",
+      "-l",
+      "-t",
+      many.targetPane,
+      `\u001b[200~printf 'PACK_LINK_POKE_%s\\n' '${process.pid}'\n\u001b[201~`,
+    ]);
+    await cancellation.pause(2_000);
+    const after = capture(many.targetPane);
+    const pokeLanded = ["journey-alpha", "journey-beta"].some((name) =>
+      capture(`=${name}:0.0`).includes(`PACK_LINK_POKE_${process.pid}`),
+    );
+    if (evidenceDir) {
+      const trace = join(tmpRoot, "installed-daemon.performance.jsonl");
+      if (existsSync(trace))
+        writeFileSync(
+          join(evidenceDir, "linked-refusal-daemon.performance.jsonl"),
+          readFileSync(trace),
+        );
+      writeFileSync(join(evidenceDir, "linked-refusal-frame-after-poke.txt"), after);
+    }
+    throw new Error(
+      [
+        error instanceof Error ? error.message : String(error),
+        `tmux windows:\n${windows}`,
+        `daemon shells: ${JSON.stringify(shells)}`,
+        `refusal before the poke: ${/unlink/i.test(before)}`,
+        `poke sent: ${poke.status === 0}; refusal 2 s after the poke: ${/unlink/i.test(after)}; poke reached a terminal: ${pokeLanded}`,
+        `frame after the poke:\n${after}`,
+      ].join("\n"),
+      { cause: error },
+    );
+  }
   const blockedMarker = `PACK_LINK_BLOCKED_${process.pid}`;
   // Paste is a terminal input event. Raw keystrokes on a recovery screen
   // intentionally navigate UI controls instead of testing terminal delivery.
@@ -1568,13 +1748,30 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
       `Recreated agent semantic identity was not fresh: ${recreatedSemanticAgentPane}`,
     );
   }
+  const agentClickedAt = new Date().toISOString();
+  const clickFrame = capture(one.targetPane);
   clickText(one, agentClickLabel);
-  await observe(
-    "recreated sidebar agent exact-pane navigation",
-    10_000,
-    () => activePane("journey-beta") === recreatedAgentPane,
-    one.diagnostics,
-  );
+  // Card #764: what the app showed around the click, for a timeout's report.
+  await cancellation.pause(300);
+  const frameAfterClick = capture(one.targetPane);
+  try {
+    await observe(
+      "recreated sidebar agent exact-pane navigation",
+      10_000,
+      () => activePane("journey-beta") === recreatedAgentPane,
+      () => `clicked ${agentClickLabel} at ${agentClickedAt}\n${one.diagnostics()}`,
+    );
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${await recreatedAgentClickReport(
+        clickFrame,
+        frameAfterClick,
+        recreatedAgentPane,
+        recreatedSemanticAgentPane,
+      )}`,
+      { cause: error },
+    );
+  }
   let topologyInputWindow = null;
   if (topologyInputReproEnabled) {
     const topologyStatus = () =>
@@ -1688,6 +1885,15 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     one.diagnostics,
   );
 
+  // #764: tmux's active pane moves before the TUI has switched its input to
+  // that terminal; keys typed in between are dropped on purpose ("queued
+  // input was not sent"). Type only once the TUI shows terminal focus again.
+  await observe(
+    "terminal input ready after return from agent window",
+    10_000,
+    () => frameShowsTerminalFocus(capture(one.targetPane)),
+    one.diagnostics,
+  );
   const keyboardMarker = `PACK_KEYBOARD_${process.pid}`;
   typeCommand(one, `printf '${keyboardMarker}\\n'`);
   await observe(
@@ -2011,7 +2217,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"),
   ).instanceId;
   catalogOwner.kill("SIGTERM");
-  await waitForChild(catalogOwner, "live client daemon replacement");
+  await waitForSignalledDaemon(catalogOwner, "live client daemon replacement");
   const replacement = spawnInstalledCli(installedCli);
   let replacementInstanceId = null;
   await observe(

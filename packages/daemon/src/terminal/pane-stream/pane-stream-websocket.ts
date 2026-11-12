@@ -31,6 +31,7 @@ import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
 import { logger } from "../../lib/log.ts";
+import type { TmuxServerOwnerRetirement } from "../../lib/tmux-server-owners.ts";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
@@ -132,6 +133,44 @@ import {
 export { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL };
 export const PANE_STREAM_MAX_REDEMPTION_BYTES = 4 * 1024;
 export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
+
+export interface PaneStreamShutdownClose {
+  readonly code: number;
+  readonly reason: "daemon-shutdown" | "tmux-server-retired" | "daemon-restarting";
+}
+/** The daemon process (or its whole generation) is going away. */
+export const PANE_STREAM_DAEMON_SHUTDOWN_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1001,
+  reason: "daemon-shutdown",
+});
+/**
+ * Only this tmux server owner was retired; the daemon is still up. 1012
+ * (service restart) asks the client to list the servers again and reconnect
+ * now, without the backoff a vanished daemon deserves (#840).
+ */
+export const PANE_STREAM_OWNER_RETIRED_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1012,
+  reason: "tmux-server-retired",
+});
+/**
+ * The process restarts its daemon generation in place (tmux server replaced,
+ * settings restart). A new generation follows at once, possibly on another
+ * port: read daemon.json again and reconnect now.
+ */
+export const PANE_STREAM_DAEMON_RESTARTING_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1012,
+  reason: "daemon-restarting",
+});
+/** What an owner's streams are told when it is disposed for this reason. */
+export function paneStreamCloseForRetirement(
+  retirement: TmuxServerOwnerRetirement | undefined,
+): PaneStreamShutdownClose {
+  if (retirement === undefined || retirement === "shutdown")
+    return PANE_STREAM_DAEMON_SHUTDOWN_CLOSE;
+  return retirement === "generation-restart"
+    ? PANE_STREAM_DAEMON_RESTARTING_CLOSE
+    : PANE_STREAM_OWNER_RETIRED_CLOSE;
+}
 export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 
 const WS_OPEN = 1;
@@ -731,17 +770,33 @@ export class PaneStreamAdmissionCoordinator {
     return this.#ledger.snapshot();
   }
 
-  shutdown(): Promise<void> {
+  /**
+   * Close every stream and refuse new ones. The first caller decides what the
+   * clients are told: the daemon going away, or only this tmux server owner
+   * being retired while the daemon stays up (reconnect now).
+   */
+  shutdown(close: PaneStreamShutdownClose = PANE_STREAM_DAEMON_SHUTDOWN_CLOSE): Promise<void> {
     if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shuttingDown = true;
-    this.#shutdownPromise = this.#finishShutdown();
+    // An idle daemon stopping is routine and stays out of the default log:
+    // `--headless --json` promises one status line on stdout. Streams that
+    // are actually closed, or an owner retired under a live daemon, are not.
+    const routine =
+      close.reason === "daemon-shutdown" && this.#live.size === 0 && this.#preAuth.size === 0;
+    logger[routine ? "debug" : "info"]("pane-stream", "coordinator shutdown", {
+      code: close.code,
+      reason: close.reason,
+      liveStreams: this.#live.size,
+      unredeemed: this.#preAuth.size,
+    });
+    this.#shutdownPromise = this.#finishShutdown(close);
     return this.#shutdownPromise;
   }
 
-  async #finishShutdown(): Promise<void> {
-    for (const admission of [...this.#preAuth]) admission.close(1001, "daemon-shutdown");
+  async #finishShutdown(close: PaneStreamShutdownClose): Promise<void> {
+    for (const admission of [...this.#preAuth]) admission.close(close.code, close.reason);
     await this.#exclusive(async () => {
-      for (const connection of [...this.#live]) connection.close(1001, "daemon-shutdown");
+      for (const connection of [...this.#live]) connection.close(close.code, close.reason);
       for (const pending of [...this.#pending.values()]) await this.#retirePending(pending);
     });
     await Promise.all([...this.#retiringReleases]);
@@ -1241,6 +1296,8 @@ export class PaneStreamLiveConnection {
         "panes-closed",
         "peer-closed",
         "daemon-shutdown",
+        "tmux-server-retired",
+        "daemon-restarting",
         "redemption-rejected",
         "unknown",
       ]).has(closeReason ?? "")
@@ -1258,6 +1315,8 @@ export class PaneStreamLiveConnection {
       | "panes-closed"
       | "peer-closed"
       | "daemon-shutdown"
+      | "tmux-server-retired"
+      | "daemon-restarting"
       | "redemption-rejected"
       | "unknown";
     this.#observability.recordSpan(
