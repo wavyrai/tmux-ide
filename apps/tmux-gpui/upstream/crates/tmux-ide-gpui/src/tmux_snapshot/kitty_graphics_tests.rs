@@ -554,7 +554,10 @@ fn an_inflated_image_wakes_the_idle_ui_task() -> anyhow::Result<()> {
     ))?;
     store.settle();
     assert!(wakes.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-    assert!(store.changed_or_inflating(), "the repaint is still owed to the tick");
+    assert!(
+        store.changed_or_inflating(),
+        "the repaint is still owed to the tick"
+    );
     assert!(store.take_changed());
     Ok(())
 }

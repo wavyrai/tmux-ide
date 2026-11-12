@@ -296,7 +296,11 @@ fn a_mouse_press_wakes_the_task(cx: &mut TestAppContext) {
     let (snapshot, _mailbox, cx) = open(cx, sender);
     settle(&snapshot, cx);
     assert_woken(&snapshot, cx, "a mouse press", |cx| {
-        cx.simulate_mouse_down(point(px(40.), px(40.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_down(
+            point(px(40.), px(40.)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
     });
 }
 
