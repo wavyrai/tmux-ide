@@ -15,6 +15,9 @@
 //                             it for runs in parallel: each run without it
 //                             rebuilds bin/cli.js, and two builds collide
 //   SOAK_MODE=late-daemon     only: start the app before the daemon
+//   SOAK_MODE=requests        only: count the app's daemon requests for Home,
+//                             open a session, an idle minute in it
+//                             (SOAK_IDLE_SECONDS=60), create a session
 //   SOAK_CPU=1                also allow the cpu-starve fault (off by default:
 //                             it loads every core of the machine for 8 s)
 //   SOAK_REPORT=/abs/file.json  the full report; SOAK_TRANSCRIPT, SOAK_DAEMON_LOG
@@ -24,7 +27,9 @@
 // the scratch socket for the daemon. Every tmux the daemon runs goes through a
 // wrapper that sets the private TMUX_TMPDIR and refuses the default socket
 // directory (/tmp/tmux-UID), so nothing can reach the user's own tmux server
-// even after the scratch server is killed. The run stops at once if the daemon
+// even after the scratch server is killed. The same wrapper is first on the
+// daemon's PATH as `tmux`, for the calls that do not use the configured
+// binary. The run stops at once if the daemon
 // ever lists a session this harness did not create. It refuses port 56983 and
 // only signals processes it started.
 import assert from "node:assert/strict";
@@ -32,7 +37,7 @@ import process from "node:process";
 import console from "node:console";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmod, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, realpathSync } from "node:fs";
 import { cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -89,9 +94,19 @@ await writeFile(
   ].join("\n"),
 );
 await chmod(slowTmux, 0o755);
+// A bare `tmux` from PATH goes through the same wrapper.
+const shimDir = join(scratch.root, "bin");
+await mkdir(shimDir, { recursive: true });
+await copyFile(slowTmux, join(shimDir, "tmux"));
+await chmod(join(shimDir, "tmux"), 0o755);
 const fleet = {
   ...scratch,
-  environment: { ...scratch.environment, TMUX_IDE_TMUX_BIN: slowTmux, TMUX_TMPDIR: tmuxDir },
+  environment: {
+    ...scratch.environment,
+    PATH: `${shimDir}:${scratch.environment.PATH}`,
+    TMUX_IDE_TMUX_BIN: slowTmux,
+    TMUX_TMPDIR: tmuxDir,
+  },
 };
 const tmux = (...argv) =>
   execFileSync(realTmux, ["-S", scratch.socketPath, ...argv], {
@@ -110,7 +125,15 @@ const tmuxQuiet = (...argv) => {
 
 const daemonOptions = process.env.SOAK_CLI ? { cliPath: process.env.SOAK_CLI } : {};
 let daemon = null;
+// The output of every daemon this run started, oldest first: a restart must
+// not lose what the daemon before it logged.
+const daemonLogs = [];
+const daemonLog = () =>
+  [...daemonLogs, daemon ? daemon.output() : ""]
+    .map((text, index) => `=== daemon ${index + 1} ===\n${text}`)
+    .join("\n");
 const startOwnDaemon = async () => {
+  if (daemon) daemonLogs.push(daemon.output().replaceAll(daemon.record.authToken, "[redacted]"));
   daemon = await startDaemon(fleet, daemonOptions);
   assert.notEqual(daemon.record.port, 56983, "refusing the owner's daemon port");
   return daemon;
@@ -342,6 +365,52 @@ if (process.env.SOAK_MODE === "late-daemon") {
   }
   process.exit(0);
 }
+// SOAK_MODE=requests: no faults. The app test opens a session, idles in it
+// and creates one, and prints what it asked the daemon for.
+if (process.env.SOAK_MODE === "requests") {
+  try {
+    await startOwnDaemon();
+    child = spawn(
+      guiTestBinary,
+      ["--ignored", "--nocapture", "--test-threads=1", "connection_request_counts"],
+      {
+        env: {
+          ...process.env,
+          ...fleet.environment,
+          TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
+          TMUX_IDE_TEST_IDLE_SECS: process.env.SOAK_IDLE_SECONDS ?? "60",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (chunk) => (output += chunk));
+    const [code] = await once(child, "close", { signal: AbortSignal.timeout(300_000) });
+    await assertIsolated();
+    const line = output.split("\n").find((text) => text.startsWith("REQUEST_COUNTS "));
+    const redacted = output.replaceAll(daemon.record.authToken, "[redacted]");
+    assert.equal(code, 0, redacted.slice(-3000));
+    assert(line, redacted.slice(-3000));
+    console.log(JSON.stringify(JSON.parse(line.slice(15)), null, 1));
+    if (process.env.SOAK_DAEMON_LOG)
+      await writeFile(
+        process.env.SOAK_DAEMON_LOG,
+        daemonLog().replaceAll(daemon.record.authToken, "[redacted]"),
+      );
+  } finally {
+    try {
+      await stopFixtureChild(child);
+    } finally {
+      try {
+        await daemon?.stop();
+      } finally {
+        await scratch.dispose();
+      }
+    }
+  }
+  process.exit(0);
+}
 try {
   await startOwnDaemon();
   child = spawn(
@@ -434,7 +503,7 @@ try {
   if (process.env.SOAK_DAEMON_LOG)
     await writeFile(
       process.env.SOAK_DAEMON_LOG,
-      daemon.output().replaceAll(daemon.record.authToken, "[redacted]"),
+      daemonLog().replaceAll(daemon.record.authToken, "[redacted]"),
     );
   const report = summarise({ events, injected, inactive, seconds, exit: { code, signal } });
   if (process.env.SOAK_REPORT)
