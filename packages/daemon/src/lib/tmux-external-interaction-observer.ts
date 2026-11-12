@@ -69,7 +69,10 @@ export interface HookHealthcheckSchedule {
 
 export const DEFAULT_HOOK_HEALTHCHECK_SCHEDULE: HookHealthcheckSchedule = Object.freeze({
   baseMs: 1_000,
-  maxMs: 30_000,
+  // A healthy idle server is checked 12 times an hour, not 120. Since daemons
+  // no longer remove each other's hooks, only a user action (a config reload,
+  // `set-hook -gu`) can take them away; that is then noticed within 5 minutes.
+  maxMs: 300_000,
 });
 
 export type HookHealthcheckOutcome = "healthy" | "repaired" | "failed";

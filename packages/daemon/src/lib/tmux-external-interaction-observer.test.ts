@@ -791,7 +791,16 @@ describe("tmux external interaction observer", () => {
     expect(nextHookHealthcheckDelay(Number.NaN, "healthy", schedule)).toBe(2_000);
     expect(nextHookHealthcheckDelay(-5, "healthy", schedule)).toBe(2_000);
     expect(nextHookHealthcheckDelay(5, "healthy", { baseMs: 0, maxMs: 0 })).toBe(1);
-    expect(DEFAULT_HOOK_HEALTHCHECK_SCHEDULE).toEqual({ baseMs: 1_000, maxMs: 30_000 });
+    expect(DEFAULT_HOOK_HEALTHCHECK_SCHEDULE).toEqual({ baseMs: 1_000, maxMs: 300_000 });
+    // Steady state on a healthy server: one check per five minutes, 12 an hour.
+    let delay = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.baseMs;
+    let checksInFirstHour = 0;
+    for (let at = 0; at < 3_600_000; at += delay) {
+      checksInFirstHour += 1;
+      delay = nextHookHealthcheckDelay(delay, "healthy");
+    }
+    expect(checksInFirstHour).toBe(19); // 9 while backing off, then 10 at the cap
+    expect(delay).toBe(300_000);
   });
 
   it("verifies each hook array by its own lines in combined show-hooks output", () => {
