@@ -38,8 +38,36 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-fn counts() -> (u64, u64) {
-    (ALLOCATIONS.load(Relaxed), BYTES.load(Relaxed))
+#[repr(C)]
+struct Timespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
+#[allow(unsafe_code)] // The thread's CPU clock has no std API.
+unsafe extern "C" {
+    fn clock_gettime(clock: u32, time: *mut Timespec) -> i32;
+}
+/// `CLOCK_THREAD_CPUTIME_ID` on macOS.
+const THREAD_CPU: u32 = 16;
+
+/// This thread's CPU time in nanoseconds: unlike the wall clock, it does not
+/// count time the thread waits for a core, so it holds under load.
+fn thread_cpu() -> u64 {
+    let mut time = Timespec {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    // SAFETY: `time` is a valid, writable timespec for the call's duration.
+    #[allow(unsafe_code)]
+    let status = unsafe { clock_gettime(THREAD_CPU, &mut time) };
+    if status != 0 {
+        return 0;
+    }
+    (time.seconds as u64) * 1_000_000_000 + time.nanoseconds as u64
+}
+
+fn counts() -> (u64, u64, u64) {
+    (ALLOCATIONS.load(Relaxed), BYTES.load(Relaxed), thread_cpu())
 }
 
 fn main() -> anyhow::Result<()> {

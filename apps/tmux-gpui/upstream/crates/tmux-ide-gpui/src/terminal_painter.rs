@@ -165,6 +165,12 @@ pub(crate) struct TerminalPainter {
     pub(crate) legacy_glyphs: bool,
 }
 
+/// Dev-only: every painter paints glyph by glyph, for the bench's
+/// interleaved A/B frames.
+#[cfg(feature = "visual-capture")]
+pub(crate) static LEGACY_GLYPHS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 impl Default for TerminalPainter {
     fn default() -> Self {
         Self {
@@ -885,12 +891,13 @@ impl TerminalPainter {
                 );
             let color = glyph_color.get(cell_colors(cell, &self.theme).0);
             #[cfg(feature = "visual-capture")]
-            let result = if self.legacy_glyphs {
-                paint_glyphs(shaped, position, px(self.cell_height), color, window)
-            } else {
-                self.sprites
-                    .push_line(shaped, position, px(self.cell_height), color, window)
-            };
+            let result =
+                if self.legacy_glyphs || LEGACY_GLYPHS.load(std::sync::atomic::Ordering::Relaxed) {
+                    paint_glyphs(shaped, position, px(self.cell_height), color, window)
+                } else {
+                    self.sprites
+                        .push_line(shaped, position, px(self.cell_height), color, window)
+                };
             #[cfg(not(feature = "visual-capture"))]
             let result =
                 self.sprites

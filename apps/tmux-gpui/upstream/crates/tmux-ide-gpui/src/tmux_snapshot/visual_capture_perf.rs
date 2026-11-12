@@ -10,8 +10,9 @@ use crate::terminal_painter::NativeFrame;
 use herdr_client::protocol::{CellData, CursorState};
 use std::{fmt::Write as _, time::Instant};
 
-/// Allocations and bytes allocated so far, from the binary's global allocator.
-pub type AllocCounter = fn() -> (u64, u64);
+/// Allocations and bytes allocated so far, from the binary's global allocator,
+/// and the main thread's CPU time in nanoseconds.
+pub type AllocCounter = fn() -> (u64, u64, u64);
 
 /// Frames dropped before timing, so caches and glyph atlases are warm.
 const WARMUP: usize = 20;
@@ -306,12 +307,14 @@ fn scenario(name: &str, base: &browser::State) -> Result<Scenario> {
 /// One scenario's frames.
 struct Frames {
     ms: Vec<f64>,
+    cpu: Vec<f64>,
     allocs: Vec<u64>,
     bytes: Vec<u64>,
 }
 impl Frames {
     fn line(mut self, name: &str) -> String {
         self.ms.sort_by(f64::total_cmp);
+        self.cpu.sort_by(f64::total_cmp);
         self.allocs.sort_unstable();
         self.bytes.sort_unstable();
         let at = |q: f64| self.ms[((self.ms.len() - 1) as f64 * q).round() as usize];
@@ -327,6 +330,8 @@ impl Frames {
             over(16.67),
         );
         let middle = self.allocs.len() / 2;
+        let cpu = |q: f64| self.cpu[((self.cpu.len() - 1) as f64 * q).round() as usize];
+        let _ = write!(line, " cpu p50={:.3}ms p95={:.3}", cpu(0.5), cpu(0.95));
         let _ = write!(
             line,
             " allocs/frame p50={} min={} max={} bytes/frame p50={}",
@@ -345,7 +350,7 @@ fn run(
     scenario: Scenario,
     frames: usize,
     counter: AllocCounter,
-) -> Result<Frames> {
+) -> Result<(Frames, Option<Frames>)> {
     let Scenario {
         state,
         window: (width, height),
@@ -387,19 +392,32 @@ fn run(
         .borrow()
         .clone()
         .ok_or_else(|| anyhow!("perf window has no view"))?;
-    let mut timed = Frames {
+    let new = || Frames {
         ms: Vec::with_capacity(frames),
+        cpu: Vec::with_capacity(frames),
         allocs: Vec::with_capacity(frames),
         bytes: Vec::with_capacity(frames),
     };
+    let mut timed = new();
+    // `GLYPH_AB`: odd frames paint glyph by glyph, interleaved with the
+    // batched ones so both see the same load.
+    let ab = std::env::var_os("GLYPH_AB").is_some();
+    let mut legacy_timed = new();
     for index in 0..frames + WARMUP {
+        let legacy = ab && index % 2 == 1;
+        crate::terminal_painter::LEGACY_GLYPHS.store(legacy, std::sync::atomic::Ordering::Relaxed);
+        let timed = if legacy {
+            &mut legacy_timed
+        } else {
+            &mut timed
+        };
         // Built before the clock starts: the transport thread does this work.
         let published = rows.as_ref().map(|(pool, cols, rows)| {
             let mut state = base.clone();
             state.frame = Some(frame_at(pool, *cols, *rows, index + 1));
             state
         });
-        let (allocs, bytes) = counter();
+        let (allocs, bytes, cpu) = counter();
         let started = Instant::now();
         cx.update_window(handle.into(), |_, window, cx| {
             match step {
@@ -421,9 +439,10 @@ fn run(
             window.draw(cx).clear(cx);
         })?;
         let elapsed = started.elapsed().as_secs_f64() * 1000.;
-        let (allocs_after, bytes_after) = counter();
+        let (allocs_after, bytes_after, cpu_after) = counter();
         if index >= WARMUP {
             timed.ms.push(elapsed);
+            timed.cpu.push(cpu_after.saturating_sub(cpu) as f64 / 1e6);
             timed.allocs.push(allocs_after - allocs);
             timed.bytes.push(bytes_after - bytes);
         }
@@ -431,7 +450,7 @@ fn run(
     }
     cx.update_window(handle.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
-    Ok(timed)
+    Ok((timed, ab.then_some(legacy_timed)))
 }
 
 /// Runs each scenario whose name contains `filter` (all when `None`) for
@@ -450,14 +469,20 @@ pub fn perf_bench(counter: AllocCounter, frames: usize, filter: Option<&str>) ->
         .iter()
         .filter(|name| filter.is_none_or(|filter| name.contains(filter)))
     {
-        let frames = run(
+        let (frames, legacy) = run(
             &mut cx,
             background,
             scenario(name, &base)?,
             frames.max(1),
             counter,
         )?;
-        eprintln!("{}", frames.line(name));
+        match legacy {
+            Some(legacy) => {
+                eprintln!("{}", frames.line(&format!("{name}/batched")));
+                eprintln!("{}", legacy.line(&format!("{name}/legacy")));
+            }
+            None => eprintln!("{}", frames.line(name)),
+        }
     }
     Ok(())
 }
