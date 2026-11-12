@@ -282,7 +282,8 @@ function isBelowTemporaryDirectory(path: string): boolean {
 
 /**
  * Where a path leads, not what it says: `..` is resolved and symlinks are
- * followed, as far as the path exists.
+ * followed, as far as the path exists. This is a check before each test: a
+ * test that later links a real tmux into its own temp directory is not caught.
  */
 function leadsBelowTemporaryDirectory(path: string): boolean {
   return isBelowTemporaryDirectory(followExisting(resolve(path)));
