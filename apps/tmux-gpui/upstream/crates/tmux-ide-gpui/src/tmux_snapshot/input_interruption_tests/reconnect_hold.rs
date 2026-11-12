@@ -9,8 +9,11 @@ use std::time::Duration;
 const PANE: &str = "pane-a";
 
 fn region() -> crate::tmux_snapshot::copy::Region {
+    region_of(PANE)
+}
+fn region_of(pane: &str) -> crate::tmux_snapshot::copy::Region {
     crate::tmux_snapshot::copy::Region {
-        id: PANE.into(),
+        id: pane.into(),
         left: 0,
         top: 0,
         width: 1,
@@ -249,6 +252,7 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
                             id: "pane-b".into(),
                             token: "c".repeat(64),
                         });
+                        state.copy_region = Some(region_of("pane-b"));
                     }
                     "other-session" => state.selected_session = Some("other".into()),
                     "navigated" => {

@@ -78,7 +78,6 @@ impl SnapshotView {
             || state.surface != browser::Surface::Workspace
             || state.request != self.browser_request
             || state.history_offset != 0
-            || waited >= RECONNECT_LIMIT
             || !self.presence.ready()
             || self.selection.is_some()
             || self.resize_gesture.busy()
