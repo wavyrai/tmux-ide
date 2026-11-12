@@ -498,3 +498,17 @@ fn activating_the_window_tries_at_once() {
         .unwrap();
     assert!(local.recovery.as_ref().unwrap().due.unwrap() <= Instant::now());
 }
+
+/// The minute an away server gets counts catalogs in a row. A daemon that
+/// could not be reached in between said nothing about the server.
+#[test]
+fn the_away_minute_starts_over_after_any_other_failure() {
+    let (mut local, _events) = rediscovering();
+    local.catalog_servers(vec![offline("server")]);
+    local.reconnect_catalog().unwrap();
+    assert!(local.recovery.as_ref().unwrap().away_since.is_some());
+    local.reconnect_retry(Failure::Away).unwrap();
+    assert!(local.recovery.as_ref().unwrap().away_since.is_some());
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    assert!(local.recovery.as_ref().unwrap().away_since.is_none());
+}

@@ -36,7 +36,7 @@ import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scr
 import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
 import { stopFixtureChild } from "../fixture-child.mjs";
 import { summarise, table } from "./native-connection-soak-report.mjs";
-const { AbortSignal, Buffer, fetch } = globalThis;
+const { AbortSignal, Buffer, clearInterval, fetch, setInterval } = globalThis;
 
 const [guiTestBinary] = process.argv.slice(2);
 assert(
@@ -113,7 +113,15 @@ const ensureSessions = () => {
   const names = tmuxQuiet("list-sessions", "-F", "#{session_name}").split("\n").filter(Boolean);
   for (let have = names.length; have < 2; have += 1) {
     sessionSeq += 1;
-    tmuxQuiet("new-session", "-d", "-s", `soak-${sessionSeq}`, "-c", scratch.projectDir, "exec sh -i");
+    tmuxQuiet(
+      "new-session",
+      "-d",
+      "-s",
+      `soak-${sessionSeq}`,
+      "-c",
+      scratch.projectDir,
+      "exec sh -i",
+    );
     tmuxQuiet("set-option", "-t", `soak-${sessionSeq}`, "@tmux_ide_adopted", "1");
   }
 };
@@ -244,7 +252,12 @@ if (process.env.SOAK_MODE === "late-daemon") {
   try {
     child = spawn(
       guiTestBinary,
-      ["--ignored", "--nocapture", "--test-threads=1", "home_loads_when_the_daemon_starts_after_the_app"],
+      [
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+        "home_loads_when_the_daemon_starts_after_the_app",
+      ],
       {
         env: {
           ...process.env,
@@ -255,7 +268,8 @@ if (process.env.SOAK_MODE === "late-daemon") {
       },
     );
     let output = "";
-    for (const stream of [child.stdout, child.stderr]) stream.on("data", (chunk) => (output += chunk));
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (chunk) => (output += chunk));
     const exited = once(child, "close", { signal: AbortSignal.timeout(180_000) });
     while (!output.includes("LATE_DAEMON_READY")) {
       assert(child.exitCode === null, `the app test exited early:\n${output.slice(-2000)}`);
@@ -291,17 +305,21 @@ if (process.env.SOAK_MODE === "late-daemon") {
 }
 try {
   await startOwnDaemon();
-  child = spawn(guiTestBinary, ["--ignored", "--nocapture", "--test-threads=1", "connection_soak"], {
-    env: {
-      ...process.env,
-      ...scratch.environment,
-      TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
-      TMUX_IDE_TEST_SIGNAL_DIR: signals,
-      TMUX_IDE_SOAK_INACTIVE: inactive ? "1" : "",
-      TMUX_IDE_SOAK_RECOVER_LIMIT_S: String(recoverLimit),
+  child = spawn(
+    guiTestBinary,
+    ["--ignored", "--nocapture", "--test-threads=1", "connection_soak"],
+    {
+      env: {
+        ...process.env,
+        ...scratch.environment,
+        TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
+        TMUX_IDE_TEST_SIGNAL_DIR: signals,
+        TMUX_IDE_SOAK_INACTIVE: inactive ? "1" : "",
+        TMUX_IDE_SOAK_RECOVER_LIMIT_S: String(recoverLimit),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  );
   const transcript = [];
   let buffered = "";
   for (const stream of [child.stdout, child.stderr])
@@ -367,10 +385,7 @@ try {
     await sleep(1500);
   }
   await writeFile(join(signals, "stop"), "");
-  const [code, signal] = await Promise.race([
-    exited,
-    sleep(30_000).then(() => ["timeout", null]),
-  ]);
+  const [code, signal] = await Promise.race([exited, sleep(30_000).then(() => ["timeout", null])]);
   if (process.env.SOAK_TRANSCRIPT)
     await writeFile(
       process.env.SOAK_TRANSCRIPT,
@@ -383,7 +398,10 @@ try {
     );
   const report = summarise({ events, injected, inactive, seconds, exit: { code, signal } });
   if (process.env.SOAK_REPORT)
-    await writeFile(process.env.SOAK_REPORT, JSON.stringify({ ...report, events, injected }, null, 2));
+    await writeFile(
+      process.env.SOAK_REPORT,
+      JSON.stringify({ ...report, events, injected }, null, 2),
+    );
   console.log(table(report));
   console.log(JSON.stringify(report.totals));
   assert.equal(code, 0, "the app test did not exit cleanly");
