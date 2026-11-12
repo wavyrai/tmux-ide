@@ -260,36 +260,80 @@ fn a_pane_set_change_re_leases_a_bounded_number_of_times() {
 /// next one showed frames but was never given input, and the window said
 /// "Connecting…" until refreshed. Such a stream is replaced after ten seconds.
 #[test]
-fn a_stream_never_given_input_is_replaced_after_ten_seconds_twice_at_most() {
+fn a_stream_never_given_input_is_replaced_every_ten_seconds_six_times_at_most() {
     let mut stall = Stall::default();
-    assert!(!stall.expired(7, "a", true, 0));
-    assert!(!stall.expired(7, "a", true, 9_999));
-    assert!(stall.expired(7, "a", true, 10_000));
+    assert!(!stall.expired(7, "a", true, false, 0));
+    assert!(!stall.expired(7, "a", true, false, 9_999));
+    assert!(stall.expired(7, "a", true, false, 10_000));
     // The replacement starts its own wait.
-    assert!(!stall.expired(7, "b", true, 10_100));
-    assert!(!stall.expired(7, "b", true, 20_000));
-    assert!(stall.expired(7, "b", true, 20_100));
+    assert!(!stall.expired(7, "b", true, false, 10_100));
+    assert!(!stall.expired(7, "b", true, false, 20_000));
+    assert!(stall.expired(7, "b", true, false, 20_100));
+    // Soak: the daemon granted input 21 s after it closed the stream. Four
+    // more replacements cover a minute in all.
+    let mut now = 20_100;
+    for route in ["c", "d", "e", "f"] {
+        assert!(!stall.expired(7, route, true, false, now + 100));
+        now += 10_100;
+        assert!(stall.expired(7, route, true, false, now), "{route}");
+    }
     // A pane that takes no input at all is then left as it is.
-    assert!(!stall.expired(7, "c", true, 20_200));
-    assert!(!stall.expired(7, "c", true, 90_000));
+    assert!(!stall.expired(7, "g", true, false, now + 100));
+    assert!(!stall.expired(7, "g", true, false, now + 600_000));
     // Another request starts over.
-    assert!(!stall.expired(8, "d", true, 90_000));
-    assert!(stall.expired(8, "d", true, 100_000));
+    assert!(!stall.expired(8, "h", true, false, 900_000));
+    assert!(stall.expired(8, "h", true, false, 910_000));
+}
+
+/// The limit is for one row of stalls. A stream that was given input ends
+/// the row: hours later, in the same window, a stall is replaced again.
+#[test]
+fn a_stream_that_was_given_input_starts_the_count_over() {
+    let mut stall = Stall::default();
+    let mut now = 0;
+    for route in ["a", "b", "c", "d", "e", "f"] {
+        assert!(!stall.expired(7, route, true, false, now));
+        now += 10_000;
+        assert!(stall.expired(7, route, true, false, now));
+    }
+    assert!(!stall.expired(7, "g", true, false, now));
+    assert!(!stall.expired(7, "g", true, false, now + 30_000));
+    // Input is granted at last, and much later the stream stalls again.
+    assert!(!stall.expired(7, "g", false, true, now + 31_000));
+    let later = now + 3_600_000;
+    assert!(!stall.expired(7, "h", true, false, later));
+    assert!(stall.expired(7, "h", true, false, later + 10_000));
 }
 
 #[test]
 fn a_stream_that_gets_input_or_is_inactive_is_never_replaced() {
     let mut stall = Stall::default();
-    assert!(!stall.expired(7, "a", true, 0));
+    assert!(!stall.expired(7, "a", true, false, 0));
     // Input arrived, or the window went inactive: the wait is over.
-    assert!(!stall.expired(7, "a", false, 5_000));
-    assert!(!stall.expired(7, "a", true, 12_000));
-    assert!(!stall.expired(7, "a", true, 21_999));
-    assert!(stall.expired(7, "a", true, 22_000));
+    assert!(!stall.expired(7, "a", false, true, 5_000));
+    assert!(!stall.expired(7, "a", true, false, 12_000));
+    assert!(!stall.expired(7, "a", true, false, 21_999));
+    assert!(stall.expired(7, "a", true, false, 22_000));
     let mut stall = Stall::default();
     for now in (0..120_000).step_by(1_000) {
-        assert!(!stall.expired(7, "a", false, now));
+        assert!(!stall.expired(7, "a", false, false, now));
     }
+    // An inactive window is not a grant: it does not start the count over.
+    let mut stall = Stall::default();
+    for (route, now) in [
+        ("a", 0),
+        ("b", 10_000),
+        ("c", 20_000),
+        ("d", 30_000),
+        ("e", 40_000),
+        ("f", 50_000),
+    ] {
+        assert!(!stall.expired(7, route, true, false, now));
+        assert!(stall.expired(7, route, true, false, now + 10_000));
+    }
+    assert!(!stall.expired(7, "g", false, false, 70_000));
+    assert!(!stall.expired(7, "g", true, false, 70_100));
+    assert!(!stall.expired(7, "g", true, false, 200_000));
 }
 
 /// The catalog picks its first reconnect step from why the stream ended, so

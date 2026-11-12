@@ -23,8 +23,11 @@ const WINDOW_MS: u64 = 10_000;
 /// A stream in the active window that shows frames but was never given input
 /// (seen in the soak after the daemon refused a stream as unavailable: the
 /// window said "Connecting…" until refreshed). After [`STALL_MS`] it is
-/// replaced like a lost stream, at most [`STALLS`] times per request: a pane
-/// that can take no input (its program exited) is then left as it is.
+/// replaced like a lost stream, at most [`STALLS`] times in a row: a pane
+/// that can take no input (its program exited) is then left as it is. In the
+/// soak the daemon granted input again 21 s after such a close, so the limit
+/// covers a minute. A stream that is given input ends the row: the next
+/// stall in the same window is replaced again.
 #[derive(Default)]
 struct Stall {
     request: u64,
@@ -33,15 +36,19 @@ struct Stall {
     waiting: Option<(String, u64)>,
 }
 const STALL_MS: u64 = 10_000;
-const STALLS: usize = 2;
+const STALLS: usize = 6;
 impl Stall {
     /// Whether the route `id` has now waited [`STALL_MS`] for input.
-    fn expired(&mut self, request: u64, id: &str, waiting: bool, now: u64) -> bool {
+    /// `granted`: the stream takes input now.
+    fn expired(&mut self, request: u64, id: &str, waiting: bool, granted: bool, now: u64) -> bool {
         if self.request != request {
             *self = Self {
                 request,
                 ..Self::default()
             };
+        }
+        if granted {
+            self.replaced = 0;
         }
         if !waiting || self.replaced >= STALLS {
             self.waiting = None;
@@ -74,12 +81,13 @@ impl Releases {
         now: u64,
     ) -> Result<bool, NativeError> {
         let dirty = polled?;
+        let granted = current.controller.input_ready();
         let waiting = foreground
             && !current.catalog_only
             && !current.stream_interrupted
-            && !current.controller.input_ready()
+            && !granted
             && !current.owner.busy();
-        if (self.stall).expired(current.request, &current.id, waiting, now) {
+        if (self.stall).expired(current.request, &current.id, waiting, granted, now) {
             return Err(NativeError::Controller(
                 herdr_client::tmux_controller::Error::Transport(
                     herdr_client::tmux_stream::Error::ReadyTimeout,

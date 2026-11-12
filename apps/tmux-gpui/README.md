@@ -1127,7 +1127,8 @@ as an owner that was just rebuilt may), at once when the daemon said its panes
 closed, or when its server stayed offline or unlisted for 30 s. A session that
 is listed but has no pane to attach yet is tried again.
 A too-old daemon stops at once. A stream that shows frames but is given no
-input for 10 s is replaced, twice at most. Up to 32 keys or 256 bytes typed
+input for 10 s is replaced, six times in a row at most; a stream that is
+given input ends the row. Up to 32 keys or 256 bytes typed
 within 3 s of a drop wait and go, in order, to the same pane when its stream
 takes input again. They are all refused, and the pane says "Not sent…", when
 the reconnect takes longer, the queue fills, keys typed just before the drop
