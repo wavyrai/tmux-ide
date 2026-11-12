@@ -94,6 +94,8 @@ export async function startOwnedEmbeddedDaemon(
         stage: null,
         stageMs: 0,
         completed: [],
+        openSteps: [],
+        stepsSettled: 0,
       },
     abandon: () => current.abandon?.(),
     activateProject: (name, activationOptions) => {

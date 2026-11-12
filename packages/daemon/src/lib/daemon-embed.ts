@@ -1457,6 +1457,8 @@ async function startEmbeddedDaemonGeneration(
     };
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
+    // Declared before the owners so their teardown steps can report into it.
+    const stopProgress = createStopProgress();
     let localImages: LocalImageOwner | undefined;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
     let defaultEditorContextRetired = false;
@@ -1891,6 +1893,7 @@ async function startEmbeddedDaemonGeneration(
       });
       await externalInteractionObserver.start();
       serverOwners = await createEmbeddedTmuxServerOwners({
+        trackTeardown: stopProgress.track,
         localImages,
         environmentId,
         onDefaultScope: async (scope) => {
@@ -2123,30 +2126,33 @@ async function startEmbeddedDaemonGeneration(
             defaultDiagnosticsLifetime.abort();
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
+            // Named steps: a hung stop then reports which of these never settled (#839).
+            const step = <T>(name: string, work: () => T | Promise<T>): Promise<T> =>
+              stopProgress.track(`default-owner:${name}`, work);
             const transportResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
-              Promise.resolve().then(() =>
+              step("terminal-attachments", () => terminalAttachmentRuntime?.dispose()),
+              step("pane-streams", () =>
                 paneStreamRuntime!.dispose(paneStreamCloseForRetirement(retirement)),
               ),
             ]);
             const authorityResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalInventoryRuntime!.dispose()),
-              Promise.resolve().then(() => workspacePaneCreation.dispose()),
-              Promise.resolve().then(() => workspaceOpen.dispose()),
-              Promise.resolve().then(() => workspaceOpenHandoff?.dispose()),
-              Promise.resolve().then(() =>
+              step("terminal-inventory", () => terminalInventoryRuntime!.dispose()),
+              step("pane-creation", () => workspacePaneCreation.dispose()),
+              step("workspace-open", () => workspaceOpen.dispose()),
+              step("workspace-open-handoff", () => workspaceOpenHandoff?.dispose()),
+              step("session-backends", () =>
                 Promise.all([
                   workspacePromotion.dispose(),
                   defaultSessionOpener.dispose(),
                   defaultSessionCreator.dispose(),
                 ]).then(() => {}),
               ),
-              Promise.resolve().then(() => appWindowMutation.dispose()),
-              Promise.resolve().then(() => workspaceMultiplexer.dispose()),
-              Promise.resolve().then(() => disposeInteractionObservation()),
+              step("app-window-mutation", () => appWindowMutation.dispose()),
+              step("multiplexer", () => workspaceMultiplexer.dispose()),
+              step("interaction-observation", () => disposeInteractionObservation()),
             ]);
             try {
-              await sessionRuntimeRegistry!.dispose();
+              await step("session-runtimes", () => sessionRuntimeRegistry!.dispose());
             } finally {
               interactionReceipts.dispose();
               interactionEvidence?.dispose();
@@ -2412,7 +2418,6 @@ async function startEmbeddedDaemonGeneration(
 
     let stopped = false;
     let stopping: Promise<void> | null = null;
-    const stopProgress = createStopProgress();
     // Idempotent: the normal stop and a deadline-forced exit may both reach it.
     const releaseCanonicalPublication = (): void => {
       try {

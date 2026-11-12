@@ -12,6 +12,7 @@ import {
 } from "../daemon-embed.ts";
 import {
   SIGNAL_STOP_DEADLINE_MS,
+  SIGNAL_STOP_MAX_MS,
   SIGNAL_STOP_TIMEOUT_EXIT_CODE,
   runHeadlessDaemon,
   type HeadlessDaemonDependencies,
@@ -661,6 +662,8 @@ describe("bounded stop on a signal", () => {
     stage: "interaction-observation",
     stageMs: 39,
     completed: [{ stage: "plugins", ms: 1 }],
+    openSteps: [{ step: "default-owner:interaction-observation", ms: 39 }],
+    stepsSettled: 4,
   };
   function bounded(deadlineMs = 40) {
     const harness = createHarness();
@@ -679,6 +682,9 @@ describe("bounded stop on a signal", () => {
   it("has a deadline shorter than the 20 s a supervisor or the smoke step waits", () => {
     expect(SIGNAL_STOP_DEADLINE_MS).toBeGreaterThanOrEqual(5_000);
     expect(SIGNAL_STOP_DEADLINE_MS).toBeLessThan(20_000);
+    // Under the 30 s that the launchd and systemd units allow before killing.
+    expect(SIGNAL_STOP_MAX_MS).toBeGreaterThan(SIGNAL_STOP_DEADLINE_MS);
+    expect(SIGNAL_STOP_MAX_MS).toBeLessThan(30_000);
     expect(SIGNAL_STOP_TIMEOUT_EXIT_CODE).not.toBe(0);
   });
 
@@ -722,6 +728,8 @@ describe("bounded stop on a signal", () => {
           phase: "stopping",
           stuckStage: "interaction-observation",
           stuckStageMs: 39,
+          openSteps: [{ step: "default-owner:interaction-observation", ms: 39 }],
+          stepsSettled: 4,
           completedStages: [{ stage: "plugins", ms: 1 }],
         }),
       );
@@ -790,6 +798,83 @@ describe("bounded stop on a signal", () => {
         expect.objectContaining({ signal: "SIGINT", phase: "starting", stuckStage: null }),
       );
     } finally {
+      f.errors.mockRestore();
+    }
+  });
+
+  // Review N1: a slow teardown that keeps settling steps is not a hang.
+  it("renews the deadline while teardown steps keep settling, and lets that stop finish", async () => {
+    const f = bounded(40);
+    const start = f.harness.deps.startEmbeddedDaemon;
+    let settled = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...f.deps,
+        signalStopMaxMs: 2_000,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          // Four deadline windows long, one step settling every 20 ms.
+          stop: async () => {
+            for (let i = 0; i < 8; i += 1) {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              settled += 1;
+            }
+          },
+          stopDiagnostics: () => ({ ...stuck, stepsSettled: settled }),
+          abandon: f.abandon,
+        }),
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(f.harness.lines).toHaveLength(1));
+      f.harness.signals.get("SIGTERM")?.();
+      await expect(running).resolves.toBe("stopped");
+      expect(settled).toBe(8);
+      expect(f.exit).not.toHaveBeenCalled();
+      expect(f.abandon).not.toHaveBeenCalled();
+    } finally {
+      f.errors.mockRestore();
+    }
+  });
+
+  it("caps a stop that keeps moving but never ends at the total bound", async () => {
+    const f = bounded(40);
+    const start = f.harness.deps.startEmbeddedDaemon;
+    let settled = 0;
+    const ticking = setInterval(() => (settled += 1), 10);
+    const startedAt = performance.now();
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...f.deps,
+        signalStopMaxMs: 130,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          stop: () => never,
+          stopDiagnostics: () => ({ ...stuck, stepsSettled: settled }),
+          abandon: f.abandon,
+        }),
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(f.harness.lines).toHaveLength(1));
+      const signalled = performance.now();
+      f.harness.signals.get("SIGTERM")?.();
+      await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
+      // Three 40 ms windows fit into 130 ms; a fourth would not.
+      const waited = performance.now() - signalled;
+      expect(waited).toBeGreaterThanOrEqual(115);
+      expect(waited).toBeLessThan(1_000);
+      expect(f.exit).toHaveBeenCalledExactlyOnceWith(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
+      expect(f.errors).toHaveBeenCalledExactlyOnceWith(
+        "daemon-lifecycle",
+        expect.any(String),
+        expect.objectContaining({ deadlineMs: 40, maxMs: 130 }),
+      );
+      expect(startedAt).toBeLessThan(signalled);
+    } finally {
+      clearInterval(ticking);
       f.errors.mockRestore();
     }
   });

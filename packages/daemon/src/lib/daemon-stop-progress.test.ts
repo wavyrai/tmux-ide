@@ -12,6 +12,8 @@ describe("daemon stop progress (#839)", () => {
       stage: null,
       stageMs: 0,
       completed: [],
+      openSteps: [],
+      stepsSettled: 0,
     });
     progress.begin();
     await progress.run("plugins", () => {
@@ -30,6 +32,8 @@ describe("daemon stop progress (#839)", () => {
       stage: "interaction-observation",
       stageMs: 5_000,
       completed: [{ stage: "plugins", ms: 12 }],
+      openSteps: [],
+      stepsSettled: 0,
     });
     release();
     await hung;
@@ -52,5 +56,36 @@ describe("daemon stop progress (#839)", () => {
       stage: null,
       completed: [{ stage: "pane-streams", ms: 0 }],
     });
+  });
+
+  // Review N2: one stage covers most of the terminal teardown; steps name the part that hangs.
+  it("names the steps still open inside a stage, in parallel, and counts the settled ones", async () => {
+    let now = 0;
+    const progress = createStopProgress(() => now);
+    progress.begin();
+    let releaseObserver!: () => void;
+    const stage = progress.run("tmux-server-owners", async () => {
+      await Promise.allSettled([
+        progress.track("default-owner:pane-streams", () => "closed"),
+        progress.track("default-owner:terminal-inventory", () => {
+          throw new Error("inventory refused");
+        }),
+        progress.track(
+          "default-owner:interaction-observation",
+          () => new Promise<void>((resolve) => (releaseObserver = resolve)),
+        ),
+      ]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    now = 7_000;
+    expect(progress.snapshot()).toMatchObject({
+      stage: "tmux-server-owners",
+      openSteps: [{ step: "default-owner:interaction-observation", ms: 7_000 }],
+      stepsSettled: 2,
+    });
+    releaseObserver();
+    await stage;
+    expect(progress.snapshot()).toMatchObject({ openSteps: [], stepsSettled: 3 });
+    await expect(progress.track("x", () => 42)).resolves.toBe(42);
   });
 });

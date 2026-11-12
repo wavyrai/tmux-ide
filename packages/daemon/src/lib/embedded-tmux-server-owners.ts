@@ -16,6 +16,7 @@ import {
 } from "./tmux-server-owners.ts";
 import { paneStreamCloseForRetirement } from "../terminal/pane-stream/pane-stream-websocket.ts";
 import { logger } from "./log.ts";
+import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import {
   createDiagnosedTmuxServerProbe,
   readTmuxServerRegistrations,
@@ -61,6 +62,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
   readonly defaultOwner: Omit<NativeTmuxServerOwner, "serverId" | "generation">;
   readonly stateDirectory: string;
   readonly webSocketBaseUrl: string;
+  readonly trackTeardown?: TrackTeardownStep;
 }) {
   const path = join(options.stateDirectory, "tmux-servers.json");
   const persisted = readTmuxServerRegistrations(path);
@@ -155,6 +157,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
         ...scope,
         tmuxAuthority: observation.authority,
         nativeServerIdentity: observation.nativeServerIdentity,
+        ...(options.trackTeardown ? { trackTeardown: options.trackTeardown } : {}),
         stateDirectory: join(options.stateDirectory, "server-owners", registration.serverId),
         webSocketUrl: new URL(route, options.webSocketBaseUrl).href,
       });

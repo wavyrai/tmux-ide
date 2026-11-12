@@ -61,8 +61,10 @@ export interface HeadlessDaemonDependencies {
   readonly offSignal: (signal: NodeJS.Signals, listener: () => void) => void;
   /** Ends the process when a signalled stop misses its deadline. Defaults to process.exit. */
   readonly exit?: (code: number) => void;
-  /** How long a signalled stop may take. Defaults to SIGNAL_STOP_DEADLINE_MS. */
+  /** How long a signalled stop may go without progress. Defaults to SIGNAL_STOP_DEADLINE_MS. */
   readonly signalStopDeadlineMs?: number;
+  /** How long a signalled stop may take in all. Defaults to SIGNAL_STOP_MAX_MS. */
+  readonly signalStopMaxMs?: number;
 }
 
 /**
@@ -71,6 +73,12 @@ export interface HeadlessDaemonDependencies {
  * was still open, withdraws daemon.json and exits non-zero (#839).
  */
 export const SIGNAL_STOP_DEADLINE_MS = 10_000;
+/**
+ * A slow stop that still completes teardown steps is not hung: each step that
+ * settles renews the deadline, up to this total. It stays under the 30 s the
+ * launchd and systemd units grant before they kill the process themselves.
+ */
+export const SIGNAL_STOP_MAX_MS = 25_000;
 export const SIGNAL_STOP_TIMEOUT_EXIT_CODE = 1;
 
 interface HeadlessLifecycle {
@@ -373,22 +381,41 @@ async function runHeadlessDaemonGeneration(
     rejectDeadline = reject;
   });
   deadlineExceeded.catch(() => undefined);
-  const stopDeadlineExceeded = (signal: NodeJS.Signals): void => {
-    let stop: ReturnType<NonNullable<EmbeddedDaemonHandle["stopDiagnostics"]>> | null = null;
+  const maxMs = Math.max(deadlineMs, deps.signalStopMaxMs ?? SIGNAL_STOP_MAX_MS);
+  let signalledAt = 0;
+  let lastProgress = "";
+  const readStop = () => {
     try {
-      stop = handle?.stopDiagnostics?.() ?? null;
+      return handle?.stopDiagnostics?.() ?? null;
     } catch {
-      /* Diagnostics never block the exit. */
+      return null; // Diagnostics never block the exit.
+    }
+  };
+  const progressOf = (stop: ReturnType<typeof readStop>): string =>
+    stop ? `${stop.completed.length}:${stop.stepsSettled}` : "";
+  const stopDeadlineExceeded = (signal: NodeJS.Signals): void => {
+    const stop = readStop();
+    const waitedMs = Math.round(performance.now() - signalledAt);
+    const progress = progressOf(stop);
+    if (progress !== lastProgress && waitedMs + deadlineMs <= maxMs) {
+      // Steps settled since the last look: slow, not hung. Give it another window.
+      lastProgress = progress;
+      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+      return;
     }
     logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway", {
       signal,
       deadlineMs,
+      maxMs,
+      waitedMs,
       generation,
       startReason,
       generationInstanceId: handle?.instanceId ?? null,
       phase: !handle ? "starting" : stopStarted ? "stopping" : "running",
       stuckStage: stop?.stage ?? null,
       stuckStageMs: stop?.stageMs ?? null,
+      openSteps: stop?.openSteps ?? [],
+      stepsSettled: stop?.stepsSettled ?? 0,
       completedStages: stop?.completed ?? [],
       activeResources: activeResourceCounts(),
     });
@@ -409,7 +436,11 @@ async function runHeadlessDaemonGeneration(
     signalRequested = true;
     retireTrigger ??= `signal:${signal}`;
     // Deliberately not unref'd: a hung teardown must not outlive the deadline.
-    deadlineTimer ??= setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+    if (!deadlineTimer) {
+      signalledAt = performance.now();
+      lastProgress = progressOf(readStop());
+      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+    }
     if (handle) void handle.stop().catch(() => undefined);
   };
   const onSigint = (): void => requestStop("SIGINT");
