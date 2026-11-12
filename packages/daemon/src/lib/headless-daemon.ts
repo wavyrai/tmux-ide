@@ -74,8 +74,10 @@ export interface HeadlessDaemonDependencies {
  */
 export const SIGNAL_STOP_DEADLINE_MS = 10_000;
 /**
- * A slow stop that still completes teardown steps is not hung: each step that
- * settles renews the deadline, up to this total. It stays under the 30 s the
+ * A slow stop that still completes teardown steps is not hung: the deadline
+ * above counts from the last step that settled, and this bounds the whole
+ * stop. So a teardown that hangs exits 10 s after its last progress, and one
+ * that keeps moving exits at 25 s at the latest. That stays under the 30 s the
  * launchd and systemd units grant before they kill the process themselves.
  */
 export const SIGNAL_STOP_MAX_MS = 25_000;
@@ -375,7 +377,7 @@ async function runHeadlessDaemonGeneration(
   /** What asked this generation to retire; logged with the timings. */
   let retireTrigger: string | null = null;
   const deadlineMs = deps.signalStopDeadlineMs ?? SIGNAL_STOP_DEADLINE_MS;
-  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  let deadlineTimer: ReturnType<typeof setInterval> | null = null;
   let rejectDeadline!: (error: Error) => void;
   const deadlineExceeded = new Promise<never>((_resolve, reject) => {
     rejectDeadline = reject;
@@ -384,6 +386,7 @@ async function runHeadlessDaemonGeneration(
   const maxMs = Math.max(deadlineMs, deps.signalStopMaxMs ?? SIGNAL_STOP_MAX_MS);
   let signalledAt = 0;
   let lastProgress = "";
+  let lastProgressAt = 0;
   const readStop = () => {
     try {
       return handle?.stopDiagnostics?.() ?? null;
@@ -393,21 +396,14 @@ async function runHeadlessDaemonGeneration(
   };
   const progressOf = (stop: ReturnType<typeof readStop>): string =>
     stop ? `${stop.completed.length}:${stop.stepsSettled}` : "";
-  const stopDeadlineExceeded = (signal: NodeJS.Signals): void => {
-    const stop = readStop();
-    const waitedMs = Math.round(performance.now() - signalledAt);
-    const progress = progressOf(stop);
-    if (progress !== lastProgress && waitedMs + deadlineMs <= maxMs) {
-      // Steps settled since the last look: slow, not hung. Give it another window.
-      lastProgress = progress;
-      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
-      return;
-    }
+  const abandonStop = (signal: NodeJS.Signals, stop: ReturnType<typeof readStop>): void => {
+    const now = performance.now();
     logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway", {
       signal,
       deadlineMs,
       maxMs,
-      waitedMs,
+      waitedMs: Math.round(now - signalledAt),
+      sinceLastProgressMs: Math.round(now - lastProgressAt),
       generation,
       startReason,
       generationInstanceId: handle?.instanceId ?? null,
@@ -426,20 +422,37 @@ async function runHeadlessDaemonGeneration(
     }
     (deps.exit ?? ((code: number) => process.exit(code)))(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
     rejectDeadline(
-      new IdeError(`Daemon stop did not finish within ${deadlineMs}ms of ${signal}`, {
+      new IdeError(`Daemon stop did not finish within its deadline after ${signal}`, {
         code: "DAEMON_STOP_TIMEOUT",
         exitCode: SIGNAL_STOP_TIMEOUT_EXIT_CODE,
       }),
     );
   };
+  /** Looked at a few times per deadline: has the teardown moved, and how long has it been? */
+  const watchStop = (signal: NodeJS.Signals): void => {
+    const stop = readStop();
+    const now = performance.now();
+    const progress = progressOf(stop);
+    if (progress !== lastProgress) {
+      lastProgress = progress;
+      lastProgressAt = now;
+    }
+    if (now - lastProgressAt < deadlineMs && now - signalledAt < maxMs) return;
+    if (deadlineTimer) clearInterval(deadlineTimer);
+    abandonStop(signal, stop);
+  };
   const requestStop = (signal: NodeJS.Signals): void => {
     signalRequested = true;
     retireTrigger ??= `signal:${signal}`;
     // Deliberately not unref'd: a hung teardown must not outlive the deadline.
+    // Armed by the first signal only; repeating the signal buys no time.
     if (!deadlineTimer) {
-      signalledAt = performance.now();
+      signalledAt = lastProgressAt = performance.now();
       lastProgress = progressOf(readStop());
-      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+      deadlineTimer = setInterval(
+        () => watchStop(signal),
+        Math.max(1, Math.min(1_000, Math.floor(deadlineMs / 8))),
+      );
     }
     if (handle) void handle.stop().catch(() => undefined);
   };
@@ -652,7 +665,7 @@ async function runHeadlessDaemonGeneration(
   try {
     return await Promise.race([runGeneration(), deadlineExceeded]);
   } finally {
-    if (deadlineTimer) clearTimeout(deadlineTimer);
+    if (deadlineTimer) clearInterval(deadlineTimer);
     deps.offSignal("SIGINT", onSigint);
     deps.offSignal("SIGTERM", onSigterm);
   }

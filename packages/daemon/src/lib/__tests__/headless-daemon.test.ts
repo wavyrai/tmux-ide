@@ -838,6 +838,47 @@ describe("bounded stop on a signal", () => {
     }
   });
 
+  // Review N9: early progress must not double the wait for a teardown that then hangs.
+  it("counts the deadline from the last step that settled, not from a fixed look", async () => {
+    const f = bounded(120);
+    const start = f.harness.deps.startEmbeddedDaemon;
+    let settled = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...f.deps,
+        signalStopMaxMs: 5_000,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          // The first stages finish at once, as in a real stop; then it hangs.
+          stop: () => {
+            setTimeout(() => (settled = 3), 20);
+            return never;
+          },
+          stopDiagnostics: () => ({ ...stuck, stepsSettled: settled }),
+          abandon: f.abandon,
+        }),
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(f.harness.lines).toHaveLength(1));
+      const signalled = performance.now();
+      f.harness.signals.get("SIGTERM")?.();
+      await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
+      const waited = performance.now() - signalled;
+      // 120 ms after the progress at 20 ms; a fixed look every 120 ms would exit at 240.
+      expect(waited).toBeGreaterThanOrEqual(120);
+      expect(waited).toBeLessThan(210);
+      expect(f.errors).toHaveBeenCalledExactlyOnceWith(
+        "daemon-lifecycle",
+        expect.any(String),
+        expect.objectContaining({ deadlineMs: 120, maxMs: 5_000, stepsSettled: 3 }),
+      );
+    } finally {
+      f.errors.mockRestore();
+    }
+  });
+
   it("caps a stop that keeps moving but never ends at the total bound", async () => {
     const f = bounded(40);
     const start = f.harness.deps.startEmbeddedDaemon;
@@ -862,9 +903,9 @@ describe("bounded stop on a signal", () => {
       const signalled = performance.now();
       f.harness.signals.get("SIGTERM")?.();
       await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
-      // Three 40 ms windows fit into 130 ms; a fourth would not.
+      // It keeps moving, so only the total bound ends it: at 130 ms, not earlier.
       const waited = performance.now() - signalled;
-      expect(waited).toBeGreaterThanOrEqual(115);
+      expect(waited).toBeGreaterThanOrEqual(125);
       expect(waited).toBeLessThan(1_000);
       expect(f.exit).toHaveBeenCalledExactlyOnceWith(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
       expect(f.errors).toHaveBeenCalledExactlyOnceWith(
