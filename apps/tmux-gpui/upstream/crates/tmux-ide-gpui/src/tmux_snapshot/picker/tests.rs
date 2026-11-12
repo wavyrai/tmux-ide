@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
+mod about;
+mod about_terminal;
 mod attention;
 mod commands;
 mod direct_navigation;
@@ -16,6 +18,7 @@ mod session_continuation;
 mod session_history;
 mod session_popover;
 mod session_tabs;
+mod welcome_command;
 use crate::tmux_snapshot::presence::Presence;
 use core::prelude::v1::test;
 use std::sync::{Arc, mpsc};

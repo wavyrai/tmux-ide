@@ -68,32 +68,46 @@ impl SnapshotView {
             return false;
         }
         let selected = self.home_action_index(window);
+        let card = self.whats_new_focused(window);
         match event.keystroke.key.as_str() {
-            "tab" if selected.is_some() || self.terminal_focus.is_focused(window) => {
+            "tab" if selected.is_some() || card || self.terminal_focus.is_focused(window) => {
                 self.prepare_home_filter(cx);
-                if let Some(controls) = &self.home_filter {
-                    let mut next = match (selected, event.keystroke.modifiers.shift) {
-                        (None, false) => 0,
-                        (None, true) => 4,
-                        (Some(index), false) => (index + 1) % 5,
-                        (Some(index), true) => (index + 4) % 5,
-                    };
-                    // Slot 1 was Theme, which left the action row (#746).
-                    while (next < 4 && self.browser_commands.is_none())
-                        || (next == 4 && !self.home_diagnostics_available())
-                        || next == 1
-                        || (next == 3 && !self.local_session_available())
-                    {
-                        next = if event.keystroke.modifiers.shift {
-                            (next + 4) % 5
-                        } else {
-                            (next + 1) % 5
-                        };
-                    }
-                    controls.actions[next].focus(window, cx);
+                let Some(controls) = &self.home_filter else {
+                    return false;
+                };
+                // Slot 1 was Theme, which left the action row (#746).
+                let mut order: Vec<FocusHandle> = (0..5)
+                    .filter(|&slot| {
+                        !((slot < 4 && self.browser_commands.is_none())
+                            || (slot == 4 && !self.home_diagnostics_available())
+                            || slot == 1
+                            || (slot == 3 && !self.local_session_available()))
+                    })
+                    .map(|slot| controls.actions[slot].clone())
+                    .collect();
+                // The What's new card's buttons follow Home's own.
+                order.extend(self.whats_new_stops(cx).into_iter().flatten());
+                if order.is_empty() {
+                    return false;
                 }
+                let at = order.iter().position(|focus| focus.is_focused(window));
+                let next = match (at, event.keystroke.modifiers.shift) {
+                    (None, false) => 0,
+                    (None, true) => order.len() - 1,
+                    (Some(i), false) => (i + 1) % order.len(),
+                    (Some(i), true) => (i + order.len() - 1) % order.len(),
+                };
+                order[next].focus(window, cx);
             }
             "escape" if selected.is_some() => self.terminal_focus.focus(window, cx),
+            // Escape closes the What's new card from the card or from Home.
+            "escape" if card || self.terminal_focus.is_focused(window) => {
+                if self.whats_new_stops(cx).is_none() {
+                    return false;
+                }
+                self.close_whats_new(cx);
+                self.terminal_focus.focus(window, cx);
+            }
             _ => return false,
         }
         cx.stop_propagation();

@@ -188,3 +188,5 @@ mod pane_limit;
 
 #[path = "tests/away.rs"]
 mod away;
+#[path = "tests/plain_words.rs"]
+mod plain_words;

@@ -14,11 +14,16 @@ use herdr_client::tmux_daemon::{CatalogEventError, CatalogWatchError, Error as D
 const MAX_DELAY: Duration = Duration::from_secs(5);
 pub(super) const RECONNECTING: &str = "Reconnecting…";
 pub(super) const STILL_RECONNECTING: &str = "Still reconnecting…";
-const CREDENTIALS: &str = "The daemon refused this app's credentials. Restart tmux-ide.";
-const DAEMON_UPDATE: &str = "This daemon needs an update. Update tmux-ide, then refresh.";
-const RECORD: &str = "tmux-ide's daemon record is unreadable. Refresh after fixing it.";
-const PLATFORM: &str = "This platform can't verify the daemon. Refresh to try again.";
-const UNREADABLE: &str = "The daemon sent data this app can't read. Refresh to try again.";
+// What the act-needed card says (#360), in plain words (onboarding A0).
+pub(super) const CREDENTIALS: &str =
+    "The background service refused this app's credentials. Quit and reopen Tmux IDE.";
+pub(super) const DAEMON_UPDATE: &str =
+    "The background service needs an update. Update Tmux IDE, then refresh.";
+pub(super) const RECORD: &str = "Tmux IDE can't read the background service's details. Run tmux-ide doctor in Terminal, then refresh.";
+pub(super) const PLATFORM: &str =
+    "This Mac can't verify the background service. Refresh to try again.";
+pub(super) const UNREADABLE: &str =
+    "The background service sent something this app can't read. Refresh to try again.";
 /// Protocol failures in a row before Home stops and says so.
 const PROTOCOL_LIMIT: u8 = 3;
 

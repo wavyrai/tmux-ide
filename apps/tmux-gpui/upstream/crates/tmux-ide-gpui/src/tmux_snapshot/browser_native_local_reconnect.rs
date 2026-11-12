@@ -131,10 +131,9 @@ const MAX_DELAY_REMOTE: Duration = Duration::from_secs(30);
 const AWAY_LIMIT: Duration = Duration::from_secs(60);
 /// Over SSH a different identity may be a different machine: stop at once.
 pub(super) const SSH_IDENTITY: &str =
-    "A different daemon answered for this machine. Check the machine, then refresh sessions.";
+    "A different machine answered at this address. Check the machine, then refresh sessions.";
 /// The daemon now speaks a protocol this app does not: only an app update helps.
-pub(super) const UPDATE_APP: &str =
-    "tmux-ide was updated and this app can no longer talk to it. Update the app to reconnect.";
+pub(super) const UPDATE_APP: &str = "Tmux IDE's background service was updated and this app can no longer talk to it. Update the app to reconnect.";
 pub(super) const RECONNECTING: &str = "Connection lost. Reconnecting…";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {

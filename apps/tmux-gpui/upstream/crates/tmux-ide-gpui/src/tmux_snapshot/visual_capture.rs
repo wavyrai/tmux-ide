@@ -243,7 +243,9 @@ fn capture_view(
         home_filter: None,
         pane_actions: None,
         pane_close: None,
+        welcome: Default::default(),
         browser_address: None,
+        about: None,
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
@@ -633,6 +635,37 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
         }
         state.surface = browser::Surface::Home;
     }
+    // `+welcome` is first run with setup needed (onboarding A1), with
+    // `+running` or `+failed` its states; `+welcome-existing` the welcome
+    // opened from Commands over sessions; `+whatsnew` What's new's card (A5).
+    let welcome = extras.contains(&"welcome");
+    let welcome_existing = extras.contains(&"welcome-existing");
+    let whats_new = extras.contains(&"whatsnew");
+    if welcome {
+        state.surface = browser::Surface::Home;
+        state.home_phase = browser::HomePhase::Unavailable;
+        state.sessions.clear();
+        state.panes.clear();
+        state.fleet = None;
+        state.selected_session = None;
+        let phase = if extras.contains(&"running") {
+            browser::local_setup::Phase::Running
+        } else if extras.contains(&"failed") {
+            browser::local_setup::Phase::StoppedWaiting
+        } else {
+            browser::local_setup::Phase::Available
+        };
+        state.local_setup = Some(browser::local_setup::Setup { phase });
+    }
+    if welcome_existing || whats_new {
+        state.surface = browser::Surface::Home;
+    }
+    // `+about-live`: About while a terminal's daemon reports its versions.
+    if extras.contains(&"about-live") {
+        state.diagnostics = Some(serde_json::from_value(
+            serde_json::json!({"daemonVersion": "2.9.22", "tmuxVersion": "3.5a"}),
+        )?);
+    }
     let (sender, receiver) = mpsc::sync_channel(1024);
     let root: Rc<RefCell<Option<Entity<SnapshotView>>>> = Default::default();
     let bounds = Bounds {
@@ -657,6 +690,20 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     let mut view = capture_view(window, cx, sender, state);
                     // `+sidebar` keeps Home's sidebar (#746).
                     view.sidebar_hidden = (home_b && !with_sidebar) || nosidebar;
+                    if welcome || welcome_existing || whats_new {
+                        let now = cx.background_executor().now();
+                        view.welcome = super::welcome::State::preview(
+                            welcome_existing,
+                            whats_new,
+                            Some("0.1.17"),
+                            extras
+                                .contains(&"running")
+                                .then(|| now - std::time::Duration::from_secs(3)),
+                            extras
+                                .contains(&"failed")
+                                .then_some(super::welcome::SETUP_DEADLINE),
+                        );
+                    }
                     if spark {
                         view.prepare_home_filter(cx);
                         if let Some(controls) = &mut view.home_filter {
@@ -674,6 +721,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                 }
                 if machine {
                     view.update(cx, |view, cx| view.open_add_machine(window, cx));
+                }
+                // `+about`: About as the alpha bundle shows it.
+                if extras.contains(&"about") || extras.contains(&"about-live") {
+                    super::about::CAPTURE_RELEASE.with(|release| release.set(true));
+                    view.update(cx, |view, cx| view.open_about(window, cx));
                 }
                 if reader_pane {
                     view.update(cx, |view, cx| reader_fixture::find(view, window, cx));
