@@ -778,7 +778,12 @@ export class PaneStreamAdmissionCoordinator {
   shutdown(close: PaneStreamShutdownClose = PANE_STREAM_DAEMON_SHUTDOWN_CLOSE): Promise<void> {
     if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shuttingDown = true;
-    logger.info("pane-stream", "coordinator shutdown", {
+    // An idle daemon stopping is routine and stays out of the default log:
+    // `--headless --json` promises one status line on stdout. Streams that
+    // are actually closed, or an owner retired under a live daemon, are not.
+    const routine =
+      close.reason === "daemon-shutdown" && this.#live.size === 0 && this.#preAuth.size === 0;
+    logger[routine ? "debug" : "info"]("pane-stream", "coordinator shutdown", {
       code: close.code,
       reason: close.reason,
       liveStreams: this.#live.size,

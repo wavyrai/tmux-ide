@@ -41,7 +41,7 @@ export function logTmuxServerOwnersEvent(event: TmuxServerOwnersEvent): void {
   if (type === "owner-kept")
     logger.warn("tmux-server-owners", "probe failed; healthy owner kept", fields);
   else if (type === "owner-retired" && event.trigger === "owners-disposed")
-    logger.info("tmux-server-owners", "owner disposed with its daemon generation", fields);
+    logger.debug("tmux-server-owners", "owner disposed with its daemon generation", fields);
   else if (type === "owner-retired")
     logger.warn("tmux-server-owners", "owner retired; its streams were closed", fields);
   else if (type === "retirement-unconfirmed")

@@ -534,12 +534,17 @@ async function runHeadlessDaemonGeneration(
     mutableHandle.stop = async (stopOptions) => {
       if (!stopStarted) {
         retireTrigger ??= "stop-requested";
-        logger.info("daemon-lifecycle", "generation retiring", {
-          generation,
-          generationInstanceId: handle?.instanceId ?? null,
-          trigger: retireTrigger,
-          uptimeMs: Math.round(performance.now() - generationStartedAt),
-        });
+        // An ordinary stop is routine (debug); an in-place restart is not (info).
+        logger[restartRequested && !signalRequested ? "info" : "debug"](
+          "daemon-lifecycle",
+          "generation retiring",
+          {
+            generation,
+            generationInstanceId: handle?.instanceId ?? null,
+            trigger: retireTrigger,
+            uptimeMs: Math.round(performance.now() - generationStartedAt),
+          },
+        );
       }
       stopStarted = true;
       try {
@@ -613,7 +618,8 @@ async function runHeadlessDaemonGeneration(
     }
 
     emitStatus(deps, options.json === true, "ready", info);
-    logger.info("daemon-lifecycle", "generation ready", {
+    // The first generation already says so with its status line on stdout.
+    logger[generation > 1 ? "info" : "debug"]("daemon-lifecycle", "generation ready", {
       generation,
       startReason,
       generationInstanceId: info.instanceId,

@@ -2671,7 +2671,10 @@ async function startEmbeddedDaemonGeneration(
             }
           } finally {
             const progress = stopProgress.finish();
-            logger.info("daemon-lifecycle", "generation stopped", {
+            // A quick clean stop is routine (debug); a restart, a slow stop or a
+            // failing one is what the next investigation needs (info).
+            const notable = restarting || failures.length > 0 || progress.elapsedMs >= 1_000;
+            logger[notable ? "info" : "debug"]("daemon-lifecycle", "generation stopped", {
               generationInstanceId: instanceId,
               port,
               stopMs: progress.elapsedMs,
