@@ -65,6 +65,7 @@ export interface DisposableTmuxServerOwner {
 export type TmuxServerOwnerRetirementTrigger =
   | "server-process-gone"
   | "socket-identity-changed"
+  | "socket-refused"
   | "server-identity-unknown"
   | "fingerprint-changed"
   | "removed"
@@ -124,6 +125,7 @@ export function createRetryDelayMs(failures: number): number {
 const RETIREMENT_OF: Record<TmuxServerOwnerRetirementTrigger, TmuxServerOwnerRetirement> = {
   "server-process-gone": "server-gone",
   "socket-identity-changed": "server-gone",
+  "socket-refused": "server-gone",
   "server-identity-unknown": "server-gone",
   "fingerprint-changed": "server-replaced",
   removed: "removed",
@@ -172,6 +174,25 @@ export interface TmuxServerOwnersOptions<T extends DisposableTmuxServerOwner> {
   readonly persist?: (registrations: readonly TmuxServerRegistration[]) => void;
   /** Liveness of the tmux server process; injectable for tests. */
   readonly serverProcessAlive?: (pid: string) => boolean;
+  /**
+   * Asked only when a probe missed and the owner would otherwise be kept:
+   * does the owner's socket refuse connections outright? True is positive
+   * evidence that no server listens there, even if its pid was reused.
+   */
+  readonly socketRefuses?: (observation: TmuxServerObservation) => Promise<boolean>;
+  /**
+   * A stat, no subprocess: can a server exist for this selector at all? While
+   * the socket file is missing, neither the sweep nor a read spawns a probe.
+   */
+  readonly serverSocketPresent?: (selector: TmuxServerRegistration["selector"]) => boolean;
+  /**
+   * One connect, no subprocess: the socket file is there, but does it refuse
+   * connections (a server that died and left it behind)? Then an offline
+   * registration is not probed by the sweep or a read.
+   */
+  readonly selectorSocketRefuses?: (
+    selector: TmuxServerRegistration["selector"],
+  ) => Promise<boolean>;
   readonly onEvent?: (event: TmuxServerOwnersEvent) => void;
   readonly now?: () => number;
   readonly delay?: (milliseconds: number) => Promise<void>;
@@ -267,6 +288,21 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     });
     if (failure !== undefined) throw failure;
   }
+  /** A failing check is not evidence: only a clear refusal counts. */
+  async #socketRefuses(observation: TmuxServerObservation): Promise<boolean> {
+    try {
+      return (await this.options.socketRefuses?.(observation)) === true;
+    } catch {
+      return false;
+    }
+  }
+  #socketPresent(entry: Entry<T>): boolean {
+    try {
+      return this.options.serverSocketPresent?.(entry.registration.selector) ?? true;
+    } catch {
+      return true;
+    }
+  }
   /** Positive evidence that needs no subprocess: the socket was replaced or the server process is gone. */
   #hasCheapEvidence(entry: Entry<T>): boolean {
     const current = entry.observation;
@@ -280,7 +316,25 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     observed?: TmuxServerProbeResult,
     pass: { readonly confirming?: boolean; readonly respectBackoff?: boolean } = {},
   ): Promise<void> {
-    if (!entry.owner && pass.respectBackoff && this.#now() < entry.nextCreateAt) return;
+    if (!entry.owner && pass.respectBackoff) {
+      if (this.#now() < entry.nextCreateAt) return;
+      let refuses = false;
+      // Only when configured: an extra await here would reorder queued passes.
+      if (this.options.selectorSocketRefuses) {
+        try {
+          refuses =
+            (await this.options.selectorSocketRefuses(entry.registration.selector)) === true;
+        } catch {
+          /* Not evidence; ask tmux. */
+        }
+      }
+      if (refuses) {
+        // A stale socket: nothing can answer, so nothing is spawned.
+        entry.offlineMisses += 1;
+        entry.nextSweepProbeAt = this.#now() + createRetryDelayMs(entry.offlineMisses);
+        return;
+      }
+    }
     const probeStarted = this.#now();
     const result =
       observed === undefined ? await this.options.probe(entry.registration.selector) : observed;
@@ -303,6 +357,9 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
       else if (pid === undefined) trigger = "server-identity-unknown";
       else if (!(this.options.serverProcessAlive ?? processAlive)(pid))
         trigger = "server-process-gone";
+      // The pid is alive, but a pid can be reused after the server died. A
+      // socket that refuses connections has no server behind it (review: pid reuse).
+      else if (await this.#socketRefuses(current)) trigger = "socket-refused";
       else {
         entry.probeFailures += 1;
         this.#emit({
@@ -469,8 +526,11 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     const queued = this.#serial(async () => {
       if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
       // Sequential admission bounds subprocess work and avoids alias races.
-      for (const entry of this.#entries.values())
+      for (const entry of this.#entries.values()) {
+        // No socket file, no server: an offline registration costs a stat, not a spawn.
+        if (!entry.owner && !this.#socketPresent(entry)) continue;
         await this.#refresh(entry, undefined, { respectBackoff: true });
+      }
       return this.list();
     });
     this.#queuedRefresh = queued;
@@ -492,7 +552,7 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     if (this.#disposed) throw new TmuxServerScopeError("disposed");
     const now = this.#now();
     const offlineDue = [...this.#entries.values()].some(
-      (entry) => !entry.owner && now >= entry.nextCreateAt,
+      (entry) => !entry.owner && now >= entry.nextCreateAt && this.#socketPresent(entry),
     );
     if (
       offlineDue &&
@@ -502,7 +562,8 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
       this.#lastOnlinePassAt = now;
       const pass = this.#serial(async () => {
         for (const entry of this.#entries.values())
-          if (!entry.owner) await this.#refresh(entry, undefined, { respectBackoff: true });
+          if (!entry.owner && this.#socketPresent(entry))
+            await this.#refresh(entry, undefined, { respectBackoff: true });
       })
         .catch(() => undefined)
         .finally(() => {
@@ -525,7 +586,7 @@ export class TmuxServerOwners<T extends DisposableTmuxServerOwner> {
     const due = [...this.#entries.values()].some((entry) =>
       entry.owner
         ? this.#hasCheapEvidence(entry)
-        : now >= Math.max(entry.nextCreateAt, entry.nextSweepProbeAt),
+        : now >= Math.max(entry.nextCreateAt, entry.nextSweepProbeAt) && this.#socketPresent(entry),
     );
     return due ? this.refresh() : Promise.resolve(this.list());
   }

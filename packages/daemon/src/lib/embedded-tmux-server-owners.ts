@@ -19,6 +19,9 @@ import { logger } from "./log.ts";
 import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import {
   createDiagnosedTmuxServerProbe,
+  tmuxSelectorSocketPath,
+  tmuxServerSocketPresent,
+  unixSocketRefusesConnections,
   readTmuxServerRegistrations,
   writeTmuxServerRegistrations,
 } from "./tmux-server-registration.ts";
@@ -143,6 +146,11 @@ export async function createEmbeddedTmuxServerOwners(options: {
   };
   const owners = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe,
+    serverSocketPresent: tmuxServerSocketPresent,
+    selectorSocketRefuses: (selector) =>
+      unixSocketRefusesConnections(tmuxSelectorSocketPath(selector)),
+    socketRefuses: (observation) =>
+      unixSocketRefusesConnections(tmuxSelectorSocketPath(observation.authority.socketSelector)),
     onEvent: logTmuxServerOwnersEvent,
     persist: (registrations) => writeTmuxServerRegistrations(path, registrations),
     create: async (registration, scope, observation) => {

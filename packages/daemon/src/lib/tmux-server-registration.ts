@@ -7,9 +7,11 @@ import {
   renameSync,
   writeFileSync,
   realpathSync,
+  statSync,
   unlinkSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { createConnection } from "node:net";
 import { z } from "zod";
 import { tmuxClientEnvironment } from "./tmux-client-execution.ts";
 import {
@@ -64,6 +66,52 @@ export function writeTmuxServerRegistrations(
   }
 }
 export const TMUX_SERVER_PROBE_TIMEOUT_MS = 500;
+
+/**
+ * Where the daemon's tmux clients find this selector's socket. They run with
+ * a scrubbed environment (no TMUX_TMPDIR), so a named socket is always in
+ * /tmp/tmux-<uid>/.
+ */
+export function tmuxSelectorSocketPath(selector: TmuxServerRegistration["selector"]): string {
+  return selector.kind === "path"
+    ? selector.path
+    : join("/tmp", `tmux-${String(process.getuid?.() ?? 0)}`, selector.name);
+}
+/** One stat: is there a socket file a server could be listening on? */
+export function tmuxServerSocketPresent(selector: TmuxServerRegistration["selector"]): boolean {
+  try {
+    return statSync(tmuxSelectorSocketPath(selector)).isSocket();
+  } catch (error) {
+    // Only "it is not there" means absent; anything else is left to the probe.
+    const code = (error as NodeJS.ErrnoException).code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
+}
+export const SOCKET_CONNECT_TIMEOUT_MS = 250;
+/**
+ * Does this unix socket refuse connections outright (nobody listening, or no
+ * socket at all)? A connection that is accepted is closed at once; a timeout
+ * or any other error is not a refusal.
+ */
+export function unixSocketRefusesConnections(
+  path: string,
+  timeoutMs: number = SOCKET_CONNECT_TIMEOUT_MS,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ path });
+    const settle = (refused: boolean): void => {
+      socket.removeAllListeners();
+      socket.on("error", () => undefined);
+      socket.destroy();
+      resolve(refused);
+    };
+    socket.setTimeout(timeoutMs, () => settle(false));
+    socket.once("connect", () => settle(false));
+    socket.once("error", (error: NodeJS.ErrnoException) =>
+      settle(error.code === "ECONNREFUSED" || error.code === "ENOENT" || error.code === "ENOTSOCK"),
+    );
+  });
+}
 /**
  * Say why a probe produced nothing. Only tmux itself answering "no server"
  * (a clean non-zero exit) is a statement about the server; a timeout or a
