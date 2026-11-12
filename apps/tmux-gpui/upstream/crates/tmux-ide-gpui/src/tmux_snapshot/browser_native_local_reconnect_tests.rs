@@ -365,6 +365,7 @@ fn stale_ready_does_not_clear_recovery() {
         rediscover_owner: false,
         label: None,
         away_since: None,
+        record: None,
     });
     local
         .command(Command::NativeTerminalReady {

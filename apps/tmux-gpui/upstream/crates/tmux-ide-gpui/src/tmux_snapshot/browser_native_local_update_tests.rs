@@ -321,6 +321,44 @@ fn keys_during_the_hold_are_refused_and_never_replayed(cx: &mut gpui::TestAppCon
     view.read_with(cx, |view, _| assert!(!view.input_interrupted));
 }
 
+/// A latch that anything else set first (a cancelled gesture, a rejected
+/// target) still needs the terminal click: only keys refused by a reconnect
+/// are known to have gone nowhere.
+#[gpui::test]
+fn a_latch_set_before_the_drop_does_not_lift_with_the_reconnect(cx: &mut gpui::TestAppContext) {
+    let (mut local, events) = attached();
+    through_the_update(&mut local);
+    let hold = last_catalog(&events);
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        crate::tmux_snapshot::fit_test_support::fixture_view(
+            window,
+            cx,
+            sender,
+            7,
+            State {
+                request: 7,
+                surface: Surface::Workspace,
+                input_ready: true,
+                ..State::default()
+            },
+        )
+    });
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            // Interrupted while the stream was live.
+            view.interrupt_input(cx);
+            view.apply_browser_state(Some(hold.clone()), cx);
+            assert!(!view.offer_terminal_input(cx));
+            let mut back = hold.clone();
+            back.reconnect_attempt = None;
+            back.input_ready = true;
+            view.apply_browser_state(Some(back), cx);
+            assert!(view.input_interrupted, "an older latch was lifted");
+        })
+    });
+}
+
 #[test]
 fn a_session_gone_after_the_update_ends_recovery_on_home() {
     let (mut local, events) = attached();

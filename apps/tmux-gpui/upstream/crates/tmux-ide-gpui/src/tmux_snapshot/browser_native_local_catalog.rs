@@ -39,7 +39,7 @@ impl Local {
                 self.stage = Some(Stage::LocalProve);
                 return self.publish();
             }
-            return self.unavailable("No online tmux servers");
+            return self.unavailable_retrying("No online tmux servers");
         }
         self.local_creation.offer = None;
         self.state.local_session_create = None;

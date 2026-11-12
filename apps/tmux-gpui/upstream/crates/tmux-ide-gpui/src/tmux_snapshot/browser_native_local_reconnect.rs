@@ -42,6 +42,15 @@ pub(super) struct Recovery {
     label: Option<String>,
     /// Since when every catalog has listed the session's server as away.
     away_since: Option<Instant>,
+    /// The daemon record as the last try found it ([`record_stamp`]).
+    record: Option<Stamp>,
+}
+/// A daemon record's modification time and size. A restarted daemon writes a
+/// new record, so a change means the next try need not wait out its backoff.
+type Stamp = (std::time::SystemTime, u64);
+fn record_stamp(record: Option<&PathBuf>) -> Option<Stamp> {
+    let metadata = std::fs::metadata(record?).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
 }
 /// A stream that drops again within [`SETTLED`] of its recovery continues that
 /// recovery's backoff, so a flapping daemon is not retried in a tight loop.
@@ -82,6 +91,7 @@ impl Recovery {
             rediscover_owner: false,
             label: None,
             away_since: None,
+            record: None,
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -198,6 +208,7 @@ impl Local {
             rediscover_owner: false,
             label,
             away_since: None,
+            record: None,
         });
         // A drop, not navigation: agents and the catalog stay on screen. An
         // action in flight is cancelled, never replayed; a session creation
@@ -257,7 +268,13 @@ impl Local {
     }
     pub(super) fn reconnect_tick(&mut self) -> Result<(), Error> {
         // Active or not: a visible window must not stay frozen until clicked.
-        if (self.recovery.as_ref()).is_none_or(|r| r.due.is_none_or(|due| Instant::now() < due)) {
+        let Some(waiting) = self.recovery.as_ref().filter(|r| r.due.is_some()) else {
+            return Ok(());
+        };
+        // A rewritten daemon record is a restarted daemon: try it now.
+        let stamp = record_stamp(waiting.local_record.as_ref());
+        let rewritten = stamp.is_some() && stamp != waiting.record;
+        if !rewritten && waiting.due.is_some_and(|due| Instant::now() < due) {
             return Ok(());
         }
         let Some(mut recovery) = self.recovery.take() else {
@@ -265,6 +282,7 @@ impl Local {
         };
         recovery.attempts = recovery.attempts.saturating_add(1);
         recovery.due = None;
+        recovery.record = stamp;
         if let Some(rebind) = recovery.rebind.clone() {
             // Same daemon: one lease request for the same session, no Home reset.
             if std::mem::take(&mut recovery.rediscover_owner) {

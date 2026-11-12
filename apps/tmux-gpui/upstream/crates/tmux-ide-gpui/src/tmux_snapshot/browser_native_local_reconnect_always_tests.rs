@@ -335,3 +335,120 @@ fn a_drop_during_an_action_reconnects_without_replaying_it() {
     local.reconnect_tick().unwrap();
     assert!(matches!(local.stage, Some(Stage::Issue { .. })));
 }
+
+/// A Home that stopped on a failed load: nothing open, nothing recovering.
+fn stopped_home() -> (Local, mpsc::Receiver<Incoming>) {
+    let (mut local, events) = fixture();
+    local.active = None;
+    local.state.selected_session = None;
+    local.state.selected_pane = None;
+    local
+        .unavailable_retrying("Session changed or is unavailable — refresh to retry")
+        .unwrap();
+    (local, events)
+}
+
+/// The daemon was not running when the app started, or launchd is bringing it
+/// back: 0.1.16 showed "refresh to retry" until someone did.
+#[test]
+fn a_home_that_failed_to_load_keeps_looking_for_the_daemon_without_repainting() {
+    let (mut local, events) = stopped_home();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+    let mut waits = Vec::new();
+    for _ in 0..5 {
+        let wait = local.home.quiet.wait(Instant::now()).unwrap().as_millis();
+        // Rounded to the half second so a slow runner cannot change it.
+        waits.push((wait + 250) / 500 * 500);
+        // Not before it is due.
+        local.quiet_tick().unwrap();
+        assert!(local.stage.is_none());
+        assert!(local.home.quiet.due_now());
+        local.quiet_tick().unwrap();
+        assert!(matches!(local.stage, Some(Stage::Servers)));
+        assert!(local.home.quiet.probing());
+        // The load failed again: nothing is published, the next one is scheduled.
+        local.stage = None;
+        local.quiet_failed();
+        assert!(events.try_recv().is_err(), "a quiet retry repainted Home");
+    }
+    assert_eq!(waits, [1000, 2000, 4000, 5000, 5000]);
+    // The daemon answered: Home starts over as after Refresh.
+    assert!(local.home.quiet.due_now());
+    local.quiet_tick().unwrap();
+    local.home_recovered();
+    assert!(local.state.home_phase == HomePhase::Loading);
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+}
+
+#[test]
+fn only_a_failed_load_of_a_local_daemon_arms_the_quiet_search() {
+    // A stop only the user can clear.
+    let (mut local, _events) = stopped_home();
+    local.unavailable(UPDATE_APP).unwrap();
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+    // A saved SSH machine.
+    let (mut local, _events) = fixture();
+    local.active = None;
+    local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
+        id: uuid::Uuid::new_v4().to_string(),
+        label: "Build".into(),
+        ssh_target: "fixture.invalid".into(),
+        expected_environment_id: None,
+        enabled: true,
+    });
+    local
+        .unavailable_retrying("No online tmux servers")
+        .unwrap();
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+    // Navigation ends the search.
+    let (mut local, _events) = stopped_home();
+    local.home(8).unwrap();
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+    // A window that is no longer stopped does not probe.
+    let (mut local, _events) = stopped_home();
+    local.state.home_phase = HomePhase::Live;
+    assert!(local.home.quiet.due_now());
+    local.quiet_tick().unwrap();
+    assert!(local.stage.is_none());
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+}
+
+/// A restarted daemon writes a new record (a new port and token). The next
+/// try then does not wait out its backoff: launchd bringing the daemon back
+/// reconnects within the 50 ms tick, not up to five seconds later.
+#[test]
+fn a_rewritten_daemon_record_is_tried_at_once() {
+    let dir = std::env::temp_dir().join(format!("tmux-ide-record-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let record = dir.join("daemon.json");
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().local_record = Some(record.clone());
+    // The first try, with no record there (the daemon is gone).
+    local.reconnect_tick().unwrap();
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    for _ in 0..6 {
+        local.recovery.as_mut().unwrap().due = Some(Instant::now());
+        local.reconnect_tick().unwrap();
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+    }
+    let tries = local.recovery.as_ref().unwrap().attempt();
+    let due = local.recovery.as_ref().unwrap().due.unwrap();
+    assert!(due > Instant::now() + Duration::from_secs(4));
+    // Nothing changed: the backoff stands.
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none());
+    // The daemon is back and wrote its record.
+    std::fs::write(&record, b"{\"port\":1}").unwrap();
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Issue { .. })));
+    assert_eq!(local.recovery.as_ref().unwrap().attempt(), tries + 1);
+    // The same record again is not a reason to hurry.
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}

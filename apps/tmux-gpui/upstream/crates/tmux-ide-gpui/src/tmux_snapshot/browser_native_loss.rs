@@ -16,9 +16,79 @@ use std::collections::VecDeque;
 pub(super) struct Releases {
     request: u64,
     at: VecDeque<u64>,
+    stall: Stall,
 }
 const RELEASES: usize = 3;
 const WINDOW_MS: u64 = 10_000;
+/// A stream in the active window that shows frames but was never given input
+/// (seen in the soak after the daemon refused a stream as unavailable: the
+/// window said "Connecting…" until refreshed). After [`STALL_MS`] it is
+/// replaced like a lost stream, at most [`STALLS`] times per request: a pane
+/// that can take no input (its program exited) is then left as it is.
+#[derive(Default)]
+struct Stall {
+    request: u64,
+    replaced: usize,
+    /// The route that is waiting for input, and since when.
+    waiting: Option<(String, u64)>,
+}
+const STALL_MS: u64 = 10_000;
+const STALLS: usize = 2;
+impl Stall {
+    /// Whether the route `id` has now waited [`STALL_MS`] for input.
+    fn expired(&mut self, request: u64, id: &str, waiting: bool, now: u64) -> bool {
+        if self.request != request {
+            *self = Self {
+                request,
+                ..Self::default()
+            };
+        }
+        if !waiting || self.replaced >= STALLS {
+            self.waiting = None;
+            return false;
+        }
+        match &self.waiting {
+            Some((route, since)) if route == id => {
+                if now.saturating_sub(*since) < STALL_MS {
+                    return false;
+                }
+            }
+            _ => {
+                self.waiting = Some((id.to_owned(), now));
+                return false;
+            }
+        }
+        self.waiting = None;
+        self.replaced += 1;
+        true
+    }
+}
+impl Releases {
+    /// Passes a poll result on, or fails it once `current` has waited
+    /// [`STALL_MS`] for input in the active window.
+    pub(super) fn stalled(
+        &mut self,
+        polled: Result<bool, NativeError>,
+        current: &Active,
+        foreground: bool,
+        now: u64,
+    ) -> Result<bool, NativeError> {
+        let dirty = polled?;
+        let waiting = foreground
+            && !current.catalog_only
+            && !current.stream_interrupted
+            && !current.controller.input_ready()
+            && !current.owner.busy();
+        if (self.stall).expired(current.request, &current.id, waiting, now) {
+            return Err(NativeError::Controller(
+                herdr_client::tmux_controller::Error::Transport(
+                    herdr_client::tmux_stream::Error::ReadyTimeout,
+                ),
+            ));
+        }
+        Ok(dirty)
+    }
+}
 impl Releases {
     /// Whether this poll error is a pane-set change to re-lease for now.
     pub(super) fn admit(&mut self, error: &NativeError, request: u64, now: u64) -> bool {

@@ -208,3 +208,39 @@ fn a_pane_set_change_re_leases_a_bounded_number_of_times() {
         "a new request inherited the count"
     );
 }
+
+/// Soak, 12 Nov 2026: after the daemon refused a stream as unavailable, the
+/// next one showed frames but was never given input, and the window said
+/// "Connecting…" until refreshed. Such a stream is replaced after ten seconds.
+#[test]
+fn a_stream_never_given_input_is_replaced_after_ten_seconds_twice_at_most() {
+    let mut stall = Stall::default();
+    assert!(!stall.expired(7, "a", true, 0));
+    assert!(!stall.expired(7, "a", true, 9_999));
+    assert!(stall.expired(7, "a", true, 10_000));
+    // The replacement starts its own wait.
+    assert!(!stall.expired(7, "b", true, 10_100));
+    assert!(!stall.expired(7, "b", true, 20_000));
+    assert!(stall.expired(7, "b", true, 20_100));
+    // A pane that takes no input at all is then left as it is.
+    assert!(!stall.expired(7, "c", true, 20_200));
+    assert!(!stall.expired(7, "c", true, 90_000));
+    // Another request starts over.
+    assert!(!stall.expired(8, "d", true, 90_000));
+    assert!(stall.expired(8, "d", true, 100_000));
+}
+
+#[test]
+fn a_stream_that_gets_input_or_is_inactive_is_never_replaced() {
+    let mut stall = Stall::default();
+    assert!(!stall.expired(7, "a", true, 0));
+    // Input arrived, or the window went inactive: the wait is over.
+    assert!(!stall.expired(7, "a", false, 5_000));
+    assert!(!stall.expired(7, "a", true, 12_000));
+    assert!(!stall.expired(7, "a", true, 21_999));
+    assert!(stall.expired(7, "a", true, 22_000));
+    let mut stall = Stall::default();
+    for now in (0..120_000).step_by(1_000) {
+        assert!(!stall.expired(7, "a", false, now));
+    }
+}

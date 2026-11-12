@@ -61,6 +61,8 @@ mod drop_link;
 mod home_recovery;
 #[path = "browser_native_local_pane_limit.rs"]
 mod pane_limit;
+#[path = "browser_native_local_home_quiet.rs"]
+mod quiet;
 #[path = "browser_native_local_split.rs"]
 mod split;
 #[path = "browser_native_local_stage.rs"]
@@ -281,6 +283,7 @@ impl Local {
     }
     fn unavailable(&mut self, status: &'static str) -> Result<(), Error> {
         self.cancel()?;
+        self.home.quiet = Default::default();
         self.state = State {
             request: self.state.request,
             home_phase: HomePhase::Unavailable,
@@ -448,6 +451,7 @@ impl Local {
         self.selected_catalog_tick()?;
         self.reconnect_tick()?;
         self.home_recovery_tick()?;
+        self.quiet_tick()?;
         if !self.submitted
             && let Some(stage) = &self.stage
         {
@@ -553,6 +557,9 @@ impl Local {
                             self.creation_failed(operation_id, error)?;
                         }
                     }
+                    Err(_) if self.home.quiet.probing() && matches!(stage, Stage::Servers) => {
+                        self.quiet_failed()
+                    }
                     Err(error) if self.home.active() && matches!(stage, Stage::Servers) => {
                         self.home_catalog_failed(error)?
                     }
@@ -563,7 +570,8 @@ impl Local {
                             eprintln!("tmux-ide: reconnect attempt failed: {error}");
                             self.reconnect_retry(reconnect::Failure::of(&error))?;
                         } else {
-                            self.unavailable(
+                            // Home keeps looking for the daemon meanwhile.
+                            self.unavailable_retrying(
                                 "Session changed or is unavailable — refresh to retry",
                             )?;
                             if setup {

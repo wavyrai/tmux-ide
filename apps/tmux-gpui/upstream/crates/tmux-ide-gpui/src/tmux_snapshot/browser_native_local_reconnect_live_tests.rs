@@ -233,3 +233,6 @@ fn a_lost_stream_rebinds_keeping_the_frame_and_typing_works_after() {
     );
     owner.shutdown().unwrap();
 }
+
+#[path = "browser_native_local_soak_live_tests.rs"]
+mod soak;
