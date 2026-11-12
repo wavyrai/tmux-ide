@@ -2,11 +2,13 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { delimiter, join } from "node:path";
@@ -442,6 +444,63 @@ describe("the tmux guard in front of every test", () => {
       if (verdict !== "private") expect(result.stdout).toContain(`TMUX_TMPDIR=${g.directory}`);
     }
   }, 60_000);
+
+  // Review of baa4ce54: the checks judged the text of a path. A path that
+  // only looks private must be judged by where it leads.
+  it("refuses a socket path with .. in it and a socket name with a slash", () => {
+    const g = guard();
+    for (const args of [
+      ["-S", "/tmp/x/../tmux-501/default", "list-sessions"],
+      ["-S", `${g.directory}/..`, "list-sessions"],
+      ["-L", "../../tmux-501/default", "list-sessions"],
+      ["-Lsub/name", "list-sessions"],
+    ]) {
+      const result = g.run(args, { TMUX_TMPDIR: g.directory });
+      expect(result.status, args.join(" ")).toBe(TMUX_GUARD_REFUSAL_EXIT_CODE);
+      expect(result.stdout).toBe("");
+    }
+    expect(refusedTmuxCalls(g)).toHaveLength(4);
+  });
+
+  it("judges a PATH entry and a configured tmux by where they lead, not by their text", () => {
+    const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin" };
+    const installed = installTmuxGuard(environment);
+    directories.push(installed.directory);
+    const guardFirst = environment.PATH!;
+    const fixture = mkdtempSync("/tmp/tmux-ide-test-fixture-");
+    directories.push(fixture);
+    // A fixture that links a system directory, or the system's own binary, into its bin directory.
+    symlinkSync("/usr/bin", join(fixture, "linked-dir"));
+    mkdirSync(join(fixture, "bin"));
+    symlinkSync("/bin/sh", join(fixture, "bin", "tmux"));
+    for (const front of [
+      "/tmp/../usr/bin",
+      "/tmp/x/../../usr/bin",
+      join(fixture, "linked-dir"),
+      join(fixture, "bin"),
+    ]) {
+      expect(
+        () => assertTmuxGuarded({ ...environment, PATH: `${front}:${guardFirst}` }),
+        front,
+      ).toThrow(/no longer first on PATH/u);
+    }
+    for (const configured of ["/tmp/../usr/bin/env", join(fixture, "bin", "tmux")]) {
+      expect(
+        () => assertTmuxGuarded({ ...environment, TMUX_IDE_TMUX_BIN: configured }),
+        configured,
+      ).toThrow(/bypasses the guard/u);
+    }
+    // A real shim in a real temp directory is still accepted, in front and as the configured tmux.
+    mkdirSync(join(fixture, "shim"));
+    writeFileSync(join(fixture, "shim", "tmux"), "#!/bin/sh\n");
+    expect(() =>
+      assertTmuxGuarded({
+        ...environment,
+        PATH: `${join(fixture, "shim")}:${guardFirst}`,
+        TMUX_IDE_TMUX_BIN: join(fixture, "shim", "tmux"),
+      }),
+    ).not.toThrow();
+  });
 
   it("installs once: first on PATH, a private TMUX_TMPDIR, and no inherited live TMUX", () => {
     const environment: NodeJS.ProcessEnv = {
