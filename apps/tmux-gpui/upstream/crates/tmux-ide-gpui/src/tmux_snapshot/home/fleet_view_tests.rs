@@ -266,7 +266,11 @@ fn each_table_input_changes_the_key(cx: &mut TestAppContext) {
         }),
         ("last active", |view| {
             let fleet = view.browser_state.fleet.as_mut().unwrap();
-            fleet.groups[0].sessions[1].last_activity = Some(120);
+            // From weeks ago to "now".
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap();
+            fleet.groups[0].sessions[1].last_activity = Some(now.as_secs() as i64);
         }),
         ("a machine's state", |view| {
             let fleet = view.browser_state.fleet.as_mut().unwrap();
@@ -425,4 +429,22 @@ fn leaving_home_stops_the_tables_spinners(cx: &mut TestAppContext) {
         view.browser_state.surface = browser::Surface::Home;
     });
     assert_eq!(in_table(cx), 1, "and back with it");
+}
+
+/// The key's stand-in for a row's "last active" words changes exactly when
+/// the words do, so an old session's row is not drawn again every minute.
+#[test]
+fn the_last_active_step_changes_with_the_words() {
+    use crate::tmux_snapshot::home::fleet_rows::{last_active, last_active_step};
+    let mut ago = 0;
+    while ago < 40 * 86_400 {
+        let next = ago + 1 + ago / 50;
+        assert_eq!(
+            last_active(ago, 0) == last_active(next, 0),
+            last_active_step(ago, 0) == last_active_step(next, 0),
+            "{ago} s and {next} s ago"
+        );
+        ago = next;
+    }
+    assert_eq!(last_active_step(5, 10), (0, 0), "a time ahead reads as now");
 }

@@ -467,6 +467,22 @@ pub(super) fn layout(session: &browser::fleet::Session) -> String {
 }
 
 /// When a session was last active, said the way a person would.
+/// Which words [`last_active`] gives, as a number: equal exactly when the
+/// words are. The table's key hashes it, so a row is drawn again when its
+/// words change and not before.
+pub(super) fn last_active_step(now: i64, then: i64) -> (u8, i64) {
+    let ago = (now - then).max(0);
+    match ago {
+        0..60 => (0, 0),
+        60..3600 => (1, ago / 60),
+        3600..86_400 => (2, ago / 3600),
+        86_400..172_800 => (3, 0),
+        _ if ago < 7 * 86_400 => (4, ago / 86_400),
+        _ if ago < 14 * 86_400 => (5, 0),
+        _ => (6, ago / (7 * 86_400)),
+    }
+}
+
 pub(super) fn last_active(now: i64, then: i64) -> String {
     let ago = (now - then).max(0);
     match ago {

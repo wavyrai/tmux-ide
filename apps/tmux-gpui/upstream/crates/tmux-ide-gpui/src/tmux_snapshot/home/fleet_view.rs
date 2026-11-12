@@ -6,9 +6,9 @@
 //! The pattern is the sidebar's (`sidebar_view`): the view stays in
 //! `SnapshotView`'s tree at its old place, mounted with the vendored GPUI's
 //! `cached_isolated` while [`SnapshotView::home_fleet_key`] is unchanged. On
-//! the frame the key changes it is drawn uncached, and so it is on every
-//! frame while an assistive client is connected (a replayed view adds no
-//! accessibility nodes). `SnapshotView` still builds the table's elements,
+//! the frame the key changes it is drawn uncached. While an assistive client
+//! is connected GPUI renders it on every frame, since a replayed view adds
+//! no accessibility nodes. `SnapshotView` still builds the table's elements,
 //! inside this view's render, so every handler and helper is unchanged.
 //!
 //! One thing the sidebar doesn't need: the table is as tall as its rows,
@@ -98,9 +98,10 @@ impl SnapshotView {
             .view
             .get_or_insert_with(|| cx.new(|_| HomeFleetView { parent }))
             .clone();
-        // A replayed view prepaints no elements, and the accessibility tree
-        // is built from those: with a client connected, draw every frame.
-        let fresh = cache.key.replace(key) != Some(key) || window.is_a11y_active();
+        // With an assistive client connected the vendored GPUI renders an
+        // isolated view on every frame (a replayed one adds no accessibility
+        // nodes), so that case needs nothing here.
+        let fresh = cache.key.replace(key) != Some(key);
         // Tests read probes that only a fresh paint records.
         #[cfg(test)]
         let fresh = fresh
@@ -152,8 +153,8 @@ impl SnapshotView {
     ) -> u64 {
         let mut hash = DefaultHasher::new();
         let state = &self.browser_state;
-        // The catalog, and what the clocks make of it: "last active" by the
-        // minute, and a machine that has been away for a while.
+        // The catalog, and what the clocks make of it: the words for "last
+        // active", and a machine that has been away for a while.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -338,9 +339,8 @@ fn fleet_hash(fleet: &browser::fleet::Fleet, now: i64, hash: &mut DefaultHasher)
             } = session;
             (server_id, favorite, favorite_action, active, id, name).hash(hash);
             (pane_count, window_count, session_id, selection).hash(hash);
-            // "Last active" reads in whole minutes at its finest.
             last_activity
-                .map(|then| (now - then).max(0) / 60)
+                .map(|then| super::fleet_rows::last_active_step(now, then))
                 .hash(hash);
             favicon.as_ref().map(std::sync::Arc::as_ptr).hash(hash);
         }
