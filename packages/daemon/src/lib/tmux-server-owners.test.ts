@@ -507,6 +507,48 @@ describe("owner retirement needs positive evidence (#840)", () => {
     await f.owners.dispose();
   });
 
+  // Review (non-blocking gap): a tmux server died and another process now has its pid.
+  it("keeps the owner of a dead server whose pid was reused only until tmux answers again", async () => {
+    const f = liveFixture();
+    const original = f.native("socket|41|start-100");
+    f.observations.set("a", original);
+    const first = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(first);
+    // pid 41 is "alive" (another process took it) and the old socket file is still there:
+    // a missed probe cannot tell this from a slow server, so the owner is kept.
+    f.observations.set("a", timeout);
+    expect((await f.owners.sweep())[0]).toMatchObject({ generation: first.generation });
+    expect((await f.owners.refresh())[0]).toMatchObject({ generation: first.generation });
+    expect(owner.dispose).not.toHaveBeenCalled();
+    // A new server on that path has a new socket file: the pinned identity no longer holds,
+    // and that alone is evidence, without any answer from tmux.
+    original.valid.mockReturnValue(false);
+    expect((await f.owners.sweep())[0]).toMatchObject({ state: "offline" });
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
+    await f.owners.dispose();
+  });
+
+  it("tells a restarted server from the old one by start_time even when the pid is the same", async () => {
+    const f = liveFixture();
+    // The fingerprint is socket path + pid + start_time (tmux-server-registration.ts).
+    f.observations.set("a", f.native("socket|41|start-100"));
+    const first = scope(
+      await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }),
+    );
+    const owner = f.owners.current(first);
+    f.observations.set("a", f.native("socket|41|start-200")); // same pid 41, later start_time
+    const [next] = await f.owners.refresh();
+    expect(next).toMatchObject({ state: "online" });
+    expect(next!.generation).not.toBe(first.generation);
+    expect(owner.dispose).toHaveBeenCalledExactlyOnceWith("server-replaced");
+    expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
+      trigger: "fingerprint-changed",
+    });
+    await f.owners.dispose();
+  });
+
   it("retires only when a second probe confirms the evidence", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a1"));

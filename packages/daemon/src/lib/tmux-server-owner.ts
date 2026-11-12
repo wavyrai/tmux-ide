@@ -48,8 +48,7 @@ import { isVisibleFleetSession, type LiveSessionSummary } from "../command-cente
 import { WorkspaceTerminalInventoryRuntime } from "../terminal/attachments/native-runtime.ts";
 import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import { createPaneStreamRuntime } from "../terminal/pane-stream/runtime.ts";
-import { paneStreamCloseForRetirement } from "../terminal/pane-stream/pane-stream-websocket.ts";
-import type { TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
+import { createNativeOwnerTeardown } from "./tmux-server-owner-teardown.ts";
 import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
@@ -264,7 +263,6 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     io: { runTmux: generationRun },
   });
   let disposed = false;
-  let disposePromise: Promise<void> | null = null;
   let observerStarted: Promise<void> | null = null;
   const interactionReceipts = new InteractionReceiptJournal();
   const interactionEvidence = new InteractionEvidenceAuthority(options.environmentId, {
@@ -580,22 +578,19 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       return backend.mutate(...args);
     },
   };
-  const dispose = (retirement?: TmuxServerOwnerRetirement): Promise<void> => {
-    if (disposePromise) return disposePromise;
-    disposed = true;
-    // Streams hear first, and hear why: a retired owner under a live daemon
-    // means "reconnect now", not "the daemon is shutting down" (#840).
-    const streamsClosed = paneStreamRuntime.dispose(paneStreamCloseForRetirement(retirement));
-    streamsClosed.catch(() => undefined);
-    credentialLifetime.abort();
-    sourceCredentials.dispose();
-    authoredReceiptEnricher.dispose();
-    const observationDisposal = observationSelector.dispose();
-    disposePromise = (async () => {
-      const failures: unknown[] = [];
-      const track: TrackTeardownStep =
-        options.trackTeardown ?? (async (_step, work) => await work());
-      const steps: readonly (readonly [string, () => unknown])[] = [
+  const dispose = createNativeOwnerTeardown({
+    serverId: options.serverId,
+    paneStreams: paneStreamRuntime,
+    track: options.trackTeardown,
+    markRetired: () => {
+      disposed = true;
+    },
+    begin: (streamsClosed) => {
+      credentialLifetime.abort();
+      sourceCredentials.dispose();
+      authoredReceiptEnricher.dispose();
+      const observationDisposal = observationSelector.dispose();
+      return [
         ["observation-selector", () => observationDisposal],
         ["session-opener", () => sessionOpener.dispose()],
         ["session-creator", () => sessionCreator.dispose()],
@@ -609,18 +604,8 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
         ["interaction-evidence", () => interactionEvidence.dispose()],
         ["interaction-observation", () => interactionObservation.dispose()],
       ];
-      for (const [step, close] of steps) {
-        try {
-          await track(`owner:${options.serverId}:${step}`, close);
-        } catch (error) {
-          failures.push(error);
-        }
-      }
-      if (failures.length)
-        throw new AggregateError(failures, "Tmux server owner retirement failed");
-    })();
-    return disposePromise;
-  };
+    },
+  });
   try {
     await terminalInventoryRuntime.whenReady();
     await catalog();
