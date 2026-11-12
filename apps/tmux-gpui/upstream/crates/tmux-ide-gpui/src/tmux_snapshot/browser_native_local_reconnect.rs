@@ -248,7 +248,6 @@ impl Local {
         // The daemon closed the stream itself: it is there. Try now, from the
         // start of the backoff, also when a recovery was already under way.
         let fresh = cause.daemon_spoke() && self.flap.fresh();
-        let carried = if fresh { 0 } else { carried };
         let mut recovery = self.recovery.take().unwrap_or_else(|| Recovery {
             target: route.target.clone(),
             pane: self.state.selected_pane.clone(),

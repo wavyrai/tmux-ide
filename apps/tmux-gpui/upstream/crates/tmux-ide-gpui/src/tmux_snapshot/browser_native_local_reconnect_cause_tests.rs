@@ -281,3 +281,16 @@ fn a_session_whose_panes_closed_ends_on_the_first_catalog_without_it() {
         Some("“work” ended: its tmux session is no longer running.")
     );
 }
+
+/// Review of 9c0da9fe (G23): Refresh, Home and every rediscovery try start
+/// over, so nothing the process remembered of the server list answers them.
+#[test]
+fn starting_over_drops_the_remembered_server_list() {
+    use herdr_client::tmux_daemon::starts_over_on_this_thread as starts;
+    let (mut local, _events) = attached();
+    let before = starts();
+    local.restart_discovery(false).unwrap();
+    assert_eq!(starts(), before + 1, "a restart kept the remembered list");
+    local.home(8).unwrap();
+    assert_eq!(starts(), before + 2, "Home kept the remembered list");
+}

@@ -101,7 +101,16 @@ fn remember(
 /// The caller starts over (Refresh, Home, a recovery): what follows asks the
 /// daemon, whatever this process read a moment ago.
 pub fn forget_known_servers() {
+    STARTS_OVER.with(|count| count.set(count.get() + 1));
     forget();
+}
+thread_local! {
+    static STARTS_OVER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+/// How often this thread called [`forget_known_servers`], for callers' tests.
+#[doc(hidden)]
+pub fn starts_over_on_this_thread() -> u64 {
+    STARTS_OVER.with(std::cell::Cell::get)
 }
 /// Something changed, or may have: the next check asks the daemon.
 pub(super) fn forget() {

@@ -94,7 +94,7 @@ mod split_layout;
 mod worker;
 pub use create_session::{CreateOutcome, CreatedSession};
 use serde::Deserialize;
-pub use servers::{ServerRegistration, forget_known_servers};
+pub use servers::{ServerRegistration, forget_known_servers, starts_over_on_this_thread};
 pub use sessions::{Favicon, ServerClient, Session};
 use std::{
     path::{Path, PathBuf},
