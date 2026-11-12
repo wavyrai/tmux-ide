@@ -38,6 +38,14 @@ pub(in crate::tmux_snapshot) struct Cache {
 }
 
 #[cfg(test)]
+impl Cache {
+    /// The next frame draws the table uncached, laid out by its content.
+    pub(in crate::tmux_snapshot) fn forget(&mut self) {
+        self.key = None;
+    }
+}
+
+#[cfg(test)]
 thread_local! {
     static RENDERS: Cell<usize> = const { Cell::new(0) };
 }

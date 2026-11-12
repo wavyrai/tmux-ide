@@ -137,7 +137,10 @@ fn same_as_fresh(
     publish(view, cx, |_, _| {});
     assert_eq!(renders(), before, "{name}: the last frame is a replay");
     let replayed = painted(view, cx);
+    // Fresh: every view rendered, and the table laid out by its content
+    // again, not at the height measured before.
     cx.update(|window, cx| {
+        view.update(cx, |view, _| view.home_fleet.forget());
         window.refresh();
         window.draw(cx).clear(cx);
     });
@@ -222,6 +225,7 @@ fn a_resized_page_draws_the_table_again(cx: &mut TestAppContext) {
     assert!(built(cx, 30), "the rows now in view are built");
     let replayed = painted(&view, cx);
     cx.update(|window, cx| {
+        view.update(cx, |view, _| view.home_fleet.forget());
         window.refresh();
         window.draw(cx).clear(cx);
     });
