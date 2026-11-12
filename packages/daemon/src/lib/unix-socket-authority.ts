@@ -64,8 +64,8 @@ export function captureUnixSocketIdentity(path: string): UnixSocketIdentity {
 /**
  * tmux refuses a socket path longer than `sun_path` ("File name too long"). A
  * server can still be running on such a socket when it was started through a
- * shorter spelling. Use that spelling, but only after proving it is the same
- * socket; `revalidateUnixSocketIdentity` checks its inode again before each use.
+ * shorter spelling. Use that spelling, but only when it names the same socket
+ * inode; `revalidateUnixSocketIdentity` checks that inode again before each use.
  */
 function reachableSpelling(
   given: string,
@@ -80,15 +80,8 @@ function reachableSpelling(
   for (const candidate of candidates) {
     if (candidate === canonicalPath || Buffer.byteLength(candidate) > limit) continue;
     try {
-      const parent = lstatSync(dirname(candidate));
       const socket = lstatSync(candidate, { bigint: true });
-      if (
-        parent.isDirectory() &&
-        socket.isSocket() &&
-        socket.dev === canonical.dev &&
-        socket.ino === canonical.ino &&
-        join(realpathSync(dirname(candidate)), basename(candidate)) === canonicalPath
-      )
+      if (socket.isSocket() && socket.dev === canonical.dev && socket.ino === canonical.ino)
         return candidate;
     } catch {
       // Not a usable spelling; try the next one.
