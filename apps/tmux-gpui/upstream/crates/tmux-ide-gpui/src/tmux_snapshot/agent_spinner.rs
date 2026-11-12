@@ -88,6 +88,11 @@ impl Slots {
             color: style.color,
         });
     }
+    /// Moves to `frame` as a tick would, for tests of what reads it.
+    #[cfg(test)]
+    pub(super) fn set_frame(&self, frame: usize) {
+        self.0.frame.set(frame);
+    }
     #[cfg(test)]
     pub(super) fn colors(&self) -> Vec<Hsla> {
         self.0

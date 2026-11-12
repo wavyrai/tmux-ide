@@ -473,3 +473,6 @@ fn the_sidebar_is_opaque_after_it_fades_in(cx: &mut TestAppContext) {
     });
     assert_eq!(renders(cx), settled, "still drawn after the fade");
 }
+
+#[path = "sidebar_key_tests.rs"]
+mod key;
