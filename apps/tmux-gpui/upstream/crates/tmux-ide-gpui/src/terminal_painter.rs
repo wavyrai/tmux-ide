@@ -7,6 +7,7 @@ mod glyphs;
 mod graphics;
 mod grid;
 mod images;
+mod sprites;
 
 use self::area::whole;
 pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
@@ -15,6 +16,7 @@ use self::graphics::{CellSeparator, Graphic};
 use self::grid::{background_extent, grid_corners, grid_rect, last_row_has_separator};
 pub(crate) use self::images::{CellPixels, ImageTarget, PlacedImages};
 use self::images::{ImageCache, ImageGeometry, below_text};
+use self::sprites::Sprites;
 use crate::config::Theme;
 use crate::terminal::*;
 use gpui::*;
@@ -156,6 +158,11 @@ pub(crate) struct TerminalPainter {
     /// panes' scrollbar rectangles and the images placed this frame.
     bars: Vec<SurfaceRect>,
     placed: Vec<(i32, ImageGeometry, Arc<RenderImage>)>,
+    sprites: Sprites,
+    /// Dev-only: paint glyph by glyph through `Window::paint_glyph`, for
+    /// the parity captures.
+    #[cfg(feature = "visual-capture")]
+    pub(crate) legacy_glyphs: bool,
 }
 
 impl Default for TerminalPainter {
@@ -179,6 +186,9 @@ impl Default for TerminalPainter {
             card_backed: false,
             bars: Vec::new(),
             placed: Vec::new(),
+            sprites: Sprites::default(),
+            #[cfg(feature = "visual-capture")]
+            legacy_glyphs: false,
         }
     }
 }
@@ -799,6 +809,7 @@ impl TerminalPainter {
     ) -> u64 {
         let mut paint_errors = 0;
         let mut glyph_color = GlyphColor::default();
+        self.sprites.begin();
         for index in cell_ranges(frame, area).flatten() {
             let Some(cell) = frame.cell_at(index) else {
                 continue;
@@ -873,7 +884,17 @@ impl TerminalPainter {
                     px((index / usize::from(frame.width())) as f32 * self.cell_height),
                 );
             let color = glyph_color.get(cell_colors(cell, &self.theme).0);
-            let result = paint_glyphs(shaped, position, px(self.cell_height), color, window);
+            #[cfg(feature = "visual-capture")]
+            let result = if self.legacy_glyphs {
+                paint_glyphs(shaped, position, px(self.cell_height), color, window)
+            } else {
+                self.sprites
+                    .push_line(shaped, position, px(self.cell_height), color, window)
+            };
+            #[cfg(not(feature = "visual-capture"))]
+            let result =
+                self.sprites
+                    .push_line(shaped, position, px(self.cell_height), color, window);
             paint_errors += u64::from(result.is_err());
             #[cfg(feature = "integration-test")]
             {
@@ -881,6 +902,7 @@ impl TerminalPainter {
                 counts.paint_errors += usize::from(result.is_err());
             }
         }
+        self.sprites.flush(window);
         paint_errors
     }
 

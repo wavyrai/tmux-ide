@@ -20,6 +20,8 @@ use std::{
 
 #[path = "visual_capture_mock.rs"]
 mod mock;
+#[path = "visual_capture_parity.rs"]
+pub mod parity;
 #[path = "visual_capture_perf.rs"]
 pub mod perf;
 #[path = "visual_capture_reader.rs"]

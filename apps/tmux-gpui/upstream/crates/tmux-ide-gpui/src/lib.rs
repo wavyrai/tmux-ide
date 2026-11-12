@@ -36,6 +36,9 @@ pub(crate) use actions::{Quit, RunCommand};
 pub use tmux_snapshot::visual_capture::capture_catalog_themes;
 #[cfg(feature = "visual-capture")]
 #[doc(hidden)]
+pub use tmux_snapshot::visual_capture::parity::glyph_parity;
+#[cfg(feature = "visual-capture")]
+#[doc(hidden)]
 pub use tmux_snapshot::visual_capture::perf::{AllocCounter, SCENARIOS, perf_bench};
 
 pub fn run_tmux() -> std::process::ExitCode {
