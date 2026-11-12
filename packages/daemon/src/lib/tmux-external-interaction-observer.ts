@@ -23,6 +23,20 @@ import {
 
 const HOOK_MARKER = "tmux-ide-interaction-v3";
 const OWNED_HOOK_MARKER = "tmux-ide-interaction-v";
+/** The retention name of one observer: the marker plus its daemon id. */
+const OWNER_NAME =
+  /tmux-ide-interaction-v3-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/u;
+const OWNER_RECORD = /^retention-owner pid=([1-9][0-9]{0,9})$/u;
+/** Observers of THIS process that are installed and not yet disposed. */
+const liveLocalObservers = new Set<string>();
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
 const FIELD_SEPARATOR = "|tmux-ide-input-field-v1|";
 const EVENT_SEPARATOR = "|tmux-ide-input-event-v1|";
 export interface ExternalTmuxInteractionGap {
@@ -313,17 +327,19 @@ export function parseTmuxInputHookRecords(raw: string): readonly TmuxInputHookRe
   return records;
 }
 
-function hookIndexes(
+/** Every tmux-ide hook of this array, with the observer it belongs to (null: a legacy hook). */
+function ownedHooks(
   output: string,
   hookName: "after-send-keys" | "after-capture-pane",
-): readonly number[] {
+): readonly { readonly index: number; readonly owner: string | null }[] {
   const row = new RegExp(`^${hookName}\\[([0-9]+)\\]\\s+(.+)$`, "u");
-  const indexes: number[] = [];
+  const hooks: { index: number; owner: string | null }[] = [];
   for (const line of output.split("\n")) {
     const match = row.exec(line);
-    if (match && match[2]!.includes(OWNED_HOOK_MARKER)) indexes.push(Number(match[1]!));
+    if (match && match[2]!.includes(OWNED_HOOK_MARKER))
+      hooks.push({ index: Number(match[1]!), owner: OWNER_NAME.exec(match[2]!)?.[0] ?? null });
   }
-  return indexes;
+  return hooks;
 }
 
 /**
@@ -359,6 +375,7 @@ export class TmuxExternalInteractionObserver {
   #diagnostics: ExternalTmuxObserverDiagnostics | null;
   #diagnosticActiveOperations = 0;
   readonly #authenticatedInternalReads: AuthenticatedInternalReadVerifier;
+  readonly #ownerProcess: { readonly pid: number; readonly isAlive: (pid: number) => boolean };
 
   constructor(options: {
     daemonInstanceId: string;
@@ -382,7 +399,10 @@ export class TmuxExternalInteractionObserver {
     onGap?: (gap: ExternalTmuxInteractionGap) => void;
     /** Health-check cadence bounds. Tests inject small values; production uses the default. */
     healthcheck?: Partial<HookHealthcheckSchedule>;
+    /** This daemon's process and the liveness test for another's. Tests inject both. */
+    ownerProcess?: { readonly pid: number; readonly isAlive: (pid: number) => boolean };
   }) {
+    this.#ownerProcess = options.ownerProcess ?? { pid: process.pid, isAlive: processIsAlive };
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#healthcheckSchedule = Object.freeze({
       baseMs: options.healthcheck?.baseMs ?? DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.baseMs,
@@ -449,6 +469,7 @@ export class TmuxExternalInteractionObserver {
       });
       if (!isTmuxServerUnavailable(error)) {
         this.#active = false;
+        liveLocalObservers.delete(this.#bufferName);
         throw error;
       }
       // A configless first run legitimately has no tmux server yet. Keep the
@@ -462,6 +483,7 @@ export class TmuxExternalInteractionObserver {
         await this.#removeOwnedHooks();
         await this.#deleteRetention();
       });
+      liveLocalObservers.delete(this.#bufferName);
       throw new Error("tmux external interaction observer was disposed during startup");
     }
     this.#loop = this.#run();
@@ -519,6 +541,8 @@ export class TmuxExternalInteractionObserver {
   }
 
   async dispose(): Promise<void> {
+    // From here on another observer of this process may clear what this one leaves.
+    liveLocalObservers.delete(this.#bufferName);
     if (!this.#active && !this.#loop && !this.#starting && !this.#installed) return;
     const starting = this.#starting;
     this.#active = false;
@@ -539,12 +563,24 @@ export class TmuxExternalInteractionObserver {
   }
 
   async #install(signal?: AbortSignal): Promise<void> {
-    await this.#removeOwnedHooks(signal);
-    await this.#deleteOwnedBuffers(signal);
+    const others = await this.#liveOtherObservers(signal);
+    await this.#removeOwnedHooks(signal, others);
+    await this.#deleteOwnedBuffers(signal, others);
     signal?.throwIfAborted();
-    // The small named buffer indexes retention options for crash cleanup;
-    // event data lives only in bounded options, never in this buffer.
-    await this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "retention-owner"], signal);
+    liveLocalObservers.add(this.#bufferName);
+    // The small named buffer indexes retention options for crash cleanup and
+    // names the owning process: another daemon on this server leaves these
+    // hooks alone while that process lives, and clears them once it is gone.
+    // Event data lives only in bounded options, never in this buffer.
+    await this.#io.runTmux(
+      [
+        "set-buffer",
+        "-b",
+        this.#bufferName,
+        `retention-owner pid=${String(this.#ownerProcess.pid)}`,
+      ],
+      signal,
+    );
     const hook = (
       operationKind: ExternalTmuxInteraction["operationKind"],
       markerOption: string,
@@ -813,7 +849,51 @@ export class TmuxExternalInteractionObserver {
     });
   }
 
-  async #removeOwnedHooks(signal?: AbortSignal): Promise<void> {
+  /**
+   * The other observers on this tmux server whose owner is alive: another
+   * daemon process, or another owner generation of this one. Their hooks,
+   * buffers and options are not ours to remove. Null when the server would
+   * not say; then nothing foreign is touched at all.
+   */
+  async #liveOtherObservers(signal?: AbortSignal): Promise<ReadonlySet<string> | null> {
+    let output: string;
+    try {
+      output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
+    } catch {
+      return null;
+    }
+    const live = new Set<string>();
+    for (const name of output.split("\n")) {
+      if (name === this.#bufferName || OWNER_NAME.exec(name)?.[0] !== name) continue;
+      let record: string;
+      try {
+        record = (await this.#io.runTmux(["show-buffer", "-b", name], signal)).trim();
+      } catch {
+        continue;
+      }
+      const pid = Number(OWNER_RECORD.exec(record)?.[1]);
+      // A marker without a pid was written by an older daemon; as before, it is cleared.
+      if (!Number.isSafeInteger(pid)) continue;
+      if (
+        pid === this.#ownerProcess.pid
+          ? liveLocalObservers.has(name)
+          : this.#ownerProcess.isAlive(pid)
+      )
+        live.add(name);
+    }
+    return live;
+  }
+
+  /**
+   * Remove this observer's hooks, and those nobody alive owns (a crashed
+   * daemon's, legacy ones). Never another live observer's: two daemons on one
+   * tmux server would otherwise keep taking each other's hooks away.
+   */
+  async #removeOwnedHooks(
+    signal?: AbortSignal,
+    others?: ReadonlySet<string> | null,
+  ): Promise<void> {
+    const live = others === undefined ? await this.#liveOtherObservers(signal) : others;
     for (const hookName of ["after-send-keys", "after-capture-pane"] as const) {
       let output: string;
       try {
@@ -821,7 +901,9 @@ export class TmuxExternalInteractionObserver {
       } catch {
         continue;
       }
-      for (const index of hookIndexes(output, hookName)) {
+      for (const { index, owner } of ownedHooks(output, hookName)) {
+        if (owner !== this.#bufferName && (live === null || (owner !== null && live.has(owner))))
+          continue;
         try {
           await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
         } catch {
@@ -896,7 +978,11 @@ export class TmuxExternalInteractionObserver {
     await this.#deleteBuffer(this.#bufferName);
   }
 
-  async #deleteOwnedBuffers(signal?: AbortSignal): Promise<void> {
+  async #deleteOwnedBuffers(
+    signal: AbortSignal | undefined,
+    live: ReadonlySet<string> | null,
+  ): Promise<void> {
+    if (live === null) return;
     let output: string;
     try {
       output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
@@ -905,6 +991,7 @@ export class TmuxExternalInteractionObserver {
     }
     for (const name of output.split("\n")) {
       if (!name.startsWith(OWNED_HOOK_MARKER) || name === this.#bufferName) continue;
+      if (live.has(name)) continue;
       if (/^[A-Za-z0-9._-]{1,256}$/u.test(name)) {
         await this.#deleteOption(tmuxInteractionOption(name), signal);
         await this.#deleteOption(`${tmuxInteractionOption(name)}-drain`, signal);

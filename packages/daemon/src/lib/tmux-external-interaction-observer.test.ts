@@ -1101,3 +1101,202 @@ describe("blocking wait client cancellation", () => {
     ).resolves.toBeUndefined();
   }, 10_000);
 });
+
+// Two tmux-ide daemons on one tmux server (an upgrade overlap, a development
+// instance, a test daemon) must not take each other's hooks away.
+describe("interaction hooks of several daemons on one tmux server", () => {
+  const A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+  const B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+  const C = "cccccccc-3333-4333-8333-cccccccccccc";
+
+  /** Just enough of a tmux server: global hook arrays, paste buffers, options. */
+  function sharedServer() {
+    const hooks = new Map<string, Map<number, string>>(HOOK_NAMES.map((name) => [name, new Map()]));
+    const buffers = new Map<string, string>();
+    const options = new Map<string, string>();
+    let failListBuffers = false;
+    const runTmux = async (args: readonly string[]): Promise<string> => {
+      if (args[0] === "show-hooks")
+        return HOOK_NAMES.filter((name) => args.includes(name))
+          .map((name) => {
+            const array = hooks.get(name)!;
+            return array.size === 0
+              ? name
+              : [...array].map(([index, body]) => `${name}[${index}] ${body}`).join("\n");
+          })
+          .join("\n");
+      if (args[0] === "set-hook" && args[1] === "-ag") {
+        const array = hooks.get(args[2]!)!;
+        array.set(Math.max(-1, ...array.keys()) + 1, args[3]!);
+        return "";
+      }
+      if (args[0] === "set-hook" && args[1] === "-gu") {
+        const match = /^(.+)\[(\d+)\]$/u.exec(args[2]!)!;
+        hooks.get(match[1]!)!.delete(Number(match[2]));
+        return "";
+      }
+      if (args[0] === "list-buffers") {
+        if (failListBuffers) throw new Error("server busy");
+        return [...buffers.keys()].join("\n");
+      }
+      if (args[0] === "set-buffer") {
+        buffers.set(args[2]!, args[3]!);
+        return "";
+      }
+      if (args[0] === "show-buffer") {
+        const value = buffers.get(args[2]!);
+        if (value === undefined) throw new Error("no buffer");
+        return value;
+      }
+      if (args[0] === "delete-buffer") {
+        buffers.delete(args[2]!);
+        return "";
+      }
+      if (args[0] === "set-option" && args[1] === "-gu") {
+        options.delete(args[2]!);
+        return "";
+      }
+      return "";
+    };
+    const owners = () =>
+      [
+        ...new Set(
+          [...hooks.values()]
+            .flatMap((array) => [...array.values()])
+            .map((body) => /tmux-ide-interaction-v3-([0-9a-f-]{36})/u.exec(body)?.[1] ?? "legacy"),
+        ),
+      ].sort();
+    return {
+      hooks,
+      buffers,
+      options,
+      runTmux,
+      owners,
+      failListBuffers: (fail: boolean) => (failListBuffers = fail),
+    };
+  }
+
+  function daemon(
+    server: ReturnType<typeof sharedServer>,
+    id: string,
+    pid: number,
+    alive: ReadonlySet<number>,
+  ) {
+    const gaps: string[] = [];
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: id,
+      tmuxAuthority: {
+        executablePath: process.execPath,
+        socketSelector: { kind: "name", name: "shared" },
+      },
+      registry: registry(),
+      onObserved: () => false,
+      onGap: (gap) => gaps.push(gap.reason),
+      ownerProcess: { pid, isAlive: (candidate) => alive.has(candidate) },
+      io: {
+        runTmux: server.runTmux,
+        waitForSignal: (_channel, signal) =>
+          new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve())),
+        delay: async () => undefined,
+      },
+    });
+    return { observer, gaps };
+  }
+
+  it("a second daemon's install leaves the first daemon's hooks, buffer and options alone", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    const b = daemon(server, B, 200, alive);
+    await a.observer.install();
+    server.options.set(`@tmux-ide-interaction-v3-${A}`, "pending records of A");
+    await b.observer.install();
+    expect(server.owners()).toEqual([A, B]);
+    expect([...server.buffers.keys()].sort()).toEqual([
+      `tmux-ide-interaction-v3-${A}`,
+      `tmux-ide-interaction-v3-${B}`,
+    ]);
+    expect(server.options.has(`@tmux-ide-interaction-v3-${A}`)).toBe(true);
+    // Neither health check finds anything to repair, however often they alternate.
+    for (let round = 0; round < 5; round += 1) {
+      await a.observer.reconcileHooks({ allowInactive: true });
+      await b.observer.reconcileHooks({ allowInactive: true });
+    }
+    expect(a.gaps).toEqual([]);
+    expect(b.gaps).toEqual([]);
+    expect(server.owners()).toEqual([A, B]);
+  });
+
+  it("a daemon that leaves removes only its own hooks", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    const b = daemon(server, B, 200, alive);
+    await a.observer.start();
+    await b.observer.start();
+    await b.observer.dispose();
+    expect(server.owners()).toEqual([A]);
+    expect([...server.buffers.keys()]).toEqual([`tmux-ide-interaction-v3-${A}`]);
+    await a.observer.reconcileHooks();
+    expect(a.gaps).toEqual([]);
+    await a.observer.dispose();
+    expect(server.owners()).toEqual([]);
+    expect(server.buffers.size).toBe(0);
+  });
+
+  it("still clears what a dead daemon left behind, and legacy hooks", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const crashed = daemon(server, A, 100, alive);
+    await crashed.observer.install(); // then its process dies without disposing
+    alive.delete(100);
+    server.hooks.get("after-send-keys")!.set(40, "run-shell tmux-ide-interaction-v1-stale");
+    // A hook whose owner left no marker buffer at all.
+    server.hooks.get("after-capture-pane")!.set(41, `run-shell tmux-ide-interaction-v3-${C}-ready`);
+    server.options.set(`@tmux-ide-interaction-v3-${A}`, "orphaned");
+    const b = daemon(server, B, 200, alive);
+    await b.observer.install();
+    expect(server.owners()).toEqual([B]);
+    expect([...server.buffers.keys()]).toEqual([`tmux-ide-interaction-v3-${B}`]);
+    expect(server.options.has(`@tmux-ide-interaction-v3-${A}`)).toBe(false);
+  });
+
+  it("tells its own process's live observers from ones it already disposed", async () => {
+    const server = sharedServer();
+    const alive = new Set([100]);
+    // One daemon process, two owner generations in a row plus one still running.
+    const first = daemon(server, A, 100, alive);
+    const second = daemon(server, B, 100, alive);
+    await first.observer.start();
+    await second.observer.start();
+    expect(server.owners()).toEqual([A, B]);
+    // A generation of this process whose teardown never removed its hooks.
+    await first.observer.dispose();
+    server.hooks.get("after-send-keys")!.set(50, `run-shell tmux-ide-interaction-v3-${A}-ready`);
+    server.buffers.set(`tmux-ide-interaction-v3-${A}`, "retention-owner pid=100");
+    const third = daemon(server, C, 100, alive);
+    await third.observer.install();
+    expect(server.owners()).toEqual([B, C]);
+    await second.observer.dispose();
+    await third.observer.dispose();
+  });
+
+  it("touches nothing foreign when it cannot tell who is alive", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    await a.observer.install();
+    server.hooks.get("after-send-keys")!.set(40, "run-shell tmux-ide-interaction-v1-stale");
+    server.failListBuffers(true);
+    const b = daemon(server, B, 200, alive);
+    await b.observer.install();
+    expect(server.owners()).toEqual([A, B, "legacy"]);
+  });
+
+  it("writes its process id into its marker, the only thing another daemon can check", async () => {
+    const server = sharedServer();
+    const a = daemon(server, A, 4242, new Set([4242]));
+    await a.observer.install();
+    expect(server.buffers.get(`tmux-ide-interaction-v3-${A}`)).toBe("retention-owner pid=4242");
+  });
+});
