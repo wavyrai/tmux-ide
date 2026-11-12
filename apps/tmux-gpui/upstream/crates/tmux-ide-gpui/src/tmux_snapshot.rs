@@ -705,7 +705,7 @@ impl SnapshotView {
                                         },
                                         view.last_resize,
                                         pixels_changed,
-                                        std::time::Instant::now(),
+                                        geometry::fit_now(),
                                     )
                                     && let (Some(sender), Some(id)) =
                                         (&view.browser_commands, &view.browser_state.selected_pane)

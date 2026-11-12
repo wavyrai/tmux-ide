@@ -35,6 +35,21 @@ pub(super) fn reselect_fit(
 
 /// Matches the existing Herdr window settle interval without holding a UI task.
 const FIT_QUIET: std::time::Duration = std::time::Duration::from_millis(150);
+/// The clock the quiet interval runs on.
+#[cfg(not(test))]
+pub(super) fn fit_now() -> std::time::Instant {
+    std::time::Instant::now()
+}
+/// In tests it stands still for each test's thread. On the real clock a fit
+/// came due whenever a loaded machine put 150 ms between two draws of a test,
+/// and tests that count commands then saw one resize too many (#733).
+#[cfg(test)]
+pub(super) fn fit_now() -> std::time::Instant {
+    thread_local! {
+        static NOW: std::time::Instant = std::time::Instant::now();
+    }
+    NOW.with(|now| *now)
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) struct Fit {
     pub request: u64,
