@@ -38,6 +38,7 @@ import { createSessionFaviconResolver, type SessionFavicon } from "../lib/sessio
 import { WorkspaceMultiplexerError } from "../lib/workspace-multiplexer-verbs.ts";
 import { WorkspacePaneCreationError } from "../lib/workspace-pane-creation.ts";
 import { ownerBearerMatches } from "./owner-authority.ts";
+import { logger } from "../lib/log.ts";
 import { mountPaneStreamIssueRoute } from "./pane-stream-issue.ts";
 import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-inventory.ts";
 
@@ -96,6 +97,16 @@ function failure(c: Context, error: unknown): Response {
     return c.json({ error: { code: error.code } }, 409);
   if (error instanceof z.ZodError || error instanceof SyntaxError || error instanceof TypeError)
     return c.json({ error: { code: "invalid-request" } }, 400);
+  // Everything above tells the client its cause. This answer does not, and a
+  // client can only retry it: the cause goes to the daemon's own log.
+  const code = (error as { code?: unknown } | null)?.code;
+  logger.warn("tmux-server-routes", "request failed as server-unavailable", {
+    method: c.req.method,
+    route: c.req.routePath,
+    errorName: error instanceof Error ? error.name : typeof error,
+    ...(typeof code === "string" ? { errorCode: code.slice(0, 80) } : {}),
+    error: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+  });
   return c.json({ error: { code: "server-unavailable" } }, 503);
 }
 /** Owner capability is mandatory even when the ordinary local HTTP surface is open. */
