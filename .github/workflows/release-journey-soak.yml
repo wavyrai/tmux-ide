@@ -105,6 +105,8 @@ jobs:
             ${{ runner.temp }}/soak/*.txt
             ${{ runner.temp }}/soak/*.log
             ${{ runner.temp }}/soak/run-*/linked-refusal-frame.txt
+            ${{ runner.temp }}/soak/run-*/installed-daemon-*.log
+            ${{ runner.temp }}/soak/run-*/daemon-stop-*.json
             ${{ runner.temp }}/soak/run-*/recreated-agent-*
             ${{ runner.temp }}/soak/run-*/linked-refusal-*
             ${{ runner.temp }}/soak/run-*/*.performance.jsonl

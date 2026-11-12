@@ -19,6 +19,10 @@ import { logger } from "./log.ts";
 import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import {
   createDiagnosedTmuxServerProbe,
+  tmuxSelectorSocketPath,
+  tmuxServerProcessReplaced,
+  tmuxServerSocketPresent,
+  unixSocketRefusesConnections,
   readTmuxServerRegistrations,
   writeTmuxServerRegistrations,
 } from "./tmux-server-registration.ts";
@@ -63,6 +67,12 @@ export async function createEmbeddedTmuxServerOwners(options: {
   readonly stateDirectory: string;
   readonly webSocketBaseUrl: string;
   readonly trackTeardown?: TrackTeardownStep;
+  /**
+   * The set of online servers changed while the daemon runs: one came online,
+   * or one was retired. Clients that list servers only when told (the Home
+   * view) would otherwise keep showing the old answer.
+   */
+  readonly onServersChanged?: () => void;
 }) {
   const path = join(options.stateDirectory, "tmux-servers.json");
   const persisted = readTmuxServerRegistrations(path);
@@ -143,7 +153,23 @@ export async function createEmbeddedTmuxServerOwners(options: {
   };
   const owners = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe,
-    onEvent: logTmuxServerOwnersEvent,
+    serverSocketPresent: tmuxServerSocketPresent,
+    selectorSocketRefuses: (selector) =>
+      unixSocketRefusesConnections(tmuxSelectorSocketPath(selector)),
+    serverProcessReplaced: tmuxServerProcessReplaced,
+    onEvent: (event) => {
+      logTmuxServerOwnersEvent(event);
+      if (
+        event.type === "owner-created" ||
+        (event.type === "owner-retired" && event.trigger !== "owners-disposed")
+      ) {
+        try {
+          options.onServersChanged?.();
+        } catch {
+          /* An announcement never decides ownership. */
+        }
+      }
+    },
     persist: (registrations) => writeTmuxServerRegistrations(path, registrations),
     create: async (registration, scope, observation) => {
       // The default owner was never adopted (or already retired): the native

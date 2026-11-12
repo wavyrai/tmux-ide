@@ -17,7 +17,7 @@ import {
   runHeadlessDaemon,
   type HeadlessDaemonDependencies,
 } from "../headless-daemon.ts";
-import { logger } from "../log.ts";
+import { _resetLogStateForTests, logger, structuredLogStream } from "../log.ts";
 
 function daemonInfo(overrides: Partial<CanonicalDaemonInfo> = {}): CanonicalDaemonInfo {
   return {
@@ -880,6 +880,47 @@ describe("bounded stop on a signal", () => {
     }
   });
 
+  // Review N9: early progress must not double the wait for a teardown that then hangs.
+  it("counts the deadline from the last step that settled, not from a fixed look", async () => {
+    const f = bounded(120);
+    const start = f.harness.deps.startEmbeddedDaemon;
+    let settled = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...f.deps,
+        signalStopMaxMs: 5_000,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          // The first stages finish at once, as in a real stop; then it hangs.
+          stop: () => {
+            setTimeout(() => (settled = 3), 20);
+            return never;
+          },
+          stopDiagnostics: () => ({ ...stuck, stepsSettled: settled }),
+          abandon: f.abandon,
+        }),
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(f.harness.lines).toHaveLength(1));
+      const signalled = performance.now();
+      f.harness.signals.get("SIGTERM")?.();
+      await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
+      const waited = performance.now() - signalled;
+      // 120 ms after the progress at 20 ms; a fixed look every 120 ms would exit at 240.
+      expect(waited).toBeGreaterThanOrEqual(120);
+      expect(waited).toBeLessThan(210);
+      expect(f.errors).toHaveBeenCalledExactlyOnceWith(
+        "daemon-lifecycle",
+        expect.any(String),
+        expect.objectContaining({ deadlineMs: 120, maxMs: 5_000, stepsSettled: 3 }),
+      );
+    } finally {
+      f.errors.mockRestore();
+    }
+  });
+
   it("caps a stop that keeps moving but never ends at the total bound", async () => {
     const f = bounded(40);
     const start = f.harness.deps.startEmbeddedDaemon;
@@ -904,9 +945,9 @@ describe("bounded stop on a signal", () => {
       const signalled = performance.now();
       f.harness.signals.get("SIGTERM")?.();
       await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
-      // Three 40 ms windows fit into 130 ms; a fourth would not.
+      // It keeps moving, so only the total bound ends it: at 130 ms, not earlier.
       const waited = performance.now() - signalled;
-      expect(waited).toBeGreaterThanOrEqual(115);
+      expect(waited).toBeGreaterThanOrEqual(125);
       expect(waited).toBeLessThan(1_000);
       expect(f.exit).toHaveBeenCalledExactlyOnceWith(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
       expect(f.errors).toHaveBeenCalledExactlyOnceWith(
@@ -1003,6 +1044,155 @@ describe("what a retiring generation tells its streams", () => {
     await expect(running).resolves.toBe("stopped");
     expect(stops).toEqual([undefined]);
     expect(harness.startOptions).toHaveLength(1);
+  });
+});
+
+// Bug sweep, section A: the port changed on an in-place restart, and a restart whose stop hung waited for ever.
+describe("a restart in place", () => {
+  const never = new Promise<void>(() => {});
+
+  it("serves the next generation on the port the previous one had", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    let starts = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        startEmbeddedDaemon: async (options) => {
+          const generation = ++starts;
+          return { ...(await start(options)), tmuxAuthorityReplaced: async () => generation === 1 };
+        },
+      },
+    );
+    await vi.waitFor(() => expect(harness.lines).toHaveLength(2), { timeout: 3_000 });
+    // Nobody asked for a port the first time; the second generation asks for the first one's.
+    expect(harness.startOptions.map((options) => options.port)).toEqual([undefined, 4321]);
+    harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+  });
+
+  it("falls back to a free port when the previous one cannot be had again", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const warned = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    let starts = 0;
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        startEmbeddedDaemon: async (options) => {
+          const attempt = ++starts;
+          if (attempt === 2) {
+            harness.startOptions.push(options);
+            throw Object.assign(new Error("listen EADDRINUSE 127.0.0.1:4321"), {
+              code: "EADDRINUSE",
+            });
+          }
+          return { ...(await start(options)), tmuxAuthorityReplaced: async () => attempt === 1 };
+        },
+      },
+    );
+    try {
+      await vi.waitFor(() => expect(harness.lines).toHaveLength(2), { timeout: 3_000 });
+      expect(harness.startOptions.map((options) => options.port)).toEqual([
+        undefined,
+        4321,
+        undefined,
+      ]);
+      expect(warned).toHaveBeenCalledWith(
+        "daemon-lifecycle",
+        "could not keep the previous port; picking a free one",
+        expect.objectContaining({ port: 4321, error: expect.stringContaining("EADDRINUSE") }),
+      );
+      harness.signals.get("SIGTERM")?.();
+      await expect(running).resolves.toBe("stopped");
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  it("does not retry a port the caller asked for", async () => {
+    const harness = createHarness();
+    const failure = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+    await expect(
+      runHeadlessDaemon(
+        { port: "4999" },
+        {
+          ...harness.deps,
+          startEmbeddedDaemon: async (options) => {
+            harness.startOptions.push(options);
+            throw failure;
+          },
+        },
+      ),
+    ).rejects.toBe(failure);
+    expect(harness.startOptions.map((options) => options.port)).toEqual([4999]);
+  });
+
+  it("ends the process when the old generation's teardown hangs, instead of serving nothing for ever", async () => {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const exit = vi.fn<(code: number) => void>();
+    const abandon = vi.fn();
+    const errors = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const running = runHeadlessDaemon(
+      {},
+      {
+        ...harness.deps,
+        exit,
+        signalStopDeadlineMs: 60,
+        startEmbeddedDaemon: async (options) => ({
+          ...(await start(options)),
+          tmuxAuthorityReplaced: async () => true,
+          stop: () => never,
+          abandon,
+        }),
+      },
+    );
+    try {
+      // No signal is ever sent: the 1 s authority poll starts the restart, and its stop hangs.
+      await expect(running).rejects.toMatchObject({ code: "DAEMON_STOP_TIMEOUT" });
+      expect(exit).toHaveBeenCalledExactlyOnceWith(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
+      expect(abandon).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveBeenCalledExactlyOnceWith(
+        "daemon-lifecycle",
+        expect.any(String),
+        expect.objectContaining({
+          signal: "restart",
+          trigger: "tmux-authority-replaced",
+          generation: 1,
+          phase: "stopping",
+        }),
+      );
+      expect(harness.startOptions).toHaveLength(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
+describe("stdout of --headless --json", () => {
+  it("is reserved for the status document: log records move to stderr only with --json", async () => {
+    _resetLogStateForTests();
+    try {
+      const plain = createHarness();
+      const first = runHeadlessDaemon({}, plain.deps);
+      await vi.waitFor(() => expect(plain.lines).toHaveLength(1));
+      expect(structuredLogStream()).toBe("stdout");
+      plain.signals.get("SIGTERM")?.();
+      await first;
+
+      const json = createHarness();
+      const second = runHeadlessDaemon({ json: true }, json.deps);
+      await vi.waitFor(() => expect(json.lines).toHaveLength(1));
+      expect(structuredLogStream()).toBe("stderr");
+      expect(JSON.parse(json.lines[0]!)).toMatchObject({ status: "ready" });
+      json.signals.get("SIGTERM")?.();
+      await second;
+    } finally {
+      _resetLogStateForTests();
+    }
   });
 });
 

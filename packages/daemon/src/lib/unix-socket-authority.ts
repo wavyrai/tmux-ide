@@ -57,9 +57,27 @@ export function revalidateUnixSocketIdentity(identity: UnixSocketIdentity): stri
     !current.isSocket() ||
     current.dev !== BigInt(identity.dev) ||
     current.ino !== BigInt(identity.ino) ||
-    current.mtimeNs !== identity.mtimeNs ||
-    current.birthtimeNs !== identity.birthtimeNs
+    current.birthtimeNs !== identity.birthtimeNs ||
+    (!birthtimeIdentifiesFile(process.platform) && current.mtimeNs !== identity.mtimeNs)
   )
     throw new TypeError("Unix socket authority changed before use");
   return identity.path;
+}
+
+/**
+ * A socket that was replaced at the same path can get the same inode number
+ * back, so device and inode alone do not identify it. Where the filesystem
+ * records a real creation time (macOS and the BSDs), that settles it, and the
+ * modification time must not: `touch` on the socket of a healthy tmux server
+ * changes mtime and would otherwise retire its owner and close every stream.
+ * Linux reports a creation time only on some filesystems and Node substitutes
+ * the change time elsewhere, so there mtime stays part of the identity.
+ */
+export function birthtimeIdentifiesFile(platform: NodeJS.Platform): boolean {
+  return (
+    platform === "darwin" ||
+    platform === "freebsd" ||
+    platform === "openbsd" ||
+    platform === "netbsd"
+  );
 }

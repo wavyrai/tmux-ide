@@ -11,6 +11,10 @@ vi.mock("./tmux-server-registration.ts", () => ({
   readTmuxServerRegistrations: () => [],
   writeTmuxServerRegistrations: vi.fn(),
   createDiagnosedTmuxServerProbe: () => mocks.probe,
+  tmuxSelectorSocketPath: () => "/fixture/socket",
+  tmuxServerSocketPresent: () => true,
+  unixSocketRefusesConnections: async () => false,
+  tmuxServerProcessReplaced: async () => false,
 }));
 beforeEach(() => {
   mocks.createNative.mockReset();
@@ -209,6 +213,42 @@ describe("embedded owner initialization cleanup", () => {
       expect(shutdown.mock.calls[0]).toEqual([{ code: 1012, reason: "tmux-server-retired" }]);
       expect(nativeDispose).toHaveBeenCalledExactlyOnceWith("server-gone");
       await embedded.dispose();
+    });
+
+    it("announces a server that came online or was retired, but not the daemon's own stop", async () => {
+      const changed = vi.fn();
+      mocks.createNative.mockImplementation(async (options: { serverId: string }) => ({
+        serverId: options.serverId,
+        paneStreamRuntime: { coordinator: { shutdown: vi.fn(async () => {}) } },
+        dispose: vi.fn(async () => {}),
+      }));
+      const deadPid = 2 ** 22 - 3;
+      mocks.probe.mockResolvedValue({ ...verified(deadPid), fingerprint: "another-server" });
+      const embedded = await createEmbeddedTmuxServerOwners({
+        environmentId: "00000000-0000-4000-8000-000000000001",
+        defaultAuthority: {
+          executablePath: "/fixture/tmux",
+          socketSelector: { kind: "path", path: "/fixture/socket" },
+        },
+        defaultGeneration: "00000000-0000-4000-8000-000000000002",
+        expectedDefaultProofDigest: "verified",
+        defaultOwner: { dispose: vi.fn(async () => {}) } as Parameters<
+          typeof createEmbeddedTmuxServerOwners
+        >[0]["defaultOwner"],
+        stateDirectory: "/fixture",
+        webSocketBaseUrl: "ws://localhost:1234",
+        onServersChanged: changed,
+      });
+      // The native owner was built during startup: one announcement.
+      expect(changed).toHaveBeenCalledTimes(1);
+      mocks.probe.mockResolvedValue(timeout);
+      await embedded.owners.refresh(); // its server process is gone: retired
+      expect(changed).toHaveBeenCalledTimes(2);
+      // A probe that changes nothing announces nothing.
+      await embedded.owners.observe();
+      expect(changed).toHaveBeenCalledTimes(2);
+      await embedded.dispose();
+      expect(changed).toHaveBeenCalledTimes(2);
     });
 
     it("tells a native owner's streams daemon-restarting when the generation restarts", async () => {

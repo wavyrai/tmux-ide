@@ -13,6 +13,10 @@ import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.
 import { collectDaemonProvenanceReport } from "../daemon-provenance.ts";
 import { getLogIdentity } from "../log.ts";
 import { WorkspaceRegistry, _setDefaultWorkspaceRegistryForTests } from "../workspace-registry.ts";
+import { declareDaemonWithoutTmuxServer } from "../../../test-support/tmux-isolation-vitest.ts";
+
+// The daemon under test is started with no tmux server of its own.
+declareDaemonWithoutTmuxServer();
 
 const DEAD_PID = 2147483647;
 let stateDir: string;

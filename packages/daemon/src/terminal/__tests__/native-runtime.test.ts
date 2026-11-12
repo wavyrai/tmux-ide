@@ -25,6 +25,7 @@ import {
   discoverWorkspaceRegistrySemanticPanes,
   type NativeTerminalAttachmentCommandExecutor,
   type NativeTerminalInventorySnapshot,
+  INVENTORY_STALE_RETRIES,
 } from "../attachments/native-runtime.ts";
 import {
   SemanticPaneCatalog,
@@ -2003,51 +2004,71 @@ describe("async terminal inventory reads", () => {
     runtime.dispose();
   });
 
-  it("fails boundedly when a trusted session inventory crosses two inventory epochs", async () => {
-    const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
-    const releases: Array<(value: TrustedMirrorSessionInventory) => void> = [];
-    const starts: Array<() => void> = [];
-    const started = [
-      new Promise<void>((resolve) => starts.push(resolve)),
-      new Promise<void>((resolve) => starts.push(resolve)),
-    ];
-    let calls = 0;
-    const adopted = vi.fn();
-    const runtime = new WorkspaceTerminalInventoryRuntime({
-      registry,
-      tmuxAuthority: authority(root),
-      commandExecutor: syncStartup,
-      readCommandExecutor: vi.fn(async () => ""),
-      sessionRuntimeRegistry: {
-        hasProofQualifiedInventory: () => true,
-        describeTrustedSessionInventory: vi.fn(
-          () =>
-            new Promise<TrustedMirrorSessionInventory>((resolve) => {
-              releases.push(resolve);
-              starts[calls]?.();
-              calls += 1;
-            }),
-        ),
-        prewarmProofQualifiedSession: vi.fn(async () => undefined),
-        prewarmSession: vi.fn(async () => undefined),
-        retireSession: vi.fn(async () => undefined),
-      } as unknown as SessionRuntimeRegistry,
-      onSessionInventory: adopted,
-    });
-    await runtime.whenReady();
+  // #764: a read overtaken by invalidations is read again, a bounded number of times.
+  it.each([
+    [1, "resolves"],
+    [2, "resolves"],
+    [INVENTORY_STALE_RETRIES, "resolves"],
+    [INVENTORY_STALE_RETRIES + 1, "fails"],
+  ] as const)(
+    "a trusted session inventory overtaken by %i invalidation(s) %s",
+    async (invalidations, outcome) => {
+      const { registry, root } = createRegistry("workspace.alpha", "runtime:session");
+      const releases: Array<(value: TrustedMirrorSessionInventory) => void> = [];
+      let calls = 0;
+      let announce: (() => void) | null = null;
+      const nextCall = () => new Promise<void>((resolve) => (announce = resolve));
+      const adopted = vi.fn();
+      const runtime = new WorkspaceTerminalInventoryRuntime({
+        registry,
+        tmuxAuthority: authority(root),
+        commandExecutor: syncStartup,
+        readCommandExecutor: vi.fn(async () => ""),
+        sessionRuntimeRegistry: {
+          hasProofQualifiedInventory: () => true,
+          describeTrustedSessionInventory: vi.fn(
+            () =>
+              new Promise<TrustedMirrorSessionInventory>((resolve) => {
+                releases.push(resolve);
+                calls += 1;
+                announce?.();
+              }),
+          ),
+          prewarmProofQualifiedSession: vi.fn(async () => undefined),
+          prewarmSession: vi.fn(async () => undefined),
+          retireSession: vi.fn(async () => undefined),
+        } as unknown as SessionRuntimeRegistry,
+        onSessionInventory: adopted,
+      });
+      await runtime.whenReady();
 
-    const pending = runtime.discoverTerminalRuntimeSession("runtime:session");
-    await started[0];
-    runtime.invalidate();
-    releases[0]!(trustedInventory());
-    await started[1];
-    runtime.invalidate();
-    releases[1]!(trustedInventory());
-    await expect(pending).rejects.toMatchObject({ code: "discovery-failed" });
-    expect(calls).toBe(2);
-    expect(adopted).not.toHaveBeenCalled();
-    runtime.dispose();
-  });
+      let started = nextCall();
+      const pending = runtime.discoverTerminalRuntimeSession("runtime:session");
+      pending.catch(() => undefined);
+      for (let round = 0; round < invalidations; round += 1) {
+        await started;
+        started = nextCall();
+        runtime.invalidate();
+        releases[round]!(trustedInventory());
+      }
+      if (outcome === "resolves") {
+        await started;
+        releases[invalidations]!(trustedInventory());
+        await expect(pending).resolves.toBeDefined();
+        expect(calls).toBe(invalidations + 1);
+      } else {
+        // Same message for the client; the detail tells a trace which origin it was.
+        await expect(pending).rejects.toMatchObject({
+          code: "discovery-failed",
+          detail: "overtaken-by-invalidations",
+          message: "Trusted semantic pane discovery failed.",
+        });
+        expect(calls).toBe(INVENTORY_STALE_RETRIES + 1);
+        expect(adopted).not.toHaveBeenCalled();
+      }
+      runtime.dispose();
+    },
+  );
 
   it("records opt-in application-shell inventory and enrichment spans without tracing ordinary reads", async () => {
     const { registry, root } = createRegistry("workspace.alpha", "runtime:session");

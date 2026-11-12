@@ -21,6 +21,11 @@ import {
 } from "../canonical-daemon.ts";
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { WorkspaceRegistry, _setDefaultWorkspaceRegistryForTests } from "../workspace-registry.ts";
+import { declareDaemonWithoutTmuxServer } from "../../../test-support/tmux-isolation-vitest.ts";
+
+// Takeover is tested between daemons that have no tmux server intent (an intent switches on the
+// server proof in the handshake), so these daemons address the default socket.
+declareDaemonWithoutTmuxServer();
 
 const INSTANCE_A = "9bcf33b0-c837-4a94-b5e8-c0977f54464f";
 const INSTANCE_B = "76088827-c1f1-4451-bc2e-0a3ae7747434";
