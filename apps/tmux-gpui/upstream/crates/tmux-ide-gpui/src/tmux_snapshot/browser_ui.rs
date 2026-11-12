@@ -424,8 +424,8 @@ impl SnapshotView {
         self.chrome.sync_motion(cx);
         self.chrome.sync(window, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
-        // Drawn by the window root into its slot (`sidebar_view`).
-        let sidebar = self.sidebar_placement(cx);
+        // Its own view, replayed while unchanged (`sidebar_view`).
+        let sidebar = self.sidebar_element(window, cx);
         let status = self.status_line();
         // Routine window navigation must not insert a notice beside the tabs:
         // its width would move the entire strip during every retained frame.
@@ -527,6 +527,7 @@ impl SnapshotView {
             super::pane_cards::render::card_border(&theme, &super::design::palette(&theme));
         let content = super::shell::content_panel(content_background, card_border, is_home)
             .relative()
+            .children(super::design::order_probe("content"))
             .children(home)
             .when(!is_home, |panel| {
                 panel

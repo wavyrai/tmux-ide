@@ -61,15 +61,17 @@ fn open(cx: &mut TestAppContext) -> (Entity<SnapshotView>, &mut VisualTestContex
     (snapshot, cx)
 }
 
-/// What the frame painted over the sidebar's slot, as comparable quads and
+/// What the frame painted over the sidebar's column, as comparable quads and
 /// underlines. Only the sidebar: Home's own entrances differ frame to frame.
-fn painted(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext) -> String {
-    cx.update(|window, cx| {
-        let Some(slot) = snapshot.read(cx).sidebar_slot.bounds.get() else {
-            return "no sidebar".into();
-        };
+fn painted(cx: &mut VisualTestContext) -> String {
+    cx.update(|window, _| {
         let scale = window.scale_factor();
-        let slot = slot.scale(scale);
+        let height = window.viewport_size().height;
+        let slot = Bounds::new(
+            point(px(0.), px(0.)),
+            size(px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH), height),
+        )
+        .scale(scale);
         let inside = |b: &Bounds<ScaledPixels>| slot.contains(&b.origin);
         // Draw order is assigned per frame; what is drawn, and where, is not.
         let quads: Vec<_> = window
@@ -108,13 +110,13 @@ fn same_as_fresh(
         });
         window.draw(cx).clear(cx);
     });
-    let cached = painted(snapshot, cx);
+    let cached = painted(cx);
     cx.update(|window, cx| {
         window.refresh();
         window.draw(cx).clear(cx);
     });
     assert!(
-        painted(snapshot, cx) == cached,
+        painted(cx) == cached,
         "{name}: the cached sidebar went stale"
     );
 }
@@ -212,4 +214,20 @@ fn each_sidebar_input_changes_the_key(cx: &mut TestAppContext) {
         cx.update(|_, cx| snapshot.update(cx, |view, _| change(view)));
         assert_ne!(key(cx), before, "{name} does not change the sidebar key");
     }
+}
+
+/// The sidebar is prepainted before the content, as before it was its own
+/// view: GPUI builds the accessibility tree in prepaint order, so VoiceOver
+/// reaches the sidebar first.
+#[gpui::test]
+fn the_sidebar_comes_before_the_content(cx: &mut TestAppContext) {
+    let (_, cx) = open(cx);
+    cx.update(|window, cx| {
+        cx.set_global(crate::tmux_snapshot::design::PrepaintOrder::default());
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    let order = cx.update(|_, cx| cx.global::<crate::tmux_snapshot::design::PrepaintOrder>().0.clone());
+    let at = |key: &str| order.iter().position(|k| k == key).unwrap();
+    assert!(at("sidebar") < at("content"), "{order:?}");
 }

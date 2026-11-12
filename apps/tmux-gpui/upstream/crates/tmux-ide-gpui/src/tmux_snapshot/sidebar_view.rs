@@ -4,37 +4,34 @@
 //! that laid out every sidebar row again, which with 30 sessions and 40
 //! agents cost more than painting the terminal.
 //!
-//! GPUI re-renders every cached view below a cached view that re-renders, so
-//! the sidebar cannot be a child of `SnapshotView`. It is a sibling at the
-//! window root instead: `SnapshotView` lays out an empty slot where the
-//! sidebar goes and records the slot's bounds; the root's [`Host`] then
-//! prepaints [`SidebarView`] into those bounds, after `SnapshotView`, so it
-//! sees this frame's state and slot. `SnapshotView` still builds the
-//! sidebar's elements inside this view's render, so every handler and helper
-//! is unchanged. Overlays that cover the sidebar are deferred, so they paint
-//! over it as before.
+//! A plain cached view is rendered again whenever a cached ancestor
+//! re-renders, so the sidebar is mounted with the vendored GPUI's
+//! `cached_isolated`: it stays in `SnapshotView`'s tree at its old place (so
+//! paint order and the accessibility tree are as before), and is replayed
+//! while [`SnapshotView::sidebar_key`] is unchanged. On the frame the key
+//! changes it is drawn uncached. `SnapshotView` still builds the sidebar's
+//! elements, inside this view's render, so every handler and helper is
+//! unchanged.
 use super::{SIDEBAR_WIDTH, focus_ring, sidebar};
 use crate::tmux_snapshot::{SnapshotView, browser};
 use bezel_theme::{TextStyle, Typeset};
 use gpui::{prelude::*, *};
-use std::{
-    cell::Cell,
-    hash::{DefaultHasher, Hash, Hasher},
-    rc::Rc,
-};
+use std::hash::{DefaultHasher, Hash, Hasher};
+#[cfg(test)]
+use std::cell::Cell;
 
 /// The sidebar's view. Its render asks `SnapshotView` for the elements.
 pub(in crate::tmux_snapshot) struct SidebarView {
     parent: WeakEntity<SnapshotView>,
-    /// The key of what it last painted, and the `SnapshotView` render it
-    /// was computed after.
-    key: Option<(u64, u64)>,
 }
-impl SidebarView {
-    pub(in crate::tmux_snapshot) fn new(parent: WeakEntity<SnapshotView>) -> Self {
-        Self { parent, key: None }
-    }
+
+/// The sidebar view and the key of what it last showed.
+#[derive(Default)]
+pub(in crate::tmux_snapshot) struct Cache {
+    view: Option<Entity<SidebarView>>,
+    key: Option<u64>,
 }
+
 #[cfg(test)]
 thread_local! {
     static RENDERS: Cell<usize> = const { Cell::new(0) };
@@ -51,148 +48,45 @@ impl Render for SidebarView {
         let owner = cx.entity_id();
         self.parent
             .update(cx, |view, cx| {
-                // The sidebar fades in when shown (#761), as its column does.
-                bezel_motion::fade_quick("sidebar-in", view.sidebar_viewport(owner, cx))
-                    .into_any_element()
+                view.sidebar_viewport(owner, cx).into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
 }
 
-/// Where `SnapshotView` laid out the sidebar this frame, for the root's
-/// [`Host`] to draw it in.
-#[derive(Default)]
-pub(in crate::tmux_snapshot) struct Slot {
-    /// `None` while the sidebar is hidden.
-    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    /// Mounted under a window root with a [`Host`]. Views mounted on their
-    /// own (tests) draw the sidebar inline, as before.
-    hosted: Cell<bool>,
-    /// `SnapshotView` renders so far: while it has not rendered, nothing the
-    /// sidebar shows has changed, and the key need not be computed again.
-    renders: Cell<u64>,
-}
-impl Slot {
-    /// Called by the window root that draws the sidebar.
-    pub(in crate::tmux_snapshot) fn host(&self) {
-        self.hosted.set(true);
-    }
-}
-
 impl SnapshotView {
-    /// The sidebar's place in the window: an empty slot the root draws it
-    /// into, or, with no root to draw it, the sidebar itself.
-    pub(super) fn sidebar_placement(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.sidebar_slot.bounds.set(None);
-        let renders = &self.sidebar_slot.renders;
-        renders.set(renders.get() + 1);
-        if self.sidebar_slot.hosted.get() {
-            self.sidebar_slot()
-        } else {
-            self.sidebar_viewport(cx.entity_id(), cx)
-        }
-    }
-
-    /// The empty slot the sidebar is drawn into, recording its bounds.
-    fn sidebar_slot(&self) -> Stateful<Div> {
-        let slot = self.sidebar_slot.bounds.clone();
-        div()
-            .id("sidebar-slot")
-            .w(px(SIDEBAR_WIDTH))
-            .h_full()
-            .min_h_0()
-            .flex_shrink_0()
-            .child(canvas(move |bounds, _, _| slot.set(Some(bounds)), |_, (), _, _| {}).size_full())
-    }
-}
-
-/// The root's element that draws the sidebar into `SnapshotView`'s slot,
-/// cached unless [`SnapshotView::sidebar_key`] changed.
-pub(in crate::tmux_snapshot) struct Host {
-    pub snapshot: Entity<SnapshotView>,
-    pub sidebar: Entity<SidebarView>,
-}
-impl IntoElement for Host {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
-    }
-}
-impl Element for Host {
-    type RequestLayoutState = ();
-    type PrepaintState = Option<AnyElement>;
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-    fn request_layout(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, ()) {
-        let style = Style {
-            position: Position::Absolute,
-            ..Default::default()
-        };
-        (window.request_layout(style, None, cx), ())
-    }
-    fn prepaint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut (),
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let snapshot = self.snapshot.read(cx);
-        let bounds = snapshot.sidebar_slot.bounds.get()?;
-        let renders = snapshot.sidebar_slot.renders.get();
-        // A spinner tick, or a frame only the sidebar itself dirtied, leaves
-        // `SnapshotView` unrendered: its state, and so the key, stand.
-        let fresh = match self.sidebar.read(cx).key {
-            Some((_, seen)) if seen == renders => false,
-            _ => {
-                let key = snapshot.sidebar_key(window, cx);
-                self.sidebar
-                    .update(cx, |view, _| view.key.replace((key, renders)))
-                    .is_none_or(|(old, _)| old != key)
+    /// The sidebar: replayed from its last paint unless its key changed, and
+    /// drawn uncached on the frame it changes, so it is never a frame stale.
+    pub(super) fn sidebar_element(&mut self, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let key = self.sidebar_key(window, cx);
+        let view = match &self.sidebar_view.view {
+            Some(view) => view.clone(),
+            None => {
+                let parent = cx.entity().downgrade();
+                let view = cx.new(|_| SidebarView { parent });
+                self.sidebar_view.view = Some(view.clone());
+                view
             }
         };
+        let fresh = self.sidebar_view.key.replace(key) != Some(key);
         // Tests read probes that only a fresh paint records.
         #[cfg(test)]
         let fresh = fresh
             || cx.has_global::<crate::tmux_snapshot::design::InkProbes>()
             || cx.has_global::<crate::tmux_snapshot::design::TextProbes>();
-        let mut element = if fresh {
-            AnyView::from(self.sidebar.clone()).into_any_element()
+        let content = if fresh {
+            AnyView::from(view).into_any_element()
         } else {
-            self.sidebar
-                .clone()
-                .cached(StyleRefinement::default().size_full())
+            view.cached_isolated(StyleRefinement::default().size_full())
                 .into_any_element()
         };
-        element.layout_as_root(bounds.size.into(), window, cx);
-        element.prepaint_at(bounds.origin, window, cx);
-        Some(element)
-    }
-    fn paint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut (),
-        element: &mut Option<AnyElement>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        if let Some(element) = element {
-            element.paint(window, cx);
-        }
+        div()
+            .id("sidebar-host")
+            .w(px(SIDEBAR_WIDTH))
+            .h_full()
+            .min_h_0()
+            .flex_shrink_0()
+            .child(content)
     }
 }
 
@@ -404,6 +298,7 @@ impl SnapshotView {
         }
         div()
             .id("sidebar-viewport")
+            .children(crate::tmux_snapshot::design::order_probe("sidebar"))
             .debug_selector(|| "tmux-sidebar-viewport".into())
             .relative()
             .w(px(SIDEBAR_WIDTH))
