@@ -39,6 +39,8 @@ pub const SCENARIOS: &[&str] = &[
     "home30-idle",
     "home100-publish",
     "home100-refresh",
+    "home100-motion",
+    "home30-nosidebar",
 ];
 
 /// What causes each timed frame.
@@ -300,11 +302,22 @@ fn scenario(name: &str, base: &browser::State) -> Result<Scenario> {
                 None,
             )
         }
-        "home30-motion" => s(
+        "home30-motion" | "home100-motion" => {
+            let sessions = if name == "home30-motion" { 30 } else { 100 };
+            s(
+                fleet(state, sessions, 40, true)?,
+                HOME_SIZE,
+                true,
+                Step::Motion,
+                None,
+            )
+        }
+        // Home's own cost, without the sidebar's.
+        "home30-nosidebar" => s(
             fleet(state, 30, 40, true)?,
             HOME_SIZE,
-            true,
-            Step::Motion,
+            false,
+            Step::Refresh,
             None,
         ),
         "home30-idle" => s(
