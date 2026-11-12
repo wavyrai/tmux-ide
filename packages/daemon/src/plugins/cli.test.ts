@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { hasUnsafeText } from "@tmux-ide/contracts";
-import { givesFullControl, runPluginCommandLine, type PluginCliIo } from "./cli.ts";
+import {
+  defaultPluginCliIo,
+  givesFullControl,
+  runPluginCommandLine,
+  type PluginCliIo,
+} from "./cli.ts";
 import { hashPluginDirectory, readConsent } from "./consent.ts";
 import { appendPluginLog, pluginLogPath } from "./plugin-log.ts";
 
@@ -471,5 +476,14 @@ describe("tmux-ide plugin consent", () => {
     mkdirSync(join(home, "plugins", "broken"), { recursive: true });
     expect(await runPluginCommandLine("plugin", ["consent", "broken", "--yes"], h.io)).toBe(1);
     expect(h.err[1]).toBe("broken cannot run: manifest.json is missing");
+  });
+});
+
+describe("the real io's built-in dispatch", () => {
+  it("refuses a name that is no built-in action before it reaches the daemon", async () => {
+    const io = await defaultPluginCliIo();
+    await expect(io.dispatchBuiltin("no.such-action", {})).rejects.toThrow(
+      "No command named 'no.such-action'.",
+    );
   });
 });
