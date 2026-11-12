@@ -179,7 +179,7 @@
     "tests/image_layout.rs": "3fe9749a7a93ae3a18f2d88181c85b88a71b094165035c0d4a072773f96ff182",
     "tests/window_background/tests.rs": "7fce2e77e6b6314d73aead1d9d9c28dbce57f4f85320ce2db8c4bce57b09446a"
   },
-  "patchPurpose": "Batched glyph sprites for the terminal painter: Window::glyph_placement, resolve_glyph, insert_glyphs and glyph_raster_state, with the arithmetic of paint_glyph and paint_emoji, which stay unchanged. Opt-in isolated view caching (AnyView::cached_isolated, Entity::cached_isolated): a clean cached view is reused while a cached ancestor re-renders; Window::refresh and App::refresh_windows still render it. Test support: Window::set_a11y_active_for_test switches accessibility on for a test window, which the test platform cannot.",
+  "patchPurpose": "Batched glyph sprites for the terminal painter: Window::glyph_placement, resolve_glyph, insert_glyphs and glyph_raster_state, with the arithmetic of paint_glyph and paint_emoji, which stay unchanged. Opt-in isolated view caching (AnyView::cached_isolated, Entity::cached_isolated): a clean cached view is reused while a cached ancestor re-renders; Window::refresh and App::refresh_windows still render it. While an assistive client is connected an isolated view renders with its parent, so its nodes stay in the accessibility tree. Test support: Window::set_a11y_active_for_test switches accessibility on for a test window, which the test platform cannot.",
   "modifiedFiles": ["src/app.rs", "src/view.rs", "src/window.rs", "src/window/a11y.rs"],
   "addedSourceFiles": ["src/window_glyphs.rs"],
   "verify": "node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-provenance.json"

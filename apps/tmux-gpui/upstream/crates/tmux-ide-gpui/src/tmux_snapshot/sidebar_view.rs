@@ -9,8 +9,8 @@
 //! `cached_isolated`: it stays in `SnapshotView`'s tree at its old place (so
 //! paint order and the accessibility tree are as before), and is replayed
 //! while [`SnapshotView::sidebar_key`] is unchanged. On the frame the key
-//! changes it is drawn uncached, and so it is on every frame while an
-//! assistive client is connected. `SnapshotView` still builds the sidebar's
+//! changes it is drawn uncached. While an assistive client is connected an
+//! isolated view renders on every frame, so the client reads the whole tree. `SnapshotView` still builds the sidebar's
 //! elements, inside this view's render, so every handler and helper is
 //! unchanged.
 use super::{SIDEBAR_WIDTH, focus_ring, sidebar};
@@ -73,10 +73,7 @@ impl SnapshotView {
                 view
             }
         };
-        // GPUI builds the accessibility tree from the elements a frame
-        // prepaints, and a replayed view prepaints none: while an assistive
-        // client is connected the sidebar is drawn every frame, as before.
-        let fresh = self.sidebar_view.key.replace(key) != Some(key) || window.is_a11y_active();
+        let fresh = self.sidebar_view.key.replace(key) != Some(key);
         // Tests read probes that only a fresh paint records.
         #[cfg(test)]
         let fresh = fresh
@@ -99,6 +96,16 @@ impl SnapshotView {
 }
 
 impl SnapshotView {
+    /// The sidebar is not in this frame. Its last paint is gone, and so are
+    /// the spinner slots that paint reserved: only a render of the sidebar's
+    /// own view would drop them, and none is coming.
+    pub(super) fn sidebar_unmounted(&mut self) {
+        self.sidebar_view.key = None;
+        if let Some(view) = &self.sidebar_view.view {
+            self.agent_animation.begin_render(view.entity_id());
+        }
+    }
+
     /// Everything the sidebar shows, hashed. Each input the sidebar's render
     /// reads must be here; `sidebar_view_tests` pins that a change to each one
     /// redraws it, and that a cached frame paints what a fresh one would.

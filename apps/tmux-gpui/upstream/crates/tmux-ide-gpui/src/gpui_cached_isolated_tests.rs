@@ -181,3 +181,36 @@ fn an_isolated_view_is_reused_on_an_idle_frame(cx: &mut TestAppContext) {
     let (_, _, renders, cx) = open(cx, true);
     assert_eq!(renders_after(&renders, cx, |_, _| ()), 0);
 }
+
+/// The accessibility tree is built from the elements a frame prepaints, and
+/// a replayed view prepaints none: with an assistive client connected an
+/// isolated view renders with its parent, so its nodes stay in the tree.
+#[gpui::test]
+fn an_isolated_view_renders_with_its_parent_for_an_assistive_client(cx: &mut TestAppContext) {
+    let (parent, _, renders, cx) = open(cx, true);
+    cx.update(|window, cx| {
+        window.set_a11y_active_for_test(true);
+        window.draw(cx).clear(cx);
+    });
+    let n = renders_after(&renders, cx, |_, cx| parent.update(cx, |_, cx| cx.notify()));
+    assert_eq!(n, 1, "replayed out of the accessibility tree");
+    cx.update(|window, cx| {
+        window.set_a11y_active_for_test(false);
+        window.draw(cx).clear(cx);
+    });
+    let n = renders_after(&renders, cx, |_, cx| parent.update(cx, |_, cx| cx.notify()));
+    assert_eq!(n, 0, "the client left: reused again");
+}
+
+/// A refresh forces one frame, not every frame after it.
+#[gpui::test]
+fn an_isolated_view_is_reused_again_after_a_refresh(cx: &mut TestAppContext) {
+    let (parent, _, renders, cx) = open(cx, true);
+    assert_eq!(renders_after(&renders, cx, |window, _| window.refresh()), 1);
+    let n = renders_after(&renders, cx, |_, cx| parent.update(cx, |_, cx| cx.notify()));
+    assert_eq!(n, 0, "the refresh outlived its frame");
+    cx.update(|_, cx| cx.refresh_windows());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let n = renders_after(&renders, cx, |_, cx| parent.update(cx, |_, cx| cx.notify()));
+    assert_eq!(n, 0, "the app-wide refresh outlived its frame");
+}
