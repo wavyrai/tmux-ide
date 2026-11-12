@@ -422,40 +422,46 @@ fn settle_wash() {
 /// render the sidebar, or it keeps the wash of the frame it was last drawn.
 #[gpui::test]
 fn a_hover_wash_finishes_on_the_replayed_sidebar(cx: &mut TestAppContext) {
-    let (snapshot, cx) = open(cx);
+    // Rows that take a click, so they have a wash (review-perf-core's probe).
+    let mut state = workspace(8);
+    for (i, session) in state.fleet.as_mut().unwrap().groups[0]
+        .sessions
+        .iter_mut()
+        .enumerate()
+    {
+        session.selection = Some(format!("70500000-0000-4000-8000-00000000000{i}"));
+    }
+    let (snapshot, cx) = open_with(cx, state);
     with_motion(&snapshot, cx);
-    let row = cx.debug_bounds("tmux-sidebar-row-2").unwrap();
     let renders = |cx: &mut VisualTestContext| {
         cx.update(|_, cx| crate::tmux_snapshot::browser_ui::sidebar_view::renders(cx))
     };
-    let before = renders(cx);
-    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
-    settle_wash();
+    // Any fade of the sidebar's own is over, and it is replayed: the renders
+    // counted below are the wash's.
     animate(&snapshot, cx, 400);
-    // One render is the hover itself; the rest are the fade's frames.
-    assert!(
-        renders(cx) - before >= 3,
-        "the wash's frames did not render the sidebar: {}",
-        renders(cx) - before
-    );
-    assert_settled(cx, "hovered");
-    // The Home row's wash asks the same view.
-    let home = cx.debug_bounds("tmux-sidebar-home").unwrap();
-    let before = renders(cx);
-    cx.simulate_mouse_move(home.center(), None, Modifiers::none());
-    settle_wash();
-    animate(&snapshot, cx, 400);
-    assert!(
-        renders(cx) - before >= 3,
-        "the Home row's wash did not render the sidebar: {}",
-        renders(cx) - before
-    );
-    assert_settled(cx, "Home hovered");
-    let other = cx.debug_bounds("tmux-sidebar-row-5").unwrap();
-    cx.simulate_mouse_move(other.center(), None, Modifiers::none());
-    settle_wash();
-    animate(&snapshot, cx, 400);
-    assert_settled(cx, "moved to another row");
+    let idle = renders(cx);
+    animate(&snapshot, cx, 100);
+    assert_eq!(renders(cx), idle, "control: replayed before the hover");
+    // The Home row first: coming from a row, that row's wash fading out
+    // would ask for the same frames.
+    for (name, selector) in [
+        ("the Home row", "tmux-sidebar-home"),
+        ("a row", "tmux-sidebar-row-2"),
+        ("another row", "tmux-sidebar-row-5"),
+    ] {
+        let row = cx.debug_bounds(selector).unwrap();
+        let before = renders(cx);
+        cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+        settle_wash();
+        animate(&snapshot, cx, 400);
+        // One render is the hover itself; the rest are the fade's frames.
+        let frames = renders(cx) - before;
+        assert!(
+            frames >= 3,
+            "{name}: the wash's frames did not render the sidebar: {frames}"
+        );
+        assert_settled(cx, name);
+    }
 }
 
 /// Showing the sidebar fades it in over 150 ms. Its paint carries the
