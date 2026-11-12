@@ -19,6 +19,9 @@ pub(super) const TICK: Duration = Duration::from_millis(80);
 
 #[derive(Clone)]
 struct Slot {
+    /// The view whose paint reserved it: a cached child view replays its
+    /// paint without reserving again, so its slots outlive the parent's render.
+    owner: EntityId,
     origin: Point<Pixels>,
     mask: ContentMask<Pixels>,
     font: Font,
@@ -43,9 +46,10 @@ struct Shared {
 pub(super) struct Slots(Rc<Shared>);
 
 impl Slots {
-    /// A new `SnapshotView` render repaints every indicator, so its slots restart.
-    pub(super) fn begin_render(&self) {
-        self.0.slots.borrow_mut().clear();
+    /// A new render of `owner` repaints every indicator it shows, so its
+    /// slots restart; slots of views that keep their cached paint stay.
+    pub(super) fn begin_render(&self, owner: EntityId) {
+        self.0.slots.borrow_mut().retain(|slot| slot.owner != owner);
     }
     /// Whether an overlay will paint this view's frames.
     pub(super) fn attached(&self) -> bool {
@@ -75,6 +79,7 @@ impl Slots {
         let style = window.text_style();
         let rem = window.rem_size();
         self.0.slots.borrow_mut().push(Slot {
+            owner: window.current_view(),
             origin: bounds.origin,
             mask,
             font: style.font(),
@@ -241,6 +246,7 @@ impl Render for Spinner {
 /// The window root: `SnapshotView` cached, the spinner overlay above it.
 pub(super) struct Root {
     snapshot: Entity<SnapshotView>,
+    sidebar: Entity<super::browser_ui::sidebar_view::SidebarView>,
     spinner: Entity<Spinner>,
 }
 
@@ -271,6 +277,12 @@ impl Render for Root {
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
+            // The sidebar paints over `SnapshotView`'s slot for it, and the
+            // spinner over the sidebar's working agents.
+            .child(super::browser_ui::sidebar_view::Host {
+                snapshot: self.snapshot.clone(),
+                sidebar: self.sidebar.clone(),
+            })
             .child(self.spinner.clone())
             .child(
                 canvas(
@@ -308,8 +320,15 @@ pub(super) fn window_root(
     cx: &mut App,
 ) -> Entity<Root> {
     let slots = snapshot.read(cx).agent_animation.clone();
+    snapshot.read(cx).sidebar_slot.host();
     let spinner = cx.new(|cx| Spinner::new(slots, window, cx));
-    cx.new(|_| Root { snapshot, spinner })
+    let sidebar =
+        cx.new(|_| super::browser_ui::sidebar_view::SidebarView::new(snapshot.downgrade()));
+    cx.new(|_| Root {
+        snapshot,
+        sidebar,
+        spinner,
+    })
 }
 
 #[cfg(test)]

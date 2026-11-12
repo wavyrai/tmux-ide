@@ -65,16 +65,9 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let request = self.browser_request;
-        let revision = self
-            .browser_state
-            .fleet
-            .as_ref()
-            .and_then(|f| f.preferences.as_ref())
-            .map_or(0, |p| p.revision);
+        let revision = self.preference_revision();
+        let enabled = self.preference_button_enabled(action, enabled_value);
         let action = action.map(str::to_owned);
-        let enabled = action
-            .as_ref()
-            .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value));
         let palette = self.home_palette();
         // Bezel's button owns the disabled state: no tab stop, no activation,
         // its faded paint. The glyph keeps Home's inked muted.
@@ -106,6 +99,22 @@ impl SnapshotView {
                 tip.tooltip(move |_, cx| crate::tmux_snapshot::glass_ink::tooltip(label, None, cx))
             })
             .into_any_element()
+    }
+    fn preference_revision(&self) -> u64 {
+        self.browser_state
+            .fleet
+            .as_ref()
+            .and_then(|f| f.preferences.as_ref())
+            .map_or(0, |p| p.revision)
+    }
+    /// Whether a preference button for `action` takes a press now.
+    pub(in crate::tmux_snapshot) fn preference_button_enabled(
+        &self,
+        action: Option<&str>,
+        enabled_value: bool,
+    ) -> bool {
+        let (request, revision) = (self.browser_request, self.preference_revision());
+        action.is_some_and(|a| self.preference_ready(request, revision, a, enabled_value))
     }
     /// Saving progress, or why a preference did not apply.
     pub(in crate::tmux_snapshot) fn fleet_preference_status(&self) -> Option<Status<'_>> {

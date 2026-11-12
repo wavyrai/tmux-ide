@@ -1,9 +1,14 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 use core::prelude::v1::test;
+/// The view the test's slots belong to.
+fn owner() -> EntityId {
+    EntityId::from(1)
+}
 fn reserve(slots: &Slots) {
     let style = TextStyle::default();
     slots.0.slots.borrow_mut().push(Slot {
+        owner: owner(),
         origin: point(px(0.), px(0.)),
         mask: ContentMask::default(),
         font: style.font(),
@@ -67,7 +72,7 @@ fn a_new_render_without_working_rows_stops_the_tick(cx: &mut TestAppContext) {
     cx.executor().advance_clock(TICK);
     cx.run_until_parked();
     assert_eq!(slots.frame(), 1);
-    slots.begin_render();
+    slots.begin_render(owner());
     cx.executor().advance_clock(TICK);
     cx.run_until_parked();
     assert!(!spinner.read_with(cx, |spinner, _| spinner.ticking()));

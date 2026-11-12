@@ -263,20 +263,24 @@ impl SnapshotView {
             .flex_col()
             .child(band)
             .child(div().flex_1().min_h_0().child(sidebar))
+            // Deferred: the sidebar is drawn over this column by the window
+            // root (`sidebar_view`), and the notice must stay above it.
             .children(notice.map(|notice| {
                 use bezel_ui::surface::Surfaced as _;
-                bezel_ui::popover::popover_card(&bezel)
-                    .debug_selector(|| "sidebar-status-notice".into())
-                    .absolute()
-                    .bottom(px(super::browser_ui::sidebar::footer_height()))
-                    .left(px(super::shell::CONTENT_INSET))
-                    .w(px(
-                        super::browser_ui::SIDEBAR_WIDTH - 2. * super::shell::CONTENT_INSET
-                    ))
-                    .px(px(super::shell::CONTENT_INSET))
-                    .occlude()
-                    .child(notice)
-                    .surface(&bezel, bezel.popover_surface)
+                deferred(
+                    bezel_ui::popover::popover_card(&bezel)
+                        .debug_selector(|| "sidebar-status-notice".into())
+                        .absolute()
+                        .bottom(px(super::browser_ui::sidebar::footer_height()))
+                        .left(px(super::shell::CONTENT_INSET))
+                        .w(px(
+                            super::browser_ui::SIDEBAR_WIDTH - 2. * super::shell::CONTENT_INSET
+                        ))
+                        .px(px(super::shell::CONTENT_INSET))
+                        .occlude()
+                        .child(notice)
+                        .surface(&bezel, bezel.popover_surface),
+                )
             }));
         (None, column)
     }
