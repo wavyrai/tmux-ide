@@ -57,3 +57,20 @@ test("listed changes and additions pass; a provenance hash the package lacks fai
   rmSync(pkg, { recursive: true });
   rmSync(vendor, { recursive: true });
 });
+
+test("a copy's own Cargo.lock passes only when the provenance declares a test lockfile", () => {
+  const pkg = tree(original);
+  const vendor = tree({ ...original, "Cargo.lock": "lock" });
+  assert.match(
+    compare(provenance(), pkg, vendor).errors.join(),
+    /unexpected vendored file: Cargo.lock/,
+  );
+  const declared = provenance({ testLockfile: "pins the copy's standalone tests" });
+  assert.deepEqual(compare(declared, pkg, vendor).errors, []);
+  assert.match(
+    compare(declared, pkg, tree(original)).errors.join(),
+    /listed but not vendored: Cargo.lock/,
+  );
+  rmSync(pkg, { recursive: true });
+  rmSync(vendor, { recursive: true });
+});

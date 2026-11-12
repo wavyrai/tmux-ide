@@ -38,6 +38,15 @@ original file hashes and changed files. `upstream/Cargo.toml` patches this one
 package to the repository copy; the application uses `upstream/Cargo.lock`.
 The registry cache is unchanged.
 
+The same check covers this copy, and CI runs both:
+
+```sh
+node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-apple-provenance.json
+```
+
+The copy's own `Cargo.lock` is not in the package; the provenance's
+`testLockfile` note is what allows it.
+
 The patch adds straight-alpha BGRA CoreVideo surfaces to the existing NV12 path.
 It selects the appropriate Metal pipeline per surface and retains every submitted
 surface buffer until the GPU command buffer completes. Unsupported formats and CoreVideo texture import failures return

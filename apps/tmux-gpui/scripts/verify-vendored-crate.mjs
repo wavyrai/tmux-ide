@@ -32,7 +32,12 @@ export function compare(provenance, packageDir, vendorDir) {
   const errors = [];
   const original = provenance.originalFilesSha256;
   const modified = new Set(provenance.modifiedFiles ?? []);
-  const added = new Set(provenance.addedSourceFiles ?? []);
+  // A `testLockfile` note declares the copy's own Cargo.lock, which the
+  // package doesn't carry.
+  const added = new Set([
+    ...(provenance.addedSourceFiles ?? []),
+    ...(provenance.testLockfile ? ["Cargo.lock"] : []),
+  ]);
   const packaged = new Map(
     listFiles(packageDir).map((p) => [p, sha256(readFileSync(join(packageDir, p)))]),
   );
