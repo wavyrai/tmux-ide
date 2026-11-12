@@ -118,6 +118,8 @@ fn focus_and_pane_changes_cancel_editor_without_retiring_terminal() {
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        flap: Default::default(),
+        empty_open: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),

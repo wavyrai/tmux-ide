@@ -36,9 +36,35 @@ impl SnapshotView {
                 .is_some_and(|(paint, current)| paint.same(current))
             && self.browser_state.selected_pane.is_some()
     }
+    /// The catalog is reconnecting: keys are refused, unless the reconnect
+    /// only just began (`pending_input/reconnect.rs` holds those).
+    fn reconnect_hold(&self) -> bool {
+        self.browser_state.reconnect_attempt.is_some()
+    }
+    /// Lifts a latch that only a reconnect set, once the same session accepts
+    /// input again. Nothing typed meanwhile is sent: those keys were refused.
+    /// A latch from anything else (a gesture, a rejected target) still needs
+    /// the terminal click.
+    pub(super) fn release_refused_keys(&mut self) {
+        if !self.connection.keys_refused {
+            return;
+        }
+        let state = &self.browser_state;
+        if state.surface != super::browser::Surface::Workspace || state.input_target_rejected {
+            self.connection.keys_refused = false;
+        } else if state.reconnect_attempt.is_none() && state.input_ready && !state.retained_preview
+        {
+            self.connection.keys_refused = false;
+            self.input_interrupted = false;
+        }
+    }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
         self.pending_input = None;
         self.cancel_pointer();
+        // Only a latch that every cause was a reconnect hold lifts by itself.
+        let hold = self.reconnect_hold();
+        self.connection.keys_refused =
+            hold && (self.connection.keys_refused || !self.input_interrupted);
         self.input_interrupted = true;
         self.discard_composition(cx);
         cx.notify();
@@ -56,7 +82,10 @@ impl SnapshotView {
             return false;
         }
         self.expire_pending_input(cx);
-        if !self.terminal_input_ready() && !self.pending_input_ready() {
+        if !self.terminal_input_ready()
+            && !self.pending_input_ready()
+            && !self.hold_reconnect_input()
+        {
             self.interrupt_input(cx);
         }
         // Only a current, ready terminal click clears this local latch. Publications,

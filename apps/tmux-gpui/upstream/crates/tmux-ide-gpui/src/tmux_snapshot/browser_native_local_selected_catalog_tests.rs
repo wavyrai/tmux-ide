@@ -132,3 +132,98 @@ fn poll_samples_the_cursor_before_the_read_not_after() {
         .unwrap();
     assert_eq!(gate.cursor, Some(5));
 }
+
+fn away(servers: Vec<ServerRegistration>) -> FleetCatalog {
+    FleetCatalog {
+        servers,
+        ..snapshot()
+    }
+}
+fn registered(online: bool) -> ServerRegistration {
+    if online {
+        ServerRegistration::Online {
+            label: "default".into(),
+            scope: ServerScope {
+                server_id: "server".into(),
+                generation: "generation".into(),
+            },
+        }
+    } else {
+        ServerRegistration::Offline {
+            label: "default".into(),
+            server_id: "other".into(),
+        }
+    }
+}
+
+/// Soak, 12 Nov 2026: the tmux server was killed and started again. The
+/// 2.9.22 daemon listed it offline, the app showed "Create a local session to
+/// begin", and nothing read the catalog again until someone refreshed.
+#[test]
+fn a_catalog_with_a_server_away_reads_itself_again_with_a_growing_wait() {
+    for servers in [
+        vec![registered(false)],
+        vec![registered(true), registered(false)],
+        vec![],
+    ] {
+        let mut gate = Gate::default();
+        gate.seed(&away(servers));
+        let start = Instant::now();
+        assert!(!gate.recheck_due(start), "read again at once");
+        let mut waits = Vec::new();
+        let mut now = start;
+        for _ in 0..6 {
+            let wait = gate.recheck_wait(now).unwrap();
+            waits.push(wait.as_secs());
+            assert!(!gate.recheck_due(now + wait - Duration::from_millis(1)));
+            now += wait;
+            assert!(gate.recheck_due(now));
+        }
+        assert_eq!(waits, [5, 10, 20, 40, 60, 60]);
+    }
+}
+
+#[test]
+fn a_catalog_with_every_server_online_is_never_read_again_by_the_clock() {
+    let mut gate = Gate::default();
+    assert!(!gate.recheck_due(Instant::now()), "no catalog is kept");
+    gate.seed(&away(vec![registered(true)]));
+    let now = Instant::now();
+    assert!(!gate.recheck_due(now));
+    assert!(!gate.recheck_due(now + Duration::from_secs(3600)));
+    assert!(gate.recheck_wait(now).is_none());
+}
+
+/// The count belongs to what is away now, and to a window that shows it.
+#[test]
+fn a_changed_catalog_or_a_hidden_window_starts_the_wait_over() {
+    let source = CatalogSource::Local(PathBuf::from("/nonexistent-selected-watch-fixture"));
+    let mut gate = Gate::default();
+    gate.seed(&away(vec![registered(false)]));
+    let now = Instant::now();
+    gate.recheck_due(now);
+    assert!(gate.recheck_due(now + Duration::from_secs(5)));
+    assert_eq!(
+        gate.recheck_wait(now + Duration::from_secs(5))
+            .unwrap()
+            .as_secs(),
+        10
+    );
+    // Hidden: nothing is due, and the actor is not woken for it.
+    assert!(gate.poll(&source, false, false).unwrap().is_none());
+    assert!(gate.recheck_wait(Instant::now()).is_none());
+    // The server came back in a read: the next away server waits 5 s again.
+    gate.recheck_due(Instant::now());
+    let mut back = away(vec![registered(true), registered(false)]);
+    back.identity = gate.last.as_ref().unwrap().identity.clone();
+    assert!(matches!(
+        gate.on_read(Ok(CatalogResult::FleetCatalog(back))).unwrap(),
+        Some(Notice::Changed(_))
+    ));
+    assert!(gate.recheck.is_none());
+    // A due read is asked for through the same quiet lane as a change.
+    gate.recheck = Some((Instant::now(), 0));
+    gate.held = true;
+    assert!(gate.poll(&source, true, true).unwrap().is_none());
+    assert!(gate.reader.is_some(), "the due read was not started");
+}

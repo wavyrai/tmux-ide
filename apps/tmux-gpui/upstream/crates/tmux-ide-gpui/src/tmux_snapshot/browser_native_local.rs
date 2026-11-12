@@ -59,8 +59,12 @@ pub(in crate::tmux_snapshot) use routes::Owner as NativeOwner;
 mod drop_link;
 #[path = "browser_native_local_home_recovery.rs"]
 mod home_recovery;
+#[path = "browser_native_local_open_retry.rs"]
+mod open_retry;
 #[path = "browser_native_local_pane_limit.rs"]
 mod pane_limit;
+#[path = "browser_native_local_home_quiet.rs"]
+mod quiet;
 #[path = "browser_native_local_split.rs"]
 mod split;
 #[path = "browser_native_local_stage.rs"]
@@ -90,6 +94,8 @@ struct Local {
     agents: agents::Gate,
     appearance: Option<crate::tmux_snapshot::appearance::native::Owner>,
     recovery: Option<reconnect::Recovery>,
+    flap: reconnect::Flap,
+    empty_open: open_retry::EmptyOpen,
     home: home_recovery::Recovery,
     background_fleet: background_fleet::Gate,
     registry: registry::Gate,
@@ -168,6 +174,8 @@ fn start_source(
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        flap: Default::default(),
+        empty_open: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
@@ -290,6 +298,7 @@ impl Local {
     }
     fn unavailable(&mut self, status: &'static str) -> Result<(), Error> {
         self.cancel()?;
+        self.home.quiet = Default::default();
         self.state = State {
             request: self.state.request,
             home_phase: HomePhase::Unavailable,
@@ -317,6 +326,8 @@ impl Local {
     fn restart_discovery(&mut self, profile_verified: bool) -> Result<(), Error> {
         self.cancel()?;
         self.sources.reset_catalog()?;
+        // Starting over: nothing read before this answers what follows.
+        herdr_client::tmux_daemon::forget_known_servers();
         // Explicit refresh may discover a replacement owner; an existing request
         // never crosses that identity boundary or replays into the new owner.
         self.worker.reset();
@@ -333,6 +344,10 @@ impl Local {
             Stage::Servers
         });
         Ok(())
+    }
+    /// Whether a terminal lease may be requested now.
+    fn lease_allowed(&self) -> bool {
+        self.foreground || self.recovery.is_some()
     }
     fn open(&mut self, request: u64, key: String, preferred: Option<String>) -> Result<(), Error> {
         if !self.background_fleet.allows_current() {
@@ -421,8 +436,12 @@ impl Local {
         match reconnecting {
             Ok(()) => Ok(()),
             // A gone terminal loop fails this publication too, and ends the actor.
+            // Nothing was open: Home says so, and keeps loading quietly until
+            // a load succeeds, so the notice needs no click either.
             Err(_) => {
-                match self.unavailable("Something went wrong. Refresh sessions to try again.") {
+                match self
+                    .unavailable_retrying("Something went wrong. Refresh sessions to try again.")
+                {
                     Err(error) if outbox::closed(&error) => Err(error),
                     _ => Ok(()),
                 }
@@ -453,12 +472,15 @@ impl Local {
         self.fleet_tick()?;
         self.selected_catalog_tick()?;
         self.reconnect_tick()?;
+        self.empty_open_tick()?;
         self.home_recovery_tick()?;
+        self.quiet_tick()?;
         if !self.submitted
             && let Some(stage) = &self.stage
         {
-            // Do not create an interactive lease while backgrounded.
-            if self.foreground || !matches!(stage, Stage::Issue { .. }) {
+            // No new interactive lease for an inactive window, except to put
+            // back the stream it already had (the daemon is told its presence).
+            if self.lease_allowed() || !matches!(stage, Stage::Issue { .. }) {
                 let action = stage.action();
                 let worker = if stage.local_owner() {
                     self.registry_worker.as_mut()
@@ -558,24 +580,13 @@ impl Local {
                             self.creation_failed(operation_id, error)?;
                         }
                     }
+                    Err(_) if self.home.quiet.probing() && matches!(stage, Stage::Servers) => {
+                        self.quiet_failed()
+                    }
                     Err(error) if self.home.active() && matches!(stage, Stage::Servers) => {
                         self.home_catalog_failed(error)?
                     }
-                    Err(error) => {
-                        let setup = matches!(stage, Stage::Servers);
-                        if self.recovery.is_some() {
-                            // Bounded messages only: codes and numbers, no payloads.
-                            eprintln!("tmux-ide: reconnect attempt failed: {error}");
-                            self.reconnect_retry(reconnect::Failure::of(&error))?;
-                        } else {
-                            self.unavailable(
-                                "Session changed or is unavailable — refresh to retry",
-                            )?;
-                            if setup {
-                                self.offer_local_setup()?;
-                            }
-                        }
-                    }
+                    Err(error) => self.stage_failed(stage, &error)?,
                 }
             }
         }
@@ -584,10 +595,7 @@ impl Local {
         }
         self.preference_tick()?;
         self.agent_tick()?;
-        if self.foreground
-            && self.recovery.as_ref().is_some_and(|r| r.waiting())
-            && self.stage.is_none()
-        {
+        if self.recovery.as_ref().is_some_and(|r| r.waiting()) && self.stage.is_none() {
             match input.recv_timeout(Duration::from_millis(50)) {
                 Ok(command) => self.command(command)?,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(Some(self.cancel())),
@@ -599,7 +607,7 @@ impl Local {
             && !self.split.busy()
             && !self.agents.busy()
             && (self.stage.is_none()
-                || (!self.foreground
+                || (!self.lease_allowed()
                     && !self.submitted
                     && matches!(self.stage, Some(Stage::Issue { .. }))))
         {
@@ -611,6 +619,8 @@ impl Local {
                 .fleet_recovery_wait()
                 .into_iter()
                 .chain(self.home_recovery_wait())
+                .chain(self.empty_open_wait())
+                .chain(self.sources.catalog_recheck_wait())
                 .chain(self.agents.wait())
                 .min()
             {
@@ -707,11 +717,11 @@ impl Local {
                     panes,
                 },
             ) => {
-                let Some(selected) = preferred
+                let Some(selected) = (preferred.clone())
                     .filter(|id| panes.contains(id))
                     .or_else(|| panes.first().cloned())
                 else {
-                    return self.unavailable("Session has no attachable terminal panes");
+                    return self.opened_without_panes(target, preferred);
                 };
                 if let Some(done) = self.pane_limit_exceeded(&target, &panes) {
                     return done;

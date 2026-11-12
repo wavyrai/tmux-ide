@@ -47,13 +47,46 @@ fn is_interrupted(command: &Command) -> bool {
     )
 }
 
+/// A stream the peer closed: not an input failure.
+fn closed() -> NativeError {
+    NativeError::Controller(herdr_client::tmux_controller::Error::Retired)
+}
+
+/// Soak, 12 Nov 2026: a frozen daemon never acknowledged a typed line. The
+/// scheduler gave the key up, so nothing was "in flight" any more when the
+/// poll failed with the input error, and the held frame did not say that keys
+/// were lost. The error itself says a key went unanswered.
+#[test]
+fn a_stream_lost_to_an_unanswered_key_reports_it() {
+    let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    assert!(!active.input.busy());
+    let mut hold = Hold::default();
+    let unanswered = NativeError::Input(browser_native_input::Error::Scope);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &unanswered,
+    );
+    assert_eq!(
+        hold.lost_input(),
+        Some(true),
+        "an unanswered key was lost silently"
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
 #[test]
 fn a_lost_stream_drops_and_reports_queued_keys() {
     let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
     let state = live(&state);
     let mut pending = queue(vec![key("a"), Command::Home { request: 9 }, key("b")]);
     let mut hold = Hold::default();
-    let notice = stream_lost(&active, &mut pending, &mut hold, &state, 1);
+    let notice = stream_lost(&active, &mut pending, &mut hold, &state, 1, &closed());
     assert_eq!(inputs(&pending), 0, "queued keys would replay");
     assert_eq!(pending.len(), 1, "other work was dropped");
     assert!(is_interrupted(&notice));
@@ -65,7 +98,14 @@ fn a_lost_stream_drops_and_reports_queued_keys() {
 
     // Nothing queued or in flight: no "keys not sent".
     let mut hold = Hold::default();
-    stream_lost(&active, &mut VecDeque::new(), &mut hold, &state, 1);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &closed(),
+    );
     assert_eq!(
         hold.lost_input(),
         Some(false),
@@ -87,7 +127,14 @@ fn a_lost_stream_reports_keys_in_flight() {
         "the fixture did not leave the key in flight"
     );
     let mut hold = Hold::default();
-    stream_lost(&active, &mut VecDeque::new(), &mut hold, &state, 1);
+    stream_lost(
+        &active,
+        &mut VecDeque::new(),
+        &mut hold,
+        &state,
+        1,
+        &closed(),
+    );
     assert_eq!(
         hold.lost_input(),
         Some(true),
@@ -207,4 +254,167 @@ fn a_pane_set_change_re_leases_a_bounded_number_of_times() {
         releases.admit(&unissued, 4, 10_002),
         "a new request inherited the count"
     );
+}
+
+/// Soak, 12 Nov 2026: after the daemon refused a stream as unavailable, the
+/// next one showed frames but was never given input, and the window said
+/// "Connecting…" until refreshed. Such a stream is replaced after ten seconds.
+#[test]
+fn a_stream_never_given_input_is_replaced_every_ten_seconds_six_times_at_most() {
+    let mut stall = Stall::default();
+    assert!(!stall.expired(7, "a", true, false, 0));
+    assert!(!stall.expired(7, "a", true, false, 9_999));
+    assert!(stall.expired(7, "a", true, false, 10_000));
+    // The replacement starts its own wait.
+    assert!(!stall.expired(7, "b", true, false, 10_100));
+    assert!(!stall.expired(7, "b", true, false, 20_000));
+    assert!(stall.expired(7, "b", true, false, 20_100));
+    // Soak: the daemon granted input 21 s after it closed the stream. Four
+    // more replacements cover a minute in all.
+    let mut now = 20_100;
+    for route in ["c", "d", "e", "f"] {
+        assert!(!stall.expired(7, route, true, false, now + 100));
+        now += 10_100;
+        assert!(stall.expired(7, route, true, false, now), "{route}");
+    }
+    // A pane that takes no input at all is then left as it is.
+    assert!(!stall.expired(7, "g", true, false, now + 100));
+    assert!(!stall.expired(7, "g", true, false, now + 600_000));
+    // Another request starts over.
+    assert!(!stall.expired(8, "h", true, false, 900_000));
+    assert!(stall.expired(8, "h", true, false, 910_000));
+}
+
+/// The limit is for one row of stalls. A stream that was given input ends
+/// the row: hours later, in the same window, a stall is replaced again.
+#[test]
+fn a_stream_that_was_given_input_starts_the_count_over() {
+    let mut stall = Stall::default();
+    let mut now = 0;
+    for route in ["a", "b", "c", "d", "e", "f"] {
+        assert!(!stall.expired(7, route, true, false, now));
+        now += 10_000;
+        assert!(stall.expired(7, route, true, false, now));
+    }
+    assert!(!stall.expired(7, "g", true, false, now));
+    assert!(!stall.expired(7, "g", true, false, now + 30_000));
+    // Input is granted at last, and much later the stream stalls again.
+    assert!(!stall.expired(7, "g", false, true, now + 31_000));
+    let later = now + 3_600_000;
+    assert!(!stall.expired(7, "h", true, false, later));
+    assert!(stall.expired(7, "h", true, false, later + 10_000));
+}
+
+#[test]
+fn a_stream_that_gets_input_or_is_inactive_is_never_replaced() {
+    let mut stall = Stall::default();
+    assert!(!stall.expired(7, "a", true, false, 0));
+    // Input arrived, or the window went inactive: the wait is over.
+    assert!(!stall.expired(7, "a", false, true, 5_000));
+    assert!(!stall.expired(7, "a", true, false, 12_000));
+    assert!(!stall.expired(7, "a", true, false, 21_999));
+    assert!(stall.expired(7, "a", true, false, 22_000));
+    let mut stall = Stall::default();
+    for now in (0..120_000).step_by(1_000) {
+        assert!(!stall.expired(7, "a", false, false, now));
+    }
+    // An inactive window is not a grant: it does not start the count over.
+    let mut stall = Stall::default();
+    for (route, now) in [
+        ("a", 0),
+        ("b", 10_000),
+        ("c", 20_000),
+        ("d", 30_000),
+        ("e", 40_000),
+        ("f", 50_000),
+    ] {
+        assert!(!stall.expired(7, route, true, false, now));
+        assert!(stall.expired(7, route, true, false, now + 10_000));
+    }
+    assert!(!stall.expired(7, "g", false, false, 70_000));
+    assert!(!stall.expired(7, "g", true, false, 70_100));
+    assert!(!stall.expired(7, "g", true, false, 200_000));
+}
+
+/// The catalog picks its first reconnect step from why the stream ended, so
+/// the notice carries it; a failed command is never the daemon speaking.
+#[test]
+fn the_notice_says_why_the_stream_ended() {
+    let (active, state, _observed, _peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    let retired = NativeError::Controller(herdr_client::tmux_controller::Error::Transport(
+        herdr_client::tmux_stream::Error::Closed(herdr_client::tmux_stream::Close {
+            code: 1012,
+            reason: Some("tmux-server-retired".into()),
+        }),
+    ));
+    let cause_of = |command: Command| match command {
+        Command::NativeTerminalInterrupted { cause, .. } => cause,
+        _ => unreachable!("not an interruption"),
+    };
+    let lost = |error: &NativeError| {
+        stream_lost(
+            &active,
+            &mut VecDeque::new(),
+            &mut Hold::default(),
+            &state,
+            1,
+            error,
+        )
+    };
+    assert_eq!(cause_of(lost(&retired)), Cause::ServerRetired);
+    assert_eq!(cause_of(lost(&closed())), Cause::Lost);
+    let failed = command_failed(
+        Some(&active),
+        false,
+        &mut VecDeque::new(),
+        &mut Hold::default(),
+        &state,
+        1,
+    );
+    assert_eq!(cause_of(failed.unwrap()), Cause::Lost);
+}
+
+/// Review of 9c0da9fe, finding 1: the UI sent a key after the stream was
+/// lost and before it saw the hold. The loop has no stream for it and drops
+/// it; the held frame must say so, or the keys the UI holds next would be
+/// delivered without it.
+#[test]
+fn a_key_that_arrives_with_no_stream_marks_the_held_frame() {
+    let (active, state, _observed, _peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    let mut hold = Hold::default();
+    hold.begin(&state, false);
+    let mut changed = false;
+    // Not a key: nothing happens.
+    let other = Command::Pane {
+        request: 3,
+        id: "left".into(),
+    };
+    assert!(!super::key(&other, None, &mut hold, &mut changed));
+    assert!(!changed);
+    // A key with its stream open is the stream's business.
+    assert_eq!(active.request, 3);
+    assert!(super::key(
+        &key("a"),
+        Some(&active),
+        &mut hold,
+        &mut changed
+    ));
+    assert!(!changed);
+    assert_eq!(hold.lost_input(), Some(false));
+    // A key with no stream, or with another request's stream, is dropped.
+    assert!(super::key(&key("b"), None, &mut hold, &mut changed));
+    assert!(changed, "the publication was not refreshed");
+    assert_eq!(hold.lost_input(), Some(true));
+    let mut hold = Hold::default();
+    hold.begin(&state, false);
+    let stale = Command::Input {
+        input_target: None,
+        request: 4,
+        id: "left".into(),
+        input: Input::Text("c".into()),
+    };
+    assert!(super::key(&stale, Some(&active), &mut hold, &mut changed));
+    assert_eq!(hold.lost_input(), Some(true));
 }

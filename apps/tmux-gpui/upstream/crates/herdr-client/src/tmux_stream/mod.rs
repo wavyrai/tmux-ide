@@ -50,6 +50,10 @@ pub enum Error {
     Cancelled,
     #[error("pane-stream readiness timed out")]
     ReadyTimeout,
+    /// The daemon advertised a heartbeat and then sent nothing, not even a
+    /// ping, for longer than its own limit: the connection is dead.
+    #[error("pane-stream peer went silent")]
+    Silent,
 }
 
 /// A peer close frame, bounded for logs: the code, and the reason only when it is a

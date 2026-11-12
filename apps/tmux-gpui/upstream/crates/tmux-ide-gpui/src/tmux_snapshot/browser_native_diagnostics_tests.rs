@@ -37,8 +37,16 @@ fn a_daemon_without_input_lifetime_stops_with_an_update_message() {
     let identity = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
         tmux_native_session::Error::Transport(tmux_stream::Error::Identity),
     )));
+    // A ready frame that is not the lease's is recovered like any drop.
+    assert!(Stop::new(&identity, 4, Some("2.9.7")).is_none());
+    // Over SSH another machine may have answered: that still stops.
+    let remote = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+        tmux_native_session::Error::Transport(tmux_stream::Error::RemoteIdentity(
+            herdr_client::tmux_ssh::IdentityError::Mismatch,
+        )),
+    )));
     assert_eq!(
-        Stop::new(&identity, 4, Some("2.9.7")).unwrap().status,
+        Stop::new(&remote, 4, Some("2.9.7")).unwrap().status,
         "Couldn't reconnect. Refresh sessions to try again."
     );
     let disconnected = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
@@ -171,4 +179,61 @@ fn the_log_line_keeps_the_peer_close_code_and_reason() {
         "stream-disconnected code=1013 reason=output-backpressure"
     );
     assert_eq!(detail(&closed(None)), "stream-disconnected code=1013");
+}
+
+/// The reason decides, whatever the code; an unknown reason is a plain close.
+#[test]
+fn the_close_reason_names_the_cause_and_an_unknown_one_is_a_plain_close() {
+    use super::super::Cause;
+    let closed = |code: u16, reason: Option<&str>| {
+        let close = tmux_stream::Close {
+            code,
+            reason: reason.map(str::to_owned),
+        };
+        [
+            NativeError::Controller(tmux_controller::Error::Transport(
+                tmux_stream::Error::Closed(close.clone()),
+            )),
+            NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+                tmux_native_session::Error::Transport(tmux_stream::Error::Closed(close)),
+            ))),
+        ]
+    };
+    for (code, reason, expected) in [
+        (1012, Some("tmux-server-retired"), Cause::ServerRetired),
+        (1012, Some("daemon-restarting"), Cause::DaemonRestarting),
+        (1000, Some("panes-closed"), Cause::PanesClosed),
+        // What a 2.9.22 daemon sends for every close while it stays up.
+        (1001, Some("daemon-shutdown"), Cause::Closed),
+        (1012, Some("topology-changed"), Cause::Closed),
+        (1011, Some("stream-unavailable"), Cause::Closed),
+        (1012, Some("a-reason-from-a-newer-daemon"), Cause::Closed),
+        (1012, None, Cause::Closed),
+        (4999, Some("tmux-server-retired"), Cause::ServerRetired),
+    ] {
+        for error in closed(code, reason) {
+            assert_eq!(cause(&error), expected, "{code} {reason:?}");
+            assert!(expected.daemon_spoke());
+            assert!(
+                Stop::new(&error, 4, None).is_none(),
+                "{code} {reason:?} stopped"
+            );
+        }
+    }
+    let transport = |error| {
+        NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+            tmux_native_session::Error::Transport(error),
+        )))
+    };
+    for (error, expected) in [
+        (tmux_stream::Error::Disconnected, Cause::Lost),
+        (tmux_stream::Error::ReadyTimeout, Cause::Lost),
+        (tmux_stream::Error::Identity, Cause::Identity),
+        (tmux_stream::Error::Silent, Cause::Silent),
+    ] {
+        let error = transport(error);
+        assert_eq!(cause(&error), expected);
+        assert!(!expected.daemon_spoke());
+        assert!(Stop::new(&error, 4, None).is_none());
+    }
 }

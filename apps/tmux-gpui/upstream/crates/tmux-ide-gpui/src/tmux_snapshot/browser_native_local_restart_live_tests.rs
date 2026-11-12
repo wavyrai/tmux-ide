@@ -1,8 +1,9 @@
 #![allow(clippy::unwrap_used)]
 //! A harness stops the scratch daemon when the outage file appears, then restarts it.
+//! A long outage is covered by the connection soak (`connection_soak`): the
+//! session keeps reconnecting for as long as the window is open.
 use super::*;
 const RECONNECTING: &str = "Connection lost. Reconnecting…";
-const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
 fn connected(bridge: &Bridge) -> (State, PathBuf) {
     let outage = std::env::var_os("TMUX_IDE_TEST_RESTART_OUTAGE").unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -92,45 +93,13 @@ fn session_reconnects_on_its_own_after_a_short_daemon_outage() {
         seen.iter().any(|(_, s)| s.status == RECONNECTING),
         "{trail:?}"
     );
-    assert!(!seen.iter().any(|(_, s)| s.status == GIVE_UP), "{trail:?}");
+    assert!(
+        !seen.iter().any(|(_, s)| s.status.contains("Refresh")),
+        "{trail:?}"
+    );
     assert!(
         seen.last().unwrap().0 > Duration::from_secs(4),
         "outage too short: {trail:?}"
-    );
-    eprintln!("RESTART_LIVE {trail:?}");
-    owner.shutdown().unwrap();
-}
-#[test]
-#[ignore = "requires a scratch daemon the harness stops for longer than 30 s"]
-fn session_ends_on_the_refresh_message_after_a_long_daemon_outage() {
-    let record = std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap();
-    let (bridge, owner) = start(record.into(), Default::default()).unwrap();
-    let (_, outage) = connected(&bridge);
-    std::fs::write(&outage, b"stop").unwrap();
-    let seen = observe(&bridge, Duration::from_secs(40), |s| s.status == GIVE_UP);
-    let trail = statuses(&seen);
-    let (gave_up_at, last) = seen.last().unwrap();
-    assert_eq!(last.status, GIVE_UP, "{trail:?}");
-    assert!(
-        *gave_up_at > Duration::from_secs(20) && *gave_up_at < Duration::from_secs(35),
-        "{trail:?}"
-    );
-    // While waiting, only the reconnect status and the retry's own catalog loads appear.
-    for (_, state) in seen[..seen.len() - 1]
-        .iter()
-        .filter(|(_, s)| !s.input_ready)
-    {
-        assert!(
-            [RECONNECTING, "Loading sessions"].contains(&state.status.as_str())
-                || state.status == "Terminal connection interrupted — recovering",
-            "{trail:?}"
-        );
-    }
-    let after = observe(&bridge, Duration::from_secs(5), |_| false);
-    assert!(
-        after.iter().all(|(_, s)| s.status == GIVE_UP),
-        "{:?}",
-        statuses(&after)
     );
     eprintln!("RESTART_LIVE {trail:?}");
     owner.shutdown().unwrap();

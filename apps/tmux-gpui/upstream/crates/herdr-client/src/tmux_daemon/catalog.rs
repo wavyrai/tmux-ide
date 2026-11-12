@@ -42,11 +42,24 @@ impl CatalogIdentity {
     }
 }
 impl Owner {
+    /// Always asks the daemon for its servers.
     pub(super) fn catalog(&self) -> Result<CatalogSnapshot, Error> {
+        self.catalog_with(Self::list_servers)
+    }
+    /// The catalog a traversal starts from: the remembered server list when
+    /// nothing has dropped it. The traversal ends on [`Self::catalog`], which
+    /// asks, so a list that was stale never reaches a publication.
+    pub(super) fn known_catalog(&self) -> Result<CatalogSnapshot, Error> {
+        self.catalog_with(Self::known_servers)
+    }
+    fn catalog_with(
+        &self,
+        list: fn(&Self) -> Result<Vec<ServerRegistration>, Error>,
+    ) -> Result<CatalogSnapshot, Error> {
         match self {
             Self::Local(daemon) => {
                 daemon.verify_current()?;
-                let servers = self.list_servers()?;
+                let servers = list(self)?;
                 daemon.verify_current()?;
                 Ok(CatalogSnapshot {
                     identity: CatalogIdentity {
@@ -61,7 +74,7 @@ impl Owner {
             Self::Remote(remote) => {
                 // The transport proves its captured descriptor on every socket;
                 // resource I/O cannot cross into a newly discovered owner.
-                let servers = self.list_servers()?;
+                let servers = list(self)?;
                 Ok(CatalogSnapshot {
                     identity: CatalogIdentity {
                         instance_id: remote.instance_id().into(),
