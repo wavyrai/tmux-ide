@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Found by the request-count run on 12 Nov 2026: a session created in the app
 //! was opened before the daemon listed its pane, and the window stopped on
 //! "Session has no attachable terminal panes" until refreshed.
