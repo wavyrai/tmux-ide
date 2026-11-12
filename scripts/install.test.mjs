@@ -29,6 +29,10 @@ function fixture(t) {
   );
   script("getconf", '[ -z "${MOCK_MUSL:-}" ] || exit 1; exec /usr/bin/getconf "$@"\n');
   script("tmux-ide", "echo stale-PATH-version; exit 99\n");
+  script(
+    "rm",
+    'case "${MOCK_RM_FAIL:-}:$*" in 1:*/.install.*) exit 1 ;; esac; exec /bin/rm "$@"\n',
+  );
   const sha = createHash("sha256").update("archive").digest("hex");
   script(
     "curl",
@@ -292,6 +296,16 @@ test("a failure whose staging files cannot be removed at first still releases th
   assert.notEqual(failed.status, 0);
   assert.equal(fs.existsSync(path.join(root, "install.lock")), false);
   assert.deepEqual(fs.readdirSync(path.join(root, "releases")), []);
+  assert.equal(run().status, 0, "the retry installs");
+});
+
+test("a failure whose staging files cannot be removed at all still releases the lock", (t) => {
+  const { prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  const failed = run({ MOCK_RM_FAIL: "1", MOCK_NPM_FAIL: "1" });
+  assert.notEqual(failed.status, 0);
+  assert.equal(fs.existsSync(path.join(root, "install.lock")), false);
+  assert.equal(fs.readdirSync(path.join(root, "releases")).length, 1, "the stage stayed");
   assert.equal(run().status, 0, "the retry installs");
 });
 
