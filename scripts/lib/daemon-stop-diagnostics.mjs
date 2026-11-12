@@ -172,3 +172,27 @@ export async function collectDaemonStopDiagnostics({
   }
   return diagnostics;
 }
+
+export const DAEMON_STOP_DEADLINE_MESSAGE = "stop missed the signal deadline";
+
+/**
+ * Judge how a signalled daemon ended. A forced exit after the stop deadline
+ * closes the process in time, so "it exited" alone would pass a hung teardown
+ * as a success. Returns null for a clean stop, otherwise why it was not one,
+ * with the daemon's own deadline line (stuck stage, open resources) if present.
+ */
+export function assessSignalledDaemonStop({ code, signal, stdout = "", stderr = "" }) {
+  const deadlineLine =
+    `${stdout}\n${stderr}`
+      .split("\n")
+      .find((line) => line.includes(DAEMON_STOP_DEADLINE_MESSAGE))
+      ?.slice(0, 4096) ?? null;
+  if (deadlineLine)
+    return { reason: "the teardown hung and the daemon forced its own exit", deadlineLine };
+  if (code !== 0)
+    return {
+      reason: `the daemon ended with ${signal ? `signal ${signal}` : `exit code ${String(code)}`} instead of a clean exit 0`,
+      deadlineLine: null,
+    };
+  return null;
+}

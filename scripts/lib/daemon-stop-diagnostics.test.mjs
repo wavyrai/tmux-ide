@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   DAEMON_REPORT_SIGNAL,
+  assessSignalledDaemonStop,
   collectDaemonStopDiagnostics,
   daemonProcessTree,
   daemonReportNodeOptions,
@@ -121,4 +122,36 @@ test("reads a real report from a live node process that holds a timer open", asy
     child.kill("SIGKILL");
     rmSync(reportDirectory, { recursive: true, force: true });
   }
+});
+
+test("a forced exit after the stop deadline is a failed stop, not a closed daemon", () => {
+  const deadline =
+    '{"signal":"SIGTERM","deadlineMs":10000,"stuckStage":"tmux-server-owners","level":"error","component":"daemon-lifecycle","msg":"stop missed the signal deadline; exiting anyway"}';
+  const forced = assessSignalledDaemonStop({
+    code: 1,
+    signal: null,
+    stdout: `{"status":"ready"}\n${deadline}\n`,
+    stderr: "",
+  });
+  assert.equal(forced.deadlineLine, deadline);
+  assert.match(forced.reason, /teardown hung/u);
+  // The line alone is enough, whatever the exit code says.
+  assert.ok(assessSignalledDaemonStop({ code: 0, signal: null, stdout: "", stderr: deadline }));
+  assert.deepEqual(assessSignalledDaemonStop({ code: 3, signal: null, stdout: "x" }), {
+    reason: "the daemon ended with exit code 3 instead of a clean exit 0",
+    deadlineLine: null,
+  });
+  assert.match(
+    assessSignalledDaemonStop({ code: null, signal: "SIGKILL" }).reason,
+    /signal SIGKILL/u,
+  );
+  assert.equal(
+    assessSignalledDaemonStop({
+      code: 0,
+      signal: null,
+      stdout: '{"status":"ready"}\n',
+      stderr: "",
+    }),
+    null,
+  );
 });

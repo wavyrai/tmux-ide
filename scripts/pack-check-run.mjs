@@ -18,6 +18,7 @@ import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs"
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import {
+  assessSignalledDaemonStop,
   collectDaemonStopDiagnostics,
   daemonReportNodeOptions,
 } from "./lib/daemon-stop-diagnostics.mjs";
@@ -396,6 +397,40 @@ function spawnInstalledCli(installedCli) {
   void childExits.get(child).catch(() => {});
   children.push(child);
   return child;
+}
+
+/**
+ * A daemon this gate stopped with SIGTERM must drain and exit 0. Since the
+ * daemon bounds its own stop, a hung teardown also "closes" in time (forced
+ * exit 1 after the deadline), so closing alone proves nothing (#839).
+ */
+async function waitForSignalledDaemon(child, phase) {
+  // Longer than the daemon's own 25 s total stop bound, so a hung teardown is
+  // reported by the daemon (stuck stage and open steps) rather than cut off here.
+  const result = await waitForChild(child, phase, 30_000);
+  const failure = assessSignalledDaemonStop(result);
+  if (!failure) return result;
+  if (evidenceDir) {
+    try {
+      mkdirSync(evidenceDir, { recursive: true });
+      writeFileSync(
+        join(evidenceDir, `daemon-stop-failed-${String(child.pid)}.json`),
+        `${JSON.stringify({ phase, pid: child.pid, ...failure, ...result }, null, 2)}\n`,
+      );
+    } catch {
+      // The error below still carries the bounded copy.
+    }
+  }
+  throw new Error(
+    `Installed daemon did not stop cleanly during ${phase}: ${failure.reason}: ${JSON.stringify({
+      pid: child.pid,
+      code: result.code,
+      signal: result.signal,
+      deadline: failure.deadlineLine,
+      stdout: result.stdout.slice(-4096),
+      stderr: result.stderr.slice(-4096),
+    })}`,
+  );
 }
 
 async function waitForChild(child, phase, timeoutMs = 20_000) {
@@ -1096,7 +1131,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // waiting for app readiness before that restart would never reach the chooser.
   await createSession("_tmux-ide-pack-empty-seed");
   initialOwner.kill("SIGTERM");
-  await waitForChild(initialOwner, "empty chooser server rebind");
+  await waitForSignalledDaemon(initialOwner, "empty chooser server rebind");
   const emptyCatalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds empty chooser tmux server",
@@ -1132,7 +1167,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
   // server. Restart the installed daemon so its tmux observer is bound to the
   // new server generation before asserting catalog-driven chooser behavior.
   emptyCatalogOwner.kill("SIGTERM");
-  await waitForChild(emptyCatalogOwner, "populated catalog server rebind");
+  await waitForSignalledDaemon(emptyCatalogOwner, "populated catalog server rebind");
   const catalogOwner = spawnInstalledCli(installedCli);
   await observe(
     "daemon binds recreated tmux server",
@@ -2182,7 +2217,7 @@ async function runPackedGoldenJourney(installedCli, initialOwner) {
     readFileSync(join(homeDir, ".tmux-ide", "daemon.json"), "utf8"),
   ).instanceId;
   catalogOwner.kill("SIGTERM");
-  await waitForChild(catalogOwner, "live client daemon replacement");
+  await waitForSignalledDaemon(catalogOwner, "live client daemon replacement");
   const replacement = spawnInstalledCli(installedCli);
   let replacementInstanceId = null;
   await observe(
