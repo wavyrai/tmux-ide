@@ -50,6 +50,7 @@ import {
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
 import { fixtureAutoReply, fixtureState, FIXTURE } from "../mirror/__tests__/simulated-channel.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
+import { logger } from "../../lib/log.ts";
 import { createPaneStreamRuntime } from "./runtime.ts";
 import {
   PANE_STREAM_OWNER_RETIRED_CLOSE,
@@ -3007,10 +3008,65 @@ describe("PaneStreamAdmissionCoordinator", () => {
       viewerMode: "interactive",
       semanticDelivery: true,
     });
-    rejectShell(new Error("shell unavailable"));
-    await vi.waitFor(() => expect(closeEditor).toHaveBeenCalledOnce());
-    expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
-    expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" });
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      rejectShell(new Error("shell unavailable"));
+      await vi.waitFor(() => expect(closeEditor).toHaveBeenCalledOnce());
+      expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" });
+      // The client is told only "stream-unavailable"; the log says which of the ten origins it was.
+      expect(logged).toHaveBeenCalledWith(
+        "pane-stream",
+        "stream closed",
+        expect.objectContaining({
+          code: 1011,
+          reason: "stream-unavailable",
+          cause: "delivery-negotiation-failed",
+          error: "shell unavailable",
+        }),
+      );
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("gives an ordinary close no cause", async () => {
+    const h = harness();
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const { socket } = await connect(h);
+      socket.emit("close");
+      await vi.waitFor(() =>
+        expect(logged).toHaveBeenCalledWith("pane-stream", "stream closed", expect.any(Object)),
+      );
+      const closed = logged.mock.calls.find((call) => call[1] === "stream closed")![2]!;
+      expect(closed).not.toHaveProperty("cause");
+      expect(closed).not.toHaveProperty("error");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("logs when a connection is first told who holds input, and when that changes", async () => {
+    const h = harness();
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+      socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+      socket.message({ type: "presence", generation: INSTANCE, state: "foreground" });
+      const authority = logged.mock.calls.filter((call) => call[1] === "stream input authority");
+      // One line for the first snapshot; an unchanged owner adds none.
+      expect(authority).toHaveLength(1);
+      expect(authority[0]![2]).toMatchObject({
+        session: SESSION,
+        holdsInput: expect.any(Boolean),
+        clients: expect.any(Number),
+      });
+      expect(authority[0]![2]).toHaveProperty("inputOwner");
+      expect(authority[0]![2]).toHaveProperty("connectionClientId");
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("does not park a sibling source-close behind aggregate semantic output pressure", async () => {
