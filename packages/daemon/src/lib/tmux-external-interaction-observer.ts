@@ -162,18 +162,66 @@ function defaultWaiter(
 ): ExternalTmuxInteractionObserverIo["waitForSignal"] {
   const prefix = socketArguments(authority);
   return (channel, signal) =>
-    new Promise<void>((resolve, reject) => {
-      execFile(
-        authority.executablePath,
-        [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
-        { signal, encoding: "utf8", windowsHide: true },
-        (error) => {
-          if (!error) resolve();
-          else if (signal.aborted) resolve();
-          else reject(error);
-        },
-      );
+    waitForBlockingTmuxClient(
+      authority.executablePath,
+      [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
+      signal,
+    );
+}
+
+export const BLOCKING_CLIENT_KILL_GRACE_MS = 250;
+
+/**
+ * Run a tmux client that blocks until signalled (`wait-for`). It has no
+ * deadline by design, so cancellation must not depend on the client's
+ * cooperation: TERM on abort, KILL after a grace, and settle when the process
+ * exits. Observer disposal awaits this, and with it every daemon stop (#839).
+ */
+export function waitForBlockingTmuxClient(
+  executable: string,
+  args: readonly string[],
+  signal: AbortSignal,
+  killGraceMs: number = BLOCKING_CLIENT_KILL_GRACE_MS,
+): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let failure: Error | null = null;
+    let escalation: ReturnType<typeof setTimeout> | null = null;
+    const child = execFile(
+      executable,
+      [...args],
+      { encoding: "utf8", windowsHide: true },
+      (error) => {
+        failure ??= error;
+      },
+    );
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      if (escalation) clearTimeout(escalation);
+      signal.removeEventListener("abort", cancel);
+      if (!failure || signal.aborted) resolve();
+      else reject(failure);
+    };
+    const cancel = (): void => {
+      if (escalation) return;
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    child.once("error", (error) => {
+      failure ??= error;
+      settle();
     });
+    // "exit", not "close": a lingering holder of the pipes must not keep the
+    // waiter, and so the stop, pending after the client itself is gone.
+    child.once("exit", (code, exitSignal) => {
+      if (code !== 0 && !failure)
+        failure = new Error(`tmux wait client ended with ${exitSignal ?? `code ${String(code)}`}`);
+      settle();
+    });
+  });
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

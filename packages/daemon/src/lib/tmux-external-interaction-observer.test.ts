@@ -10,6 +10,7 @@ import {
   ownedHookInstalled,
   parseTmuxInputHookRecords,
   type ExternalTmuxInteractionObserverIo,
+  waitForBlockingTmuxClient,
 } from "./tmux-external-interaction-observer.ts";
 import {
   createAuthenticatedInternalReadOperation,
@@ -1067,4 +1068,36 @@ it("backs off persistent consume failures and aborts the backoff on disposal", a
     await observer.dispose();
   }
   expect(attempts).toBe(2);
+});
+
+// #839: observer disposal, and with it every daemon stop, awaits this client.
+describe("blocking wait client cancellation", () => {
+  it("settles after an abort even when the client ignores SIGTERM", async () => {
+    const abort = new AbortController();
+    const started = performance.now();
+    const waiting = waitForBlockingTmuxClient(
+      "/bin/sh",
+      ["-c", "trap '' TERM; while :; do sleep 1; done"],
+      abort.signal,
+      50,
+    );
+    setTimeout(() => abort.abort(), 100);
+    await expect(waiting).resolves.toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(3_000);
+  }, 10_000);
+
+  it("resolves on a signalled wait, rejects a client that fails on its own, and skips a spawn once aborted", async () => {
+    const live = new AbortController();
+    await expect(
+      waitForBlockingTmuxClient("/bin/sh", ["-c", "exit 0"], live.signal),
+    ).resolves.toBeUndefined();
+    await expect(
+      waitForBlockingTmuxClient("/bin/sh", ["-c", "exit 1"], live.signal),
+    ).rejects.toThrow();
+    await expect(waitForBlockingTmuxClient("/nonexistent/tmux", [], live.signal)).rejects.toThrow();
+    const aborted = AbortSignal.abort();
+    await expect(
+      waitForBlockingTmuxClient("/nonexistent/tmux", [], aborted),
+    ).resolves.toBeUndefined();
+  }, 10_000);
 });
