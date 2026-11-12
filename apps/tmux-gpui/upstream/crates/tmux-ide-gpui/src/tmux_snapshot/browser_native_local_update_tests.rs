@@ -366,6 +366,7 @@ fn a_session_gone_after_the_update_ends_recovery_on_home() {
     target.live = "$9".into();
     new_daemon_lists(&mut local, &target);
     assert!(local.reconnect_catalog().unwrap());
+    read_again_later(&mut local);
     assert!(local.recovery.is_none());
     // Home is loaded again, with a notice, not an empty window.
     let seen = last_catalog(&events);
@@ -463,9 +464,11 @@ fn another_tmux_server_or_a_restored_session_is_never_reopened() {
     assert!(local.stage.is_none());
     // `servers upgrade` restores sessions on the server with new live ids:
     // the session this window showed has ended.
-    let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
-        target.live = "live-session.restored".into();
-    });
+    let (mut local, _events) =
+        ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
+            target.live = "live-session.restored".into();
+        });
+    read_again_later(&mut local);
     assert!(local.recovery.is_none());
     assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert!(local.state.home_notice.is_some());

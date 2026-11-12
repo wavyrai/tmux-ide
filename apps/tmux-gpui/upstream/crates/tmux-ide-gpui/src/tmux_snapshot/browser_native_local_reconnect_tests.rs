@@ -109,6 +109,22 @@ fn local_restart_with_the_same_live_id_reopens_that_session() {
     );
     assert!(local.recovery.is_some());
 }
+/// One catalog without the session is asked again; two seconds on, a second
+/// one that agrees is believed.
+fn confirmed_missing(local: &mut Local) {
+    local.reconnect_catalog().unwrap();
+    read_again_later(local);
+}
+/// The first catalog lacked the session: the same catalog, two seconds on.
+fn read_again_later(local: &mut Local) {
+    assert!(
+        local.recovery.as_ref().is_some_and(Recovery::waiting),
+        "one catalog read ended the session"
+    );
+    let since = &mut local.recovery.as_mut().unwrap().missing_since;
+    *since = since.map(|at| at - Duration::from_secs(2));
+    local.reconnect_catalog().unwrap();
+}
 #[test]
 fn same_generation_with_another_live_session_ends_the_session() {
     let (mut local, _events) = fixture();
@@ -117,7 +133,7 @@ fn same_generation_with_another_live_session_ends_the_session() {
     local.targets.clear();
     target.live = "$9".into();
     local.targets.insert("other-token".into(), target);
-    local.reconnect_catalog().unwrap();
+    confirmed_missing(&mut local);
     ended(&local);
 }
 #[test]
@@ -126,7 +142,7 @@ fn local_restart_with_a_recreated_session_ends_the_session() {
     let target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
     restarted(&mut local, target, "server", "$9");
-    local.reconnect_catalog().unwrap();
+    confirmed_missing(&mut local);
     ended(&local);
 }
 #[test]
@@ -136,10 +152,13 @@ fn local_restart_on_another_server_never_reopens_there() {
     local.reconnect_start().unwrap();
     restarted(&mut local, target, "other-server", "$1");
     local.reconnect_catalog().unwrap();
-    // The session's own server is away: tried again, for a minute at most.
+    // The session's own server is away: tried again, for 30 s at most.
     assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
     assert!(local.stage.is_none());
-    local.recovery.as_mut().unwrap().away_since = Some(Instant::now() - Duration::from_secs(61));
+    local.recovery.as_mut().unwrap().away_since = Some(Instant::now() - Duration::from_secs(29));
+    local.reconnect_catalog().unwrap();
+    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
+    local.recovery.as_mut().unwrap().away_since = Some(Instant::now() - Duration::from_secs(30));
     local.reconnect_catalog().unwrap();
     assert!(local.recovery.is_none());
     assert_eq!(
@@ -366,6 +385,9 @@ fn stale_ready_does_not_clear_recovery() {
         label: None,
         away_since: None,
         record: None,
+        missing_since: None,
+        ended: false,
+        identity_retried: false,
     });
     local
         .command(Command::NativeTerminalReady {
@@ -505,6 +527,7 @@ fn the_actor_survives_a_terminal_interruption_while_the_event_queue_is_full() {
             live_session_id: "$1".into(),
             generation: "generation".into(),
             presence_revision: 0,
+            cause: Cause::Lost,
         })
         .unwrap();
     actor.thread().unpark();
@@ -900,5 +923,7 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
 
 #[path = "browser_native_local_reconnect_always_tests.rs"]
 mod always;
+#[path = "browser_native_local_reconnect_cause_tests.rs"]
+mod cause;
 #[path = "browser_native_local_update_tests.rs"]
 mod update;

@@ -2,8 +2,8 @@
 //! dropped and reported, the frame is held read-only, and the catalog is asked
 //! to re-issue this exact route (card #702).
 use super::{
-    Active, Command, NativeError, State, browser_native_actions, browser_native_input,
-    browser_native_owner, hold::Hold,
+    Active, Cause, Command, NativeError, State, browser_native_actions, browser_native_input,
+    browser_native_owner, diagnostics, hold::Hold,
 };
 use std::collections::VecDeque;
 
@@ -134,7 +134,7 @@ pub(super) fn stream_lost(
     let queued = drop_queued_input(pending);
     let unanswered = matches!(error, NativeError::Input(_));
     hold.begin(state, queued || unanswered || current.input.busy());
-    interrupted(current, presence_revision)
+    interrupted(current, presence_revision, diagnostics::cause(error))
 }
 /// A command failed in a way `fatal` says leaves the stream unusable. It is
 /// recovered like a lost stream. Keys are reported lost only when the failed
@@ -150,11 +150,11 @@ pub(super) fn command_failed(
     let queued = drop_queued_input(pending);
     let in_flight = active.is_some_and(|a| a.input.busy());
     hold.begin(state, failed_input || queued || in_flight);
-    active.map(|a| interrupted(a, presence_revision))
+    active.map(|a| interrupted(a, presence_revision, Cause::Lost))
 }
 
 /// The catalog matches this against its open route before it reconnects.
-pub(super) fn interrupted(current: &Active, presence_revision: u64) -> Command {
+pub(super) fn interrupted(current: &Active, presence_revision: u64, cause: Cause) -> Command {
     Command::NativeTerminalInterrupted {
         version: 1,
         id: current.id.clone(),
@@ -163,6 +163,7 @@ pub(super) fn interrupted(current: &Active, presence_revision: u64) -> Command {
         live_session_id: current.session.clone(),
         generation: current.generation.clone(),
         presence_revision,
+        cause,
     }
 }
 

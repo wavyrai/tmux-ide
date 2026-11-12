@@ -296,7 +296,7 @@ struct Publication {
 }
 #[path = "browser_commands.rs"]
 mod commands;
-pub(super) use commands::Command;
+pub(super) use commands::{Cause, Command};
 #[path = "browser_mailbox.rs"]
 mod mailbox;
 pub(super) use mailbox::{MailboxSlot, tick_or_publication};

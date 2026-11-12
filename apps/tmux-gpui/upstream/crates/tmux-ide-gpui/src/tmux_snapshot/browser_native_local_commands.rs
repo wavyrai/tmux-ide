@@ -301,6 +301,7 @@ impl Local {
                 request,
                 generation,
                 live_session_id,
+                cause,
                 ..
             } => {
                 if self.active.as_ref().is_some_and(|route| {
@@ -309,7 +310,7 @@ impl Local {
                         && route.target.scope.generation == generation
                         && route.target.live == live_session_id
                 }) {
-                    return self.reconnect_start();
+                    return self.reconnect_after(cause);
                 }
                 Ok(())
             }

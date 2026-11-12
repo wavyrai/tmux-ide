@@ -44,6 +44,13 @@ pub(super) struct Recovery {
     away_since: Option<Instant>,
     /// The daemon record as the last try found it ([`record_stamp`]).
     record: Option<Stamp>,
+    /// Since when every catalog has listed the server online without the session.
+    missing_since: Option<Instant>,
+    /// The daemon said the session's last pane exited: one catalog that
+    /// lacks the session is then enough.
+    ended: bool,
+    /// A stream of this recovery already failed its identity check once.
+    identity_retried: bool,
 }
 /// A daemon record's modification time and size. A restarted daemon writes a
 /// new record, so a change means the next try need not wait out its backoff.
@@ -54,24 +61,49 @@ fn record_stamp(record: Option<&PathBuf>) -> Option<Stamp> {
 }
 /// A stream that drops again within [`SETTLED`] of its recovery continues that
 /// recovery's backoff, so a flapping daemon is not retried in a tight loop.
+///
+/// A close the daemon itself sent is different: the daemon was reachable a
+/// moment ago, so the next try is at once and the backoff starts over
+/// (PM, 12 Nov: the owner's daemon closed streams three times in 44 s while it
+/// stayed up). At most [`FRESH`] such starts per [`FRESH_WINDOW`]; a daemon
+/// that closes more often than that is flapping and gets the backoff.
 #[derive(Default)]
-pub(super) struct Flap(Option<(Instant, u32)>);
+pub(super) struct Flap {
+    recovered: Option<(Instant, u32)>,
+    fresh: std::collections::VecDeque<Instant>,
+}
 const SETTLED: Duration = Duration::from_secs(5);
+const FRESH: usize = 4;
+const FRESH_WINDOW: Duration = Duration::from_secs(10);
 impl Flap {
     /// A recovery ended in a ready stream after `attempts` tries.
     pub(super) fn recovered(&mut self, attempts: u32) {
-        self.0 = Some((Instant::now(), attempts));
+        self.recovered = Some((Instant::now(), attempts));
     }
     /// The tries a new recovery starts from: none after a settled stream.
     fn carried(&mut self) -> u32 {
-        self.0
+        self.recovered
             .take()
             .filter(|(at, _)| at.elapsed() < SETTLED)
             .map_or(0, |(_, attempts)| attempts)
     }
+    /// Whether a close sent by the daemon may start the backoff over now.
+    fn fresh(&mut self) -> bool {
+        let now = Instant::now();
+        self.fresh
+            .retain(|at| now.saturating_duration_since(*at) < FRESH_WINDOW);
+        if self.fresh.len() >= FRESH {
+            return false;
+        }
+        self.fresh.push_back(now);
+        true
+    }
     #[cfg(test)]
     pub(super) fn age(&mut self, by: Duration) {
-        if let Some((at, _)) = &mut self.0 {
+        if let Some((at, _)) = &mut self.recovered {
+            *at -= by;
+        }
+        for at in &mut self.fresh {
             *at -= by;
         }
     }
@@ -92,6 +124,9 @@ impl Recovery {
             label: None,
             away_since: None,
             record: None,
+            missing_since: None,
+            ended: false,
+            identity_retried: false,
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -127,8 +162,14 @@ const MAX_DELAY_REMOTE: Duration = Duration::from_secs(30);
 /// How long the session's server may stay offline or unlisted, in catalogs the
 /// daemon did answer, before the session counts as ended. A daemon that lost
 /// sight of a live server finds it again within a probe or two; a server that
-/// was killed never comes back.
-const AWAY_LIMIT: Duration = Duration::from_secs(60);
+/// was killed never comes back. Also how long a server may be online with no
+/// session at all before the open one counts as ended: an owner that was
+/// just rebuilt may not have listed its sessions yet.
+const AWAY_LIMIT: Duration = Duration::from_secs(30);
+/// How long a server that lists other sessions may lack the open one before
+/// it counts as ended. Never one read: a second catalog, at least this much
+/// later, must agree.
+const MISSING_LIMIT: Duration = Duration::from_secs(2);
 /// Over SSH a different identity may be a different machine: stop at once.
 pub(super) const SSH_IDENTITY: &str =
     "A different machine answered at this address. Check the machine, then refresh sessions.";
@@ -151,6 +192,9 @@ pub(super) enum Failure {
     /// The catalog was read, but the session's server is offline or not
     /// listed: the daemon may only have lost sight of it. Tried again.
     Away,
+    /// The catalog was read and the server is online without the session.
+    /// Tried again until [`MISSING_LIMIT`] or [`AWAY_LIMIT`] confirms it.
+    Missing,
 }
 impl Failure {
     pub(super) fn of(error: &herdr_client::tmux_daemon::Error) -> Self {
@@ -177,6 +221,11 @@ fn remote_environment_mismatch(remote: &herdr_client::tmux_ssh::TransportError) 
 }
 impl Local {
     pub(super) fn reconnect_start(&mut self) -> Result<(), Error> {
+        self.reconnect_after(Cause::Lost)
+    }
+    /// Starts or continues recovery after the stream ended for `cause`. Every
+    /// cause reconnects; it only picks the first step and the first wait.
+    pub(super) fn reconnect_after(&mut self, cause: Cause) -> Result<(), Error> {
         let Some(route) = self.active.as_ref() else {
             return Ok(());
         };
@@ -196,7 +245,11 @@ impl Local {
             .find(|choice| choice.id == route.target.live)
             .map(|choice| choice.label.clone());
         let carried = self.flap.carried();
-        let recovery = self.recovery.take().unwrap_or_else(|| Recovery {
+        // The daemon closed the stream itself: it is there. Try now, from the
+        // start of the backoff, also when a recovery was already under way.
+        let fresh = cause.daemon_spoke() && self.flap.fresh();
+        let carried = if fresh { 0 } else { carried };
+        let mut recovery = self.recovery.take().unwrap_or_else(|| Recovery {
             target: route.target.clone(),
             pane: self.state.selected_pane.clone(),
             attempts: carried,
@@ -209,7 +262,28 @@ impl Local {
             away_since: None,
             // The record as it is now: only a later rewrite hurries a try.
             record: record_stamp(self.current_local_record().as_ref()),
+            missing_since: None,
+            ended: false,
+            identity_retried: false,
         });
+        if fresh {
+            recovery.attempts = 0;
+        }
+        match cause {
+            // The generation is gone with the retired owner, and a restarting
+            // daemon comes back with a new one: a lease for the old one can
+            // only be refused. Read the catalog (and the record) instead.
+            Cause::ServerRetired | Cause::DaemonRestarting => recovery.rebind = None,
+            Cause::PanesClosed => {
+                recovery.rebind = None;
+                recovery.ended = true;
+            }
+            // One fresh lease, then the catalog: never a stop (PM, 12 Nov).
+            Cause::Identity if std::mem::replace(&mut recovery.identity_retried, true) => {
+                recovery.rebind = None;
+            }
+            Cause::Identity | Cause::Closed | Cause::Lost | Cause::Silent => {}
+        }
         // A drop, not navigation: agents and the catalog stay on screen. An
         // action in flight is cancelled, never replayed; a session creation
         // keeps its uncertain id (`drop_link`).
@@ -258,6 +332,9 @@ impl Local {
         }
         if failure != Failure::Away {
             recovery.away_since = None;
+        }
+        if failure != Failure::Missing {
+            recovery.missing_since = None;
         }
         // The record may name a new port or token by now.
         recovery.rediscover_owner = true;
@@ -345,6 +422,10 @@ impl Local {
                     && (known || target.scope.generation == scope.generation)
             })
     }
+    /// Whether the fresh catalog lists any session of `server`.
+    fn lists_sessions(&self, server: &str) -> bool {
+        (self.targets.values()).any(|target| target.scope.server_id == server)
+    }
     /// The session is gone from a server that answered, or its server is gone:
     /// Home, freshly loaded, with a notice that says so. Every other session
     /// stays one click away.
@@ -405,8 +486,22 @@ impl Local {
             let known = same_local_daemon || same_remote_machine;
             let server = &recovery.target.scope.server_id;
             if self.server_online(&recovery.target.scope, known) {
-                // The server answered and no longer has the session.
-                self.session_ended(recovery.label.as_deref(), "session")?;
+                // The server answered and does not list the session. One read
+                // is not proof unless the daemon also said its panes closed.
+                let limit = if self.lists_sessions(&recovery.target.scope.server_id) {
+                    MISSING_LIMIT
+                } else {
+                    AWAY_LIMIT
+                };
+                let since = *recovery.missing_since.get_or_insert_with(Instant::now);
+                if recovery.ended || !known || since.elapsed() >= limit {
+                    return self
+                        .session_ended(recovery.label.as_deref(), "session")
+                        .map(|()| true);
+                }
+                eprintln!("tmux-ide: reconnect: server {server} does not list the session yet");
+                self.recovery = Some(recovery);
+                self.reconnect_retry(Failure::Missing)?;
             } else if known {
                 // Offline or unlisted: the daemon may only have lost sight of
                 // the server (a slow probe). The session may still be there.

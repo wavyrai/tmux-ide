@@ -162,7 +162,7 @@ fn offline(server: &str) -> ServerRegistration {
         server_id: server.into(),
     }
 }
-fn online(server: &str, generation: &str) -> ServerRegistration {
+pub(super) fn online(server: &str, generation: &str) -> ServerRegistration {
     ServerRegistration::Online {
         label: "default".into(),
         scope: ServerScope {
@@ -172,7 +172,7 @@ fn online(server: &str, generation: &str) -> ServerRegistration {
     }
 }
 /// Recovery in rediscovery, as after the daemon refused the old generation.
-fn rediscovering() -> (Local, mpsc::Receiver<Incoming>) {
+pub(super) fn rediscovering() -> (Local, mpsc::Receiver<Incoming>) {
     let (mut local, events) = attached();
     local.state.sessions = vec![Choice {
         id: "$1".into(),
@@ -232,27 +232,6 @@ fn a_catalog_with_no_online_server_keeps_reconnecting() {
     assert!(local.stage.is_none(), "left the session for another stage");
     assert_eq!(local.state.surface, Surface::Workspace);
     assert_eq!(local.state.status, RECONNECTING);
-}
-
-/// The server answered and no longer has the session: it ended. Home is
-/// loaded again with a notice that names it, not an empty window.
-#[test]
-fn a_session_missing_from_its_online_server_ends_on_home_with_a_notice() {
-    for generation in ["generation", "generation-after-rebuild"] {
-        let (mut local, events) = rediscovering();
-        local.catalog_servers(vec![online("server", generation)]);
-        assert!(local.reconnect_catalog().unwrap());
-        assert!(local.recovery.is_none());
-        assert!(matches!(local.stage, Some(Stage::Servers)));
-        let published = last_catalog(&events);
-        assert_eq!(published.surface, Surface::Home);
-        assert!(published.home_phase != HomePhase::Unavailable);
-        assert_eq!(published.reconnect_attempt, None);
-        assert_eq!(
-            published.home_notice.as_deref(),
-            Some("“work” ended: its tmux session is no longer running.")
-        );
-    }
 }
 
 /// Another install's record cannot vouch for a server by id alone.
@@ -499,10 +478,10 @@ fn activating_the_window_tries_at_once() {
     assert!(local.recovery.as_ref().unwrap().due.unwrap() <= Instant::now());
 }
 
-/// The minute an away server gets counts catalogs in a row. A daemon that
+/// The 30 s an away server gets counts catalogs in a row. A daemon that
 /// could not be reached in between said nothing about the server.
 #[test]
-fn the_away_minute_starts_over_after_any_other_failure() {
+fn the_away_limit_starts_over_after_any_other_failure() {
     let (mut local, _events) = rediscovering();
     local.catalog_servers(vec![offline("server")]);
     local.reconnect_catalog().unwrap();
