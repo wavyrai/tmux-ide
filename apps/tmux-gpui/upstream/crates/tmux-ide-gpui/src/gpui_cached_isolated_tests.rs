@@ -20,6 +20,8 @@ struct Parent {
     leaf: Entity<Leaf>,
     isolated: bool,
     width: Pixels,
+    /// The width of the clip around the leaf: its content mask.
+    clip: Pixels,
     ink: Hsla,
 }
 impl Render for Parent {
@@ -30,10 +32,13 @@ impl Render for Parent {
         } else {
             self.leaf.clone().cached(style).into_any_element()
         };
-        div()
-            .size_full()
-            .text_color(self.ink)
-            .child(div().w(self.width).h(px(40.)).child(leaf))
+        div().size_full().text_color(self.ink).child(
+            div()
+                .w(self.clip)
+                .h(px(40.))
+                .overflow_hidden()
+                .child(div().w(self.width).h(px(40.)).child(leaf)),
+        )
     }
 }
 
@@ -66,6 +71,7 @@ fn open(
             leaf,
             isolated,
             width: px(100.),
+            clip: px(300.),
             ink: black(),
         }))
     });
@@ -213,4 +219,18 @@ fn an_isolated_view_is_reused_again_after_a_refresh(cx: &mut TestAppContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let n = renders_after(&renders, cx, |_, cx| parent.update(cx, |_, cx| cx.notify()));
     assert_eq!(n, 0, "the app-wide refresh outlived its frame");
+}
+
+/// The clip an ancestor paints it under is part of what it painted: a new
+/// content mask renders it, with its own bounds unchanged.
+#[gpui::test]
+fn an_isolated_view_renders_when_its_content_mask_changes(cx: &mut TestAppContext) {
+    let (parent, _, renders, cx) = open(cx, true);
+    let n = renders_after(&renders, cx, |_, cx| {
+        parent.update(cx, |parent, cx| {
+            parent.clip = px(250.);
+            cx.notify();
+        })
+    });
+    assert_eq!(n, 1);
 }
