@@ -81,12 +81,13 @@ fn nothing_is_asked_again_in_the_background_or_for_another_authority() {
     let lapsed = p.expire(4000).unwrap().authorities;
     assert!(lapsed.iter().any(|(_, a)| *a == Authority::Input));
     assert!(p.retry_input(&lapsed, &id(2), 4000).unwrap().is_none());
-    // A lapsed geometry request.
+    // An input request is still under way.
     let mut p = policy();
     p.presence(true, &id(0), &id(50), 0).unwrap();
-    let lapsed = vec![(id(3), Authority::Geometry)];
-    assert!(p.retry_input(&lapsed, &id(4), 2000).unwrap().is_none());
-    // An input request is still under way.
     let lapsed = vec![(id(3), Authority::Input)];
     assert!(p.retry_input(&lapsed, &id(5), 100).unwrap().is_none());
+    // Only a geometry request lapsed, with no input request under way.
+    p.expire(2000).unwrap();
+    let lapsed = vec![(id(3), Authority::Geometry)];
+    assert!(p.retry_input(&lapsed, &id(4), 2000).unwrap().is_none());
 }
