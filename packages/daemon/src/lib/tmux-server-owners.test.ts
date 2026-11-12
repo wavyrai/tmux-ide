@@ -303,17 +303,18 @@ describe("owner retirement needs positive evidence (#840)", () => {
     const create = vi.fn(async () => ({
       dispose: vi.fn(async (_retirement?: TmuxServerOwnerRetirement) => {}),
     }));
+    const serverProcessAlive = vi.fn((pid: string) => alive.has(pid));
     const owners = new TmuxServerOwners({
       probe,
       create,
-      serverProcessAlive: (pid) => alive.has(pid),
+      serverProcessAlive,
       onEvent: (event) => events.push(event),
     });
     const native = (fingerprint: string, pid = "41") => ({
       ...observation(fingerprint),
       nativeServerIdentity: { pid, startTime: "100" },
     });
-    return { owners, observations, probe, create, alive, events, native };
+    return { owners, observations, probe, create, alive, events, native, serverProcessAlive };
   }
 
   it("keeps a healthy owner and its generation when one probe times out", async () => {
@@ -403,6 +404,11 @@ describe("owner retirement needs positive evidence (#840)", () => {
     f.observations.set("a", timeout);
     expect((await f.owners.refresh())[0]).toMatchObject({ state: "offline" });
     expect(owner.dispose).toHaveBeenCalledTimes(1);
+    // Decided without asking about a process nobody identified.
+    expect(f.serverProcessAlive).not.toHaveBeenCalled();
+    expect(f.events.find((event) => event.type === "owner-retired")).toMatchObject({
+      trigger: "server-identity-unknown",
+    });
     await f.owners.dispose();
   });
 
