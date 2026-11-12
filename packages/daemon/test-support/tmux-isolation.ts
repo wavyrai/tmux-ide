@@ -168,13 +168,24 @@ exec "$REAL" "$@"
  */
 export function installTmuxGuard(environment: NodeJS.ProcessEnv = process.env): TmuxGuard {
   const inherited = environment.TMUX_IDE_TEST_TMUX_GUARD;
-  if (inherited && existsSync(join(inherited, "tmux")))
+  if (inherited && existsSync(join(inherited, "tmux"))) {
+    // A runner between the installer and this process (npx, pnpm) puts its own
+    // directories in front on PATH: put the guard back in front and complete it.
+    environment.PATH = [
+      inherited,
+      ...(environment.PATH ?? "").split(delimiter).filter((entry) => entry !== inherited),
+    ].join(delimiter);
+    environment.TMUX_IDE_TMUX_BIN = join(inherited, "tmux");
+    if (!environment.TMUX_TMPDIR) environment.TMUX_TMPDIR = inherited;
+    delete environment.TMUX;
+    delete environment.TMUX_PANE;
     return {
       directory: inherited,
       executable: join(inherited, "tmux"),
       log: join(inherited, "refused.log"),
       created: false,
     };
+  }
   // /tmp, not os.tmpdir(): macOS's per-user temp path would push a socket in
   // this directory past the sun_path limit.
   const directory = mkdtempSync(`/tmp/${PRIVATE_PREFIX}`);

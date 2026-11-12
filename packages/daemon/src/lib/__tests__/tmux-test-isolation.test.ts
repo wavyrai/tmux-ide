@@ -524,6 +524,17 @@ describe("the tmux guard in front of every test", () => {
       created: false,
     });
     expect(environment.PATH).toBe(`${installed.directory}:/usr/bin:/bin`);
+    // A runner in between (npx, pnpm) puts its own directories in front and may
+    // drop variables: an inherited guard is put back in front and made complete.
+    environment.PATH = `/repo/node_modules/.bin:${installed.directory}:/usr/bin:/bin`;
+    environment.TMUX = "/private/tmp/tmux-501/default,14910,0";
+    delete environment.TMUX_IDE_TMUX_BIN;
+    expect(tmuxGuardViolation(environment)).not.toBeNull();
+    expect(installTmuxGuard(environment).created).toBe(false);
+    expect(environment.PATH).toBe(`${installed.directory}:/repo/node_modules/.bin:/usr/bin:/bin`);
+    expect(environment.TMUX_IDE_TMUX_BIN).toBe(installed.executable);
+    expect(environment.TMUX).toBeUndefined();
+    expect(tmuxGuardViolation(environment)).toBeNull();
     removeTmuxGuard(installed);
     expect(existsSync(installed.directory)).toBe(false);
   });
