@@ -195,12 +195,18 @@ fn a_failure_during_a_recovery_backs_off_and_tries_again() {
     local.reconnect_start().unwrap();
     local.reconnect_tick().unwrap();
     let stage = local.stage.take().unwrap();
-    local.stage_failed(stage, &refused()).unwrap();
+    // The daemon is gone: the same recovery waits out its backoff. It is not
+    // replaced by a new one that would try again at once.
+    let gone = herdr_client::tmux_daemon::Error::OwnerExited;
+    local.stage_failed(stage, &gone).unwrap();
     assert!(
         local
             .recovery
             .as_ref()
             .is_some_and(reconnect::Recovery::waiting)
     );
+    assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
     assert_eq!(local.state.surface, Surface::Workspace);
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none(), "the failed try did not back off");
 }
