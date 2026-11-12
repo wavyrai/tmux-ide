@@ -254,6 +254,7 @@ fn capture_view(
         new_session_queued: None,
         agent_animation: Default::default(),
         idle_tick: Default::default(),
+        sidebar_view: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
@@ -573,6 +574,13 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     if reader_pane {
         state = reader_fixture::with_reader(state, dir)?;
     }
+    // `+notice`: a status notice, which shows over the sidebar's foot when
+    // the sidebar carries the top row's band.
+    if extras.contains(&"notice") {
+        state.status = "Could not reach the pane; retrying".into();
+    }
+    // `+keyboard`: the sidebar navigated by keyboard, its focus ring on.
+    let keyboard = extras.contains(&"keyboard");
     if extras.contains(&"agents") {
         state.workspace_agents = Some(serde_json::from_value(serde_json::json!({
             "sessionId": "session-a", "revision": 1, "phase": "loading",
@@ -721,6 +729,11 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                     view
                 });
                 *root.borrow_mut() = Some(view.clone());
+                if keyboard {
+                    view.update(cx, |view, cx| {
+                        view.focus_sidebar_scope(window, cx);
+                    });
+                }
                 if palette {
                     view.update(cx, |view, cx| view.open_picker(window, cx));
                 }
@@ -804,6 +817,19 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
             cx.run_until_parked();
             cx.update_window(handle.into(), |_, window, _| window.refresh())?;
         }
+    }
+    // `+replay`: the captured frame is the one a terminal publication draws.
+    // Only the view is notified, with no refresh, so whatever it caches is
+    // replayed from the frame before and not rendered again.
+    if extras.contains(&"replay")
+        && let Some(view) = root.borrow().clone()
+    {
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            view.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        })?;
     }
     cx.run_until_parked();
     receiver.try_iter().for_each(drop);

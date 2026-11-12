@@ -64,3 +64,32 @@ fn native_retirement_drops_all_cached_images() -> Result<(), Error> {
     assert_eq!(inner.bytes, 0);
     Ok(())
 }
+
+/// Counts the store's wakes of the window's idle UI task (#714).
+fn counted(store: &Store) -> Arc<std::sync::atomic::AtomicUsize> {
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = wakes.clone();
+    store.on_change(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    wakes
+}
+
+/// Chunks from the reader thread, invalidation and retirement each wake the
+/// idle UI task: none of them comes with a publication.
+#[test]
+fn native_arrivals_invalidation_and_retirement_wake_the_ui_task() -> Result<(), Error> {
+    use std::sync::atomic::Ordering::SeqCst;
+    let store = Store::default();
+    let wakes = counted(&store);
+    store.accept_native(chunk(0, vec![7; 8], false))?;
+    assert_eq!(wakes.load(SeqCst), 1, "a partial arrival");
+    store.accept_native(chunk(8, vec![7; 8], true))?;
+    assert_eq!(wakes.load(SeqCst), 2, "the final chunk");
+    assert!(store.changed_or_inflating());
+    store.invalidate_native(&[DIGEST.into()]);
+    assert_eq!(wakes.load(SeqCst), 3, "invalidation");
+    store.retire_native();
+    assert_eq!(wakes.load(SeqCst), 4, "retirement");
+    Ok(())
+}

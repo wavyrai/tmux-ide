@@ -598,13 +598,10 @@ impl Store {
             wake();
         }
     }
-    /// Work the UI tick still has to pick up: a change to repaint, images
-    /// arriving or inflating, or referenced ones to report missing.
-    pub(super) fn pending(&self) -> bool {
-        let inner = self.lock();
-        let waiting = inner.changed || !inner.partials.is_empty() || !inner.referenced.is_empty();
-        drop(inner);
-        waiting
+    /// A change to repaint, or images inflating: the next tick picks them up.
+    pub(super) fn changed_or_inflating(&self) -> bool {
+        let changed = self.lock().changed;
+        changed
             || self.1.busy.load(std::sync::atomic::Ordering::SeqCst)
             || !self
                 .1
@@ -612,6 +609,22 @@ impl Store {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .is_empty()
+    }
+    /// Images still arriving, or referenced and not yet reported missing:
+    /// the tick reports them after seconds, so a slow poll suffices.
+    pub(super) fn waiting(&self) -> bool {
+        let inner = self.lock();
+        !inner.partials.is_empty() || !inner.referenced.is_empty()
+    }
+    /// Placements that refer to `digest`, which has not arrived, as a
+    /// publication's would; `None` drops them. For tests outside this module.
+    #[cfg(test)]
+    pub(super) fn refer_for_test(&self, digest: Option<&str>) {
+        let mut inner = self.lock();
+        inner.referenced.clear();
+        if let Some(digest) = digest {
+            inner.referenced.insert(digest.into(), Instant::now());
+        }
     }
     /// True once after any image completed or was evicted.
     pub(super) fn take_changed(&self) -> bool {

@@ -50,9 +50,9 @@ impl FitSettle {
     pub fn clear(&mut self) {
         self.pending = None;
     }
-    /// A fit is waiting to become quiet.
-    pub fn pending(&self) -> bool {
-        self.pending.is_some()
+    /// When a waiting fit becomes quiet enough to apply.
+    pub fn due_at(&self) -> Option<std::time::Instant> {
+        self.pending.map(|(_, since)| since + FIT_QUIET)
     }
     pub fn due(&self, now: std::time::Instant) -> bool {
         self.pending

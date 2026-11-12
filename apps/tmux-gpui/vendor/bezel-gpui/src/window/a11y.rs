@@ -213,6 +213,13 @@ impl A11y {
         self.active_this_frame = self.is_enabled() && self.active_flag.load(Ordering::SeqCst);
     }
 
+    /// Sets the flag an assistive client's connection sets, for tests. It
+    /// takes effect at the next frame, as a real activation does.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn set_active_flag(&self, active: bool) {
+        self.active_flag.store(active, Ordering::SeqCst);
+    }
+
     pub(crate) fn is_enabled(&self) -> bool {
         !self.force_disabled
     }

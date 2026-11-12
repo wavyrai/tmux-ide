@@ -148,7 +148,9 @@ pub(in crate::tmux_snapshot) fn waiting_agents(state: &browser::State) -> usize 
     waiting_rows(state).iter().filter(|r| r.attention).count()
 }
 /// The roster [`waiting_agents`] counts from.
-fn waiting_rows(state: &browser::State) -> &[browser::home_agents::Row] {
+pub(in crate::tmux_snapshot) fn waiting_rows(
+    state: &browser::State,
+) -> &[browser::home_agents::Row] {
     match state
         .workspace_fleet_agents
         .as_ref()

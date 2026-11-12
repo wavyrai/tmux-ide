@@ -1,26 +1,44 @@
-//! The UI's 16 ms browser tick. It flushes queued work and re-renders only when
-//! something is due; an idle Home must cost no frames (card #703). An idle
-//! window arms no tick at all (#714): the tick runs for a grace period after
-//! any activity, and for as long as queued work is waiting.
+//! The UI's browser task. It flushes queued UI work and re-renders only when
+//! something is due; an idle Home must cost no frames (card #703). It wakes
+//! only for a reason (#714): a publication, a nudge from input, a render or
+//! an image, a deadline some queued work set, or a 16 ms poll while work
+//! waits for room in the command queue.
 use super::{SnapshotView, browser, renderer_probe};
 use gpui::{AsyncWindowContext, Context, WeakEntity};
 use std::time::{Duration, Instant};
 
-/// How long the tick keeps running after the last publication, input, render
-/// or finished image. Work queued by that activity is flushed within it.
-pub(super) const GRACE: Duration = Duration::from_secs(1);
+/// The poll period while queued work waits for room in the command queue.
+const POLL: Duration = Duration::from_millis(16);
+/// The shortest wait: even "at once" yields to the main thread first.
+const MIN_WAIT: Duration = Duration::from_millis(1);
+/// The poll period while images are missing or arriving: they are reported
+/// missing after seconds, not frames.
+const IMAGE_POLL: Duration = Duration::from_millis(250);
 
-/// The tick's link to the window's UI task.
+/// The browser task's link to the window: what nudges it.
 #[derive(Default)]
 pub(super) struct IdleTick {
     mailbox: Option<browser::Mailbox>,
-    grace_until: Option<Instant>,
-    /// Times the UI task woke, by tick or otherwise.
+    /// Times the UI task woke, by timer or otherwise.
     #[cfg(test)]
     wakes: u32,
+    /// Tests turn the render's nudge off to see the input listeners' alone.
+    #[cfg(test)]
+    quiet_renders: bool,
+    /// A deadline tests set, as queued work would; cleared once it fires.
+    #[cfg(test)]
+    deadline: Option<Instant>,
 }
 impl IdleTick {
-    /// Wakes the UI task if it is idle and restarts the grace period.
+    /// A render's nudge: a render is activity, and queued work may follow it.
+    pub(super) fn render_nudge(&self) {
+        #[cfg(test)]
+        if self.quiet_renders {
+            return;
+        }
+        self.nudge();
+    }
+    /// Wakes the UI task to flush what the activity queued.
     pub(super) fn nudge(&self) {
         if let Some(mailbox) = &self.mailbox {
             mailbox.nudge();
@@ -28,41 +46,49 @@ impl IdleTick {
     }
 }
 
-/// The browser window's UI loop. It wakes for the 16 ms tick (queued UI work)
-/// or at once when a publication lands (#710), then applies the latest state.
-/// With nothing queued and no recent activity it arms no tick, and waits for a
-/// publication or a nudge only.
+/// When the browser task next has to run without being woken.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Next {
+    /// Nothing is queued: only a publication or a nudge wakes it.
+    Idle,
+    /// Queued work flushes once its deadline passes.
+    At(Instant),
+}
+
+/// The browser window's UI loop. It runs once per publication (at once,
+/// #710) and per nudge, and otherwise only when queued work set a deadline.
 pub(super) async fn run_browser(
     entity: WeakEntity<SnapshotView>,
     mailbox: browser::Mailbox,
     cx: &mut AsyncWindowContext,
 ) {
-    let attached = entity.update(cx, |view, cx| view.attach_idle_tick(mailbox.clone(), cx));
+    let attached = entity.update(cx, |view, _| view.attach_idle_tick(mailbox.clone()));
     if attached.is_err() {
         return;
     }
     loop {
-        // Idle before deciding, so a nudge during the decision still wakes us.
+        // Waiting before deciding, so a nudge during the decision still wakes us.
         mailbox.set_idle(true);
         let now = cx.background_executor().now();
-        let tick = entity
-            .update(cx, |view, _| view.tick_wanted(now))
-            .unwrap_or(false);
-        if tick {
-            mailbox.set_idle(false);
-            let tick = cx.background_executor().timer(Duration::from_millis(16));
-            browser::tick_or_publication(tick, &mailbox).await;
-        } else {
-            mailbox.published().await;
-            mailbox.set_idle(false);
+        let next = next_run(&mailbox, now, || {
+            entity
+                .update(cx, |view, _| view.tick_next(now))
+                .unwrap_or(Next::Idle)
+        });
+        match next {
+            Next::Idle => mailbox.published().await,
+            Next::At(at) => {
+                // Never a zero timer: gpui completes it without yielding.
+                let wait = at.saturating_duration_since(now).max(MIN_WAIT);
+                let timer = cx.background_executor().timer(wait);
+                browser::tick_or_publication(timer, &mailbox).await;
+            }
         }
-        let active = mailbox.take_activity();
-        let now = cx.background_executor().now();
+        mailbox.set_idle(false);
+        // This pass serves the activity that woke it.
+        mailbox.take_activity();
         if entity
             .update(cx, |view, cx| {
-                if active {
-                    view.idle_tick.grace_until = Some(now + GRACE);
-                }
                 #[cfg(test)]
                 {
                     view.idle_tick.wakes += 1;
@@ -91,37 +117,64 @@ pub(super) async fn run_browser(
     }
 }
 
+/// When the UI task next runs. A nudge that landed while it was busy (after
+/// its last wake, before `set_idle`) left only its activity flag: it runs
+/// again at once for it.
+fn next_run(mailbox: &browser::MailboxSlot, now: Instant, queued: impl FnOnce() -> Next) -> Next {
+    if mailbox.has_activity() {
+        Next::At(now)
+    } else {
+        queued()
+    }
+}
+
 impl SnapshotView {
     /// Gives the view, its images and its accessibility watcher the UI task's
-    /// mailbox to nudge, and starts the first grace period.
-    fn attach_idle_tick(&mut self, mailbox: browser::Mailbox, cx: &mut Context<Self>) {
+    /// mailbox to nudge.
+    fn attach_idle_tick(&mut self, mailbox: browser::Mailbox) {
         let images = mailbox.clone();
         self.graphics.store.on_change(move || images.nudge());
         let settings = mailbox.clone();
         self.chrome.on_change(move || settings.nudge());
         self.idle_tick.mailbox = Some(mailbox);
-        self.idle_tick.grace_until = Some(cx.background_executor().now() + GRACE);
     }
 
-    /// Whether the UI task should arm its 16 ms tick: within the grace period
-    /// after activity, or while queued work waits for a flush.
-    pub(super) fn tick_wanted(&self, now: Instant) -> bool {
-        self.idle_tick.grace_until.is_some_and(|until| now < until) || self.tick_work_queued()
-    }
-
-    /// Work only a later tick flushes, which no publication or input may wake.
-    fn tick_work_queued(&self) -> bool {
-        renderer_probe::runtime::enabled()
+    /// When the browser task must next run unwoken: the earliest deadline of
+    /// the queued work, a poll while work waits for room, or never.
+    pub(super) fn tick_next(&self, now: Instant) -> Next {
+        let poll = renderer_probe::runtime::enabled()
             || (self.browser_commands.is_some() && self.presence.unflushed())
             || self.resize_gesture.busy()
             || self.pending_input.is_some()
-            || self.fit_settle.pending()
             || self.attention.closing()
-            || self.palette.queued()
-            || self.graphics.store.pending()
+            || self.palette.closing()
+            || self.graphics.store.changed_or_inflating();
+        let deadlines = [
+            poll.then_some(now + POLL),
+            self.fit_settle.due_at(),
+            self.palette.due_at(),
+            self.graphics.store.waiting().then_some(now + IMAGE_POLL),
+            #[cfg(test)]
+            self.idle_tick.deadline,
+        ];
+        // A deadline already passed is work this pass did not finish (a fit
+        // waits for its render): poll for it rather than run again at once,
+        // which would keep the main thread from rendering (review r1).
+        deadlines
+            .into_iter()
+            .flatten()
+            .min()
+            .map_or(Next::Idle, |at| Next::At(at.max(now + POLL)))
     }
 
     pub(super) fn browser_tick(&mut self, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        {
+            let now = cx.background_executor().now();
+            if self.idle_tick.deadline.is_some_and(|at| at <= now) {
+                self.idle_tick.deadline = None;
+            }
+        }
         if let Some(sender) = &self.browser_commands {
             self.presence.flush(sender);
         }

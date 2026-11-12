@@ -1314,6 +1314,11 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    /// Set by [`Window::refresh`] for the next frame only. Unlike `refreshing`,
+    /// a cached view re-rendering does not set it: isolated cached views
+    /// ([`AnyView::cached_isolated`]) re-render under this flag but not under a
+    /// re-rendering ancestor.
+    pub(crate) refresh_forced: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -2251,6 +2256,7 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            refresh_forced: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -2493,6 +2499,7 @@ impl Window {
     pub fn refresh(&mut self) {
         if self.invalidator.not_drawing() {
             self.refreshing = true;
+            self.refresh_forced = true;
             self.invalidator.set_dirty(true);
         }
     }
@@ -3682,6 +3689,7 @@ impl Window {
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.refreshing = false;
+        self.refresh_forced = false;
         self.invalidator.set_phase(DrawPhase::None);
         // Focus listeners may move focus (e.g. a dock forwarding focus to its active
         // panel). `Window::focus` suppresses `refresh` while a draw is in progress, so
@@ -7428,6 +7436,15 @@ impl Window {
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn is_a11y_active(&self) -> bool {
         self.a11y.is_active()
+    }
+
+    /// Switches accessibility on or off for this window from its next frame,
+    /// as an assistive client connecting or leaving does. The test platform
+    /// has no such client, so a test that reads the tree calls this first.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_a11y_active_for_test(&mut self, active: bool) {
+        self.a11y.set_active_flag(active);
+        self.refresh();
     }
 
     /// Debug representation of the last frame's accessibility information.

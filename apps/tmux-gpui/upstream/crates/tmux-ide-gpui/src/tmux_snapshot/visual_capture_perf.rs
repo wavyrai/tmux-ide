@@ -37,6 +37,8 @@ pub const SCENARIOS: &[&str] = &[
     "home30-refresh",
     "home30-motion",
     "home30-idle",
+    "ws30-spinner",
+    "home30-spinner",
     "home100-publish",
     "home100-refresh",
     "home100-motion",
@@ -57,6 +59,8 @@ enum Step {
     Motion,
     /// The window resized by 37 pt and back, alternately.
     Resize,
+    /// The window's root notified, as each agent spinner tick does.
+    Spinner,
 }
 
 struct Scenario {
@@ -327,6 +331,20 @@ fn scenario(name: &str, base: &browser::State) -> Result<Scenario> {
             Step::Idle,
             None,
         ),
+        "ws30-spinner" => s(
+            fleet(state, 30, 40, false)?,
+            workspace,
+            true,
+            Step::Spinner,
+            None,
+        ),
+        "home30-spinner" => s(
+            fleet(state, 30, 40, true)?,
+            HOME_SIZE,
+            true,
+            Step::Spinner,
+            None,
+        ),
         other => return Err(anyhow!("unknown scenario {other}")),
     })
 }
@@ -468,8 +486,9 @@ fn run(
         };
         let (allocs, bytes, cpu) = counter();
         let started = Instant::now();
-        cx.update_window(handle.into(), |_, window, cx| {
+        cx.update_window(handle.into(), |root, window, cx| {
             match step {
+                Step::Spinner => cx.notify(root.entity_id()),
                 Step::Idle => {}
                 Step::Refresh => window.refresh(),
                 Step::Publish => view.update(cx, |view, cx| {
