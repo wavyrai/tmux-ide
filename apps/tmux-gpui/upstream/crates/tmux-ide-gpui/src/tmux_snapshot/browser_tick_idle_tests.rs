@@ -248,6 +248,12 @@ fn each_kind_of_queued_work_arms_the_tick_past_the_grace(cx: &mut TestAppContext
         });
         assert!(!wanted(cx), "{name}: still armed once flushed");
     }
+    // The renderer probe (TMUX_IDE_RENDERER_FIXTURE=1) ticks for as long as it runs.
+    let probe = |on| super::super::renderer_probe::FORCED.with(|forced| forced.set(on));
+    probe(true);
+    assert!(wanted(cx), "the renderer probe did not arm the tick");
+    probe(false);
+    assert!(!wanted(cx));
 }
 
 #[gpui::test]
@@ -261,4 +267,74 @@ fn a_mouse_press_restarts_the_tick(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     assert_ticking(&snapshot, cx, "a mouse press");
+}
+
+/// A key nudges the task through the root's listeners alone, before any
+/// render: some keys the terminal handles notify nothing (#714 review r2).
+#[gpui::test]
+fn key_down_and_up_nudge_without_a_render(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let key = Keystroke::parse("f19").unwrap();
+    mailbox.take_activity();
+    cx.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke: key.clone(),
+                is_held: false,
+                prefer_character_input: false,
+                layout: None,
+            }),
+            cx,
+        );
+    });
+    assert!(mailbox.has_activity(), "key down");
+    mailbox.take_activity();
+    cx.update(|window, cx| {
+        window.dispatch_event(
+            PlatformInput::KeyUp(KeyUpEvent {
+                keystroke: key,
+                layout: None,
+            }),
+            cx,
+        );
+    });
+    assert!(mailbox.has_activity(), "key up");
+}
+
+/// A publication marks activity before anything draws.
+#[gpui::test]
+fn a_publication_marks_activity_before_any_draw(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    mailbox.take_activity();
+    *mailbox.lock().unwrap() = Some(Some(home()));
+    assert!(mailbox.has_activity());
+}
+
+/// Activity left by a nudge while the task was busy arms the tick even with
+/// the grace run out and nothing queued.
+#[test]
+fn pending_activity_arms_the_tick() {
+    let mailbox = browser::MailboxSlot::default();
+    assert!(!super::arm_tick(&mailbox, || false));
+    mailbox.set_idle(false);
+    mailbox.nudge();
+    assert!(super::arm_tick(&mailbox, || false));
+}
+
+/// Deactivating the window wakes the task without a draw: a minimized
+/// window may not draw, and its background transition must still be sent.
+#[gpui::test]
+fn deactivation_wakes_the_task_without_a_draw(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    cx.update(|window, _| window.activate_window());
+    settle(&snapshot, cx);
+    let before = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
+    cx.deactivate_window();
+    let after = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
+    assert!(after > before, "deactivation did not wake the task");
 }

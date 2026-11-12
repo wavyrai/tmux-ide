@@ -15,6 +15,10 @@ pub(crate) mod runtime {
     use crate::tmux_snapshot::{browser, display_frame::DisplayFrame, keys::Input};
 
     pub(crate) fn enabled() -> bool {
+        #[cfg(test)]
+        if super::super::FORCED.with(std::cell::Cell::get) {
+            return true;
+        }
         false
     }
     pub(crate) fn admit(input: Input, _: &browser::State) -> Input {
