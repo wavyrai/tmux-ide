@@ -55,14 +55,17 @@ describe("live session discovery when tmux cannot answer (#753)", () => {
     expect(readLiveSessionSummaries(gone)).toEqual([]);
     // A tmux binary that is missing is not an empty server.
     const noBinary = () => {
-      throw Object.assign(new Error("spawnSync tmux ENOENT"), { code: "ENOENT", syscall: "spawnSync tmux" });
+      throw Object.assign(new Error("spawnSync tmux ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawnSync tmux",
+      });
     };
     expect(readLiveSessionSummaries(noBinary)).toBeNull();
   });
 
   it("keeps the empty answer for callers that only list", () => {
-    expect(discoverLiveSessionSummaries(failing("error connecting to /x (Permission denied)"))).toEqual(
-      [],
-    );
+    expect(
+      discoverLiveSessionSummaries(failing("error connecting to /x (Permission denied)")),
+    ).toEqual([]);
   });
 });
