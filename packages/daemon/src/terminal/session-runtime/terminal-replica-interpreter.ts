@@ -56,6 +56,27 @@ import type { TerminalGraphicsState } from "@tmux-ide/contracts";
 // Bound parser work per turn without changing byte-stream semantics. This is a
 // batch bound, not a producer queue cap: upstream pressure must preserve bytes.
 const MAX_INGEST_BATCH_BYTES = 256 * 1024;
+/**
+ * Under a flood, publish at most one commit per display interval (daemon perf
+ * F1). Each commit projects, diffs and hashes the replica; committing after
+ * every parsed chunk kept the daemon off tmux's control pipe, so tmux itself
+ * ran about 4× slower while a pane was viewed. Rows that scroll through
+ * history between two commits are never projected or hashed. A write with no
+ * output queued behind it (a keystroke echo, the end of a burst) still
+ * commits at once.
+ */
+export const COALESCED_COMMIT_INTERVAL_MS = 16;
+/**
+ * A flood commit costs far more than the display interval (about 35 ms with a
+ * full 2,000-row history), so an interval counted from the commit's start
+ * alone never skips anything: the next chunk always arrives "late". After a
+ * commit the interpreter therefore also reads queued output for this many
+ * times the commit's own cost before it commits again, so at most one part in
+ * (1 + factor) of a flood goes to commits (half, at 1).
+ */
+export const COALESCED_COMMIT_REST_FACTOR = 1;
+/** Upper bound of that rest, so a frame under a flood is never held longer. */
+export const COALESCED_COMMIT_MAX_REST_MS = 100;
 type PendingWrite = {
   data: Uint8Array;
   offset: number;
@@ -184,6 +205,11 @@ export class TerminalReplicaInterpreter {
   #needsSeed = true;
   #closed = false;
   #walkCount = 0;
+  #lastCommitAtMs = Number.NEGATIVE_INFINITY;
+  #lastCommitEndMs = Number.NEGATIVE_INFINITY;
+  #lastCommitCostMs = 0;
+  // A coalesced write skipped its commit and counts on a queued write to publish.
+  #coalescedCommitOwed = false;
   #pendingWrites: WriteGroup | null = null;
   #widgetGate = false;
   // kitty graphics: images outlive reseeds; the scanner owns split APCs.
@@ -528,7 +554,11 @@ export class TerminalReplicaInterpreter {
     this.#emit(update);
   }
 
-  async #write(data: Uint8Array, continuedTrace: SessionRuntimeTraceContext | null): Promise<void> {
+  async #write(
+    data: Uint8Array,
+    continuedTrace: SessionRuntimeTraceContext | null,
+    hasBacklog: () => boolean = () => false,
+  ): Promise<void> {
     if (this.#closed || this.#nativeReseedRequested) return;
     // This optional id is only a controlled next-output probe. It is not a
     // causal assertion: unrelated external tmux output arriving first may
@@ -547,7 +577,15 @@ export class TerminalReplicaInterpreter {
     // see. Skipping it matters: every parser write settles on a later timer
     // turn, so a frame split into dozens of %output chunks would otherwise
     // serialize dozens of turns and fall behind a 30 fps image stream.
-    if (scanned.forward.byteLength === 0) return;
+    if (scanned.forward.byteLength === 0) {
+      // The queued write a coalesced commit was counting on turned out to be
+      // all image payload, and nothing else is queued: publish what it skipped.
+      if (this.#coalescedCommitOwed && !hasBacklog()) {
+        this.#commit(false, this.#pendingWriteDirty ?? undefined, trace);
+        this.#publishGraphics();
+      }
+      return;
+    }
     // Scanning can prepend an escape retained from the previous chunk. Bound
     // the actual parser calls too, and union damage across every fragment.
     for (let offset = 0; offset < scanned.forward.length; offset += MAX_INGEST_BATCH_BYTES) {
@@ -592,6 +630,20 @@ export class TerminalReplicaInterpreter {
     if (pendingResize) {
       this.#commit(false, undefined, trace);
     } else {
+      // Coalesce under a flood: more output is already queued, the last commit
+      // is recent, and nobody is timing this write. The dirty range stays in
+      // #pendingWriteDirty and the next commit (the queued write's, or any
+      // control operation's) merges it, so nothing is dropped. The bootstrap
+      // seed is never held: before it no commit has run, so one is always due.
+      if (
+        trace === null &&
+        this.#causalCell === null &&
+        hasBacklog() &&
+        !this.#coalescedCommitIsDue()
+      ) {
+        this.#coalescedCommitOwed = true;
+        return;
+      }
       this.#commit(false, this.#backend.dirtyRange(), trace);
     }
     this.#publishGraphics();
@@ -629,10 +681,36 @@ export class TerminalReplicaInterpreter {
     this.#syncRecovery = null;
   }
 
+  /** True once a queued flood may publish again: see the two constants above. */
+  #coalescedCommitIsDue(): boolean {
+    const now = this.#scheduler.nowMs();
+    if (now - this.#lastCommitAtMs < COALESCED_COMMIT_INTERVAL_MS) return false;
+    const rest = Math.min(
+      COALESCED_COMMIT_MAX_REST_MS,
+      COALESCED_COMMIT_REST_FACTOR * this.#lastCommitCostMs,
+    );
+    return now - this.#lastCommitEndMs >= rest;
+  }
+
   #commit(
     forceSeed: boolean,
     dirty?: { start: number; end: number },
     trace: SessionRuntimeTraceContext | null = null,
+  ): void {
+    this.#lastCommitAtMs = this.#scheduler.nowMs();
+    this.#coalescedCommitOwed = false;
+    try {
+      this.#commitNow(forceSeed, dirty, trace);
+    } finally {
+      this.#lastCommitEndMs = this.#scheduler.nowMs();
+      this.#lastCommitCostMs = this.#lastCommitEndMs - this.#lastCommitAtMs;
+    }
+  }
+
+  #commitNow(
+    forceSeed: boolean,
+    dirty: { start: number; end: number } | undefined,
+    trace: SessionRuntimeTraceContext | null,
   ): void {
     if (this.#backend.requiresNativeReseed()) {
       if (!this.#nativeReseedRequested) {
@@ -916,7 +994,20 @@ export class TerminalReplicaInterpreter {
           group.entries.splice(0, completed.length);
           group.bytes -= length;
           try {
-            await this.#write(data, group.trace);
+            // Backlog: bytes still in this group, or a newer untraced group
+            // already waiting behind it (a group that has not run yet always
+            // holds an entry). A traced group is a boundary: its commit must
+            // not carry these external bytes. Checked after parsing, when it
+            // is current.
+            await this.#write(
+              data,
+              group.trace,
+              () =>
+                group.entries.length > 0 ||
+                (this.#pendingWrites !== null &&
+                  this.#pendingWrites !== group &&
+                  this.#pendingWrites.trace === null),
+            );
           } catch (error) {
             for (const entry of completed) entry.reject(error);
             throw error;
