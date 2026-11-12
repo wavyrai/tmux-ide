@@ -142,9 +142,7 @@ impl SnapshotView {
         }
     }
 
-    /// Everything the session table shows, hashed. Each input its render
-    /// reads must be here; `fleet_view_tests` pins that a change to each one
-    /// redraws it, and that a replayed frame paints what a fresh one would.
+    /// The key the table's paint is kept under: its [`Inputs`], hashed.
     pub(in crate::tmux_snapshot) fn home_fleet_key(
         &self,
         settling: bool,
@@ -152,104 +150,193 @@ impl SnapshotView {
         cx: &App,
     ) -> u64 {
         let mut hash = DefaultHasher::new();
+        self.home_fleet_inputs(settling, window, cx).hash(&mut hash);
+        hash.finish()
+    }
+
+    /// Everything the session table's render reads, one field per input.
+    /// `fleet_view_tests` has a case for each field, and for each field of
+    /// the catalog behind `catalog`.
+    pub(in crate::tmux_snapshot) fn home_fleet_inputs(
+        &self,
+        settling: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Inputs {
         let state = &self.browser_state;
-        // The catalog, and what the clocks make of it: the words for "last
-        // active", and a machine that has been away for a while.
+        let digest = |feed: &dyn Fn(&mut DefaultHasher)| {
+            let mut hash = DefaultHasher::new();
+            feed(&mut hash);
+            hash.finish()
+        };
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
-        if let Some(fleet) = &state.fleet {
-            fleet_hash(fleet, now, &mut hash);
-            for group in &fleet.groups {
-                format!("{:?}", self.machine_away(group)).hash(&mut hash);
-            }
-        }
-        if let Some(selected) = &state.selected_server {
-            let browser::fleet::SelectedServer {
-                machine_id,
-                machine_label,
-                server_id,
-                generation,
-                label,
-            } = selected;
-            (machine_id, machine_label, server_id, generation, label).hash(&mut hash);
-        }
-        // The agents on the rows, and whether their state may be old.
-        self.agents_shown_last_known().hash(&mut hash);
-        if let Some(roster) = &state.home_agents {
-            let browser::home_agents::Roster {
-                // Not shown: a republished roster with the same rows replays.
-                revision: _,
-                phase,
-                rows,
-                observed_sessions,
-                total_sessions,
-                truncated_sessions,
-                truncated_rows,
-                note,
-            } = roster;
-            (std::mem::discriminant(phase), note).hash(&mut hash);
-            (
-                observed_sessions,
-                total_sessions,
-                truncated_sessions,
-                truncated_rows,
-            )
-                .hash(&mut hash);
-            for agent in rows {
-                crate::tmux_snapshot::browser_ui::sidebar_view::agent_hash(agent, &mut hash);
-                self.agent_last_known(agent).hash(&mut hash);
-            }
-        }
-        // What decides whether a row or a preference button takes a press.
-        (self.browser_request, state.request, state.presence_revision).hash(&mut hash);
-        (state.surface == browser::Surface::Home).hash(&mut hash);
-        (self.browser_commands.is_some(), self.presence.ready()).hash(&mut hash);
-        (
-            self.picker.is_none(),
-            self.new_session.is_none(),
-            self.pane_actions.is_none(),
-            self.marked.is_empty(),
-        )
-            .hash(&mut hash);
-        // Home's own controls: the view, the filter, the keyboard row, the
-        // queued preference, and where the page shows the table.
-        if let Some(controls) = &self.home_filter {
-            format!("{:?}", controls.fleet_view).hash(&mut hash);
-            (controls.waiting_only, &controls.table_cursor).hash(&mut hash);
-            (controls.preference_queued, controls.preference_error).hash(&mut hash);
-            controls.fleet_table.is_focused(window).hash(&mut hash);
-            controls.rows.key(&controls.page_scroll, &mut hash);
-        }
-        // Theme, motion and the agent spinner.
-        format!("{:?}", self.theme()).hash(&mut hash);
-        self.canvas().hash(&mut hash);
-        cx.reduce_motion().hash(&mut hash);
-        self.agent_motion().hash(&mut hash);
+        let controls = self.home_filter.as_ref();
         let slots = &self.agent_animation;
-        slots.attached().hash(&mut hash);
-        // Without the overlay the glyphs themselves animate.
-        if !slots.attached() {
-            slots.frame().hash(&mut hash);
+        Inputs {
+            catalog: digest(&|hash| {
+                if let Some(fleet) = &state.fleet {
+                    fleet_hash(fleet, hash);
+                }
+            }),
+            last_active: state
+                .fleet
+                .iter()
+                .flat_map(|fleet| &fleet.groups)
+                .flat_map(|group| &group.sessions)
+                .map(|session| {
+                    session
+                        .last_activity
+                        .map(|then| super::fleet_rows::last_active_step(now, then))
+                })
+                .collect(),
+            away: state
+                .fleet
+                .iter()
+                .flat_map(|fleet| &fleet.groups)
+                .map(|group| format!("{:?}", self.machine_away(group)))
+                .collect(),
+            selected_server: state.selected_server.as_ref().map(|selected| {
+                let browser::fleet::SelectedServer {
+                    machine_id,
+                    machine_label,
+                    server_id,
+                    generation,
+                    label,
+                } = selected;
+                digest(&|hash| (machine_id, machine_label, server_id, generation, label).hash(hash))
+            }),
+            roster: state.home_agents.as_ref().map(|roster| {
+                let browser::home_agents::Roster {
+                    // Not shown: a republished roster with the same rows
+                    // replays.
+                    revision: _,
+                    phase,
+                    rows: _,
+                    observed_sessions,
+                    total_sessions,
+                    truncated_sessions,
+                    truncated_rows,
+                    note,
+                } = roster;
+                digest(&|hash| {
+                    (std::mem::discriminant(phase), note).hash(hash);
+                    (
+                        observed_sessions,
+                        total_sessions,
+                        truncated_sessions,
+                        truncated_rows,
+                    )
+                        .hash(hash);
+                })
+            }),
+            agents: digest(&|hash| {
+                for agent in state.home_agents.iter().flat_map(|roster| &roster.rows) {
+                    crate::tmux_snapshot::browser_ui::sidebar_view::agent_hash(agent, hash);
+                }
+            }),
+            agents_last_known: state
+                .home_agents
+                .iter()
+                .flat_map(|roster| &roster.rows)
+                .map(|agent| self.agent_last_known(agent))
+                .collect(),
+            local_last_known: self.agents_shown_last_known(),
+            request: self.browser_request,
+            state_request: state.request,
+            presence_revision: state.presence_revision,
+            home: state.surface == browser::Surface::Home,
+            connected: self.browser_commands.is_some(),
+            presence_ready: self.presence.ready(),
+            picker_closed: self.picker.is_none(),
+            new_session_closed: self.new_session.is_none(),
+            pane_actions_closed: self.pane_actions.is_none(),
+            composing: !self.marked.is_empty(),
+            view: controls.map(|controls| format!("{:?}", controls.fleet_view)),
+            waiting_only: controls.is_some_and(|controls| controls.waiting_only),
+            cursor: controls.and_then(|controls| controls.table_cursor.clone()),
+            preference_queued: controls.and_then(|controls| controls.preference_queued),
+            preference_error: controls.is_some_and(|controls| controls.preference_error),
+            table_focused: controls.is_some_and(|controls| controls.fleet_table.is_focused(window)),
+            rows_window: controls.map(|controls| controls.rows.key(&controls.page_scroll)),
+            theme: format!("{:?}", self.theme()),
+            canvas: self.canvas(),
+            reduce_motion: cx.reduce_motion(),
+            agent_motion: self.agent_motion(),
+            spinner_attached: slots.attached(),
+            // Without the overlay the glyphs themselves animate.
+            spinner_frame: (!slots.attached()).then(|| slots.frame()),
+            // An entrance moves every frame until it settles.
+            moving: settling.then(|| cx.background_executor().now()),
         }
-        // An entrance moves every frame until it settles.
-        settling.hash(&mut hash);
-        if settling {
-            cx.background_executor().now().hash(&mut hash);
-        }
-        hash.finish()
     }
+}
+
+/// What the session table's render reads. Its hash is the key.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::tmux_snapshot) struct Inputs {
+    /// The fleet catalog: machines, servers, sessions and preferences.
+    pub catalog: u64,
+    /// The words each session's "last active" shows now.
+    pub last_active: Vec<Option<(u8, i64)>>,
+    /// Each machine's away state, by the connection's clock.
+    pub away: Vec<String>,
+    /// The server new sessions go to.
+    pub selected_server: Option<u64>,
+    /// The agent roster's phase, note and counts.
+    pub roster: Option<u64>,
+    /// The agents on the rows.
+    pub agents: u64,
+    /// Whether each agent's state may be old.
+    pub agents_last_known: Vec<bool>,
+    /// Whether this Mac's agents are marked last known.
+    pub local_last_known: bool,
+    /// The view's request, which every row's action carries.
+    pub request: u64,
+    /// The request the state answers.
+    pub state_request: u64,
+    pub presence_revision: u64,
+    /// Home is the surface.
+    pub home: bool,
+    /// There is a bridge to send a press over.
+    pub connected: bool,
+    pub presence_ready: bool,
+    pub picker_closed: bool,
+    pub new_session_closed: bool,
+    pub pane_actions_closed: bool,
+    /// An input method is composing.
+    pub composing: bool,
+    /// All sessions, Favourites or a machine.
+    pub view: Option<String>,
+    pub waiting_only: bool,
+    /// The keyboard's row.
+    pub cursor: Option<super::fleet_nav::RowKey>,
+    pub preference_queued: Option<(u64, u64, u64)>,
+    pub preference_error: bool,
+    pub table_focused: bool,
+    /// Where each run of rows sat, and the page's visible part and offset.
+    pub rows_window: Option<u64>,
+    pub theme: String,
+    pub canvas: u32,
+    pub reduce_motion: bool,
+    pub agent_motion: bool,
+    pub spinner_attached: bool,
+    pub spinner_frame: Option<usize>,
+    /// The clock, while an entrance is moving.
+    pub moving: Option<std::time::Instant>,
 }
 
 impl RowWindow {
     /// What the window of built rows depends on: where each run sat, and the
     /// page's visible part and scroll offset.
-    fn key(&self, page: &ScrollHandle, hash: &mut DefaultHasher) {
+    fn key(&self, page: &ScrollHandle) -> u64 {
+        let mut hash = DefaultHasher::new();
         let bits = |pixels: Pixels| f32::from(pixels).to_bits();
         let mut tops = self.tops();
         tops.sort_unstable_by_key(|(run, _)| *run);
         for (run, top) in tops {
-            (run, bits(top)).hash(hash);
+            (run, bits(top)).hash(&mut hash);
         }
         let view = page.bounds();
         (
@@ -259,11 +346,12 @@ impl RowWindow {
             bits(view.size.height),
             bits(page.offset().y),
         )
-            .hash(hash);
+            .hash(&mut hash);
+        hash.finish()
     }
 }
 
-fn fleet_hash(fleet: &browser::fleet::Fleet, now: i64, hash: &mut DefaultHasher) {
+fn fleet_hash(fleet: &browser::fleet::Fleet, hash: &mut DefaultHasher) {
     let browser::fleet::Fleet {
         groups,
         preferences,
@@ -332,16 +420,14 @@ fn fleet_hash(fleet: &browser::fleet::Fleet, now: i64, hash: &mut DefaultHasher)
                 name,
                 pane_count,
                 window_count,
-                last_activity,
+                // Read through `last_active_step`, with the clock.
+                last_activity: _,
                 favicon,
                 session_id,
                 selection,
             } = session;
             (server_id, favorite, favorite_action, active, id, name).hash(hash);
             (pane_count, window_count, session_id, selection).hash(hash);
-            last_activity
-                .map(|then| super::fleet_rows::last_active_step(now, then))
-                .hash(hash);
             favicon.as_ref().map(std::sync::Arc::as_ptr).hash(hash);
         }
     }
