@@ -21,6 +21,7 @@ export function localManifestAllowed(workspace, manifest, files) {
   const declared =
     path === "Cargo.toml" ||
     (path.startsWith("crates/") && path.endsWith("/Cargo.toml")) ||
-    path === "../vendor/bezel-gpui-apple/Cargo.toml";
+    path === "../vendor/bezel-gpui-apple/Cargo.toml" ||
+    path === "../vendor/bezel-gpui/Cargo.toml";
   return declared && files.some((entry) => entry.path === path);
 }
