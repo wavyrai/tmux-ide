@@ -749,9 +749,10 @@ describe("identity join", () => {
 
   it("settles the trusted inventory while tmux renames a window on every read (#730)", async () => {
     const { channel, state } = await startedRig();
-    state.descriptorRows[2] = state.descriptorRows[2]!
-      .replace("%3\t\t", "%3\tpane.mirror.gen1\t")
-      .replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.gen1\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
     const windows = [...state.windowRows];
     let reads = 0;
     Object.defineProperty(state, "windowRows", {
