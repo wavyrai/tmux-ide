@@ -459,8 +459,9 @@ fn the_newest_notes_are_not_older_than_the_shipped_app() {
     let shipped = installer
         .split("tmux-ide-gpui-")
         .nth(1)
-        .and_then(|rest| rest.split("-macos-arm64").next())
-        .expect("the installer names its app archive");
+        .and_then(|rest| rest.split("-macos-arm64").next());
+    // The installer names its app archive.
+    let shipped = shipped.unwrap();
     let parse = |v: &str| -> Vec<u32> { v.split('.').map(|n| n.parse().unwrap()).collect() };
     let newest = whats_new::RELEASES[0].0;
     assert_eq!(parse(newest).len(), 3, "a plain x.y.z key: {newest}");
