@@ -208,7 +208,8 @@ impl Local {
             rediscover_owner: false,
             label,
             away_since: None,
-            record: None,
+            // The record as it is now: only a later rewrite hurries a try.
+            record: record_stamp(self.current_local_record().as_ref()),
         });
         // A drop, not navigation: agents and the catalog stay on screen. An
         // action in flight is cancelled, never replayed; a session creation

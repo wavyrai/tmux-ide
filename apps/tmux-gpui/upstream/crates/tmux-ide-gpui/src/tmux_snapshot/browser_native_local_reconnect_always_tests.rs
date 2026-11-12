@@ -452,3 +452,24 @@ fn a_rewritten_daemon_record_is_tried_at_once() {
     assert!(local.stage.is_none());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The record that was there when the stream dropped is not a rewrite: a
+/// flapping stream keeps its backoff.
+#[test]
+fn a_record_that_did_not_change_does_not_hurry_a_flapping_stream() {
+    let dir = std::env::temp_dir().join(format!("tmux-ide-record-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let record = dir.join("daemon.json");
+    std::fs::write(&record, b"{\"port\":1}").unwrap();
+    let (mut local, _events) = attached();
+    local.sources = NativeOwner::new(CatalogSource::Local(record.clone()));
+    local.flap.recovered(4);
+    local.reconnect_start().unwrap();
+    assert_eq!(
+        local.recovery.as_ref().unwrap().local_record,
+        Some(record.clone())
+    );
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none(), "tried before the backoff was over");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
