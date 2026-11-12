@@ -66,11 +66,14 @@ async function tick(): Promise<void> {
 function fakeRefreshClock() {
   let nextId = 1;
   const callbacks = new Map<number, () => void>();
+  const delays: number[] = [];
   return {
+    delays,
     clock: {
-      setTimeout(callback: () => void) {
+      setTimeout(callback: () => void, delayMs: number) {
         const id = nextId++;
         callbacks.set(id, callback);
+        delays.push(delayMs);
         return id;
       },
       clearTimeout(handle: unknown) {
@@ -89,6 +92,181 @@ function fakeRefreshClock() {
     },
   };
 }
+
+/** A supervisor with adopted terminal authority whose later reads follow `read`. */
+async function adopted(
+  timer: ReturnType<typeof fakeRefreshClock>,
+  read: (attempt: number) => Promise<ReturnType<typeof resource>>,
+  extra: Partial<Parameters<typeof createWorkspaceEventSupervisor>[0]> = {},
+) {
+  const socket = new FakeSocket();
+  let reads = 0;
+  const diagnostics: Readonly<Record<string, unknown>>[] = [];
+  const supervisor = createWorkspaceEventSupervisor({
+    socket,
+    daemon,
+    workspaceName: "alpha",
+    sessionName: "tmux-alpha",
+    terminalRefreshClock: timer.clock,
+    fetchTerminalRuntimeInventory: async () => {
+      reads += 1;
+      return reads === 1 ? resource(0) : read(reads - 1);
+    },
+    onDiagnostic: (phase, details) => {
+      if (phase === "terminal-refresh") diagnostics.push(details);
+    },
+    ...extra,
+  });
+  const preparing = supervisor.prepareTerminalRuntimeInventory(new AbortController().signal);
+  socket.emit("open");
+  socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+  await tick();
+  socket.frame({
+    type: "resource.interests-ack",
+    interestRevision: 1,
+    sequence: 0,
+    unavailableInterests: [],
+  });
+  const prepared = await preparing;
+  const published: number[] = [];
+  supervisor.adoptTerminalRuntimeInventory(prepared, (next) =>
+    published.push(next.resourceRevision),
+  );
+  return { socket, supervisor, published, diagnostics, reads: () => reads - 1 };
+}
+
+describe("WorkspaceEventSupervisor terminal refresh after a burst of failed reads (#764)", () => {
+  it("keeps re-reading on a slow bounded backoff until the daemon answers, with no further event", async () => {
+    const timer = fakeRefreshClock();
+    // The daemon answers 503 while it re-qualifies the session (#764 soak run 20).
+    const { socket, supervisor, published, diagnostics, reads } = await adopted(
+      timer,
+      async (attempt) => {
+        if (attempt <= 3) throw new Error("503");
+        return resource(1);
+      },
+    );
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 1,
+      causeOperationId: null,
+    });
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    expect(reads()).toBe(3);
+    // No event follows. The client must still ask again, slowly.
+    expect(timer.pending).toBe(1);
+    expect(timer.delays.at(-1)).toBe(250);
+    timer.runNext();
+    await tick();
+    expect(reads()).toBe(4);
+    expect(published).toEqual([1]);
+    expect(timer.pending).toBe(0);
+    expect(diagnostics.at(-1)).toMatchObject({ outcome: "success" });
+    supervisor.dispose();
+  });
+
+  it("backs off 250, 500, then 1000 ms and gives up after about 15 s by retiring the stale authority", async () => {
+    const timer = fakeRefreshClock();
+    const retired = vi.fn();
+    const { supervisor, published, diagnostics } = await adopted(
+      timer,
+      async () => {
+        throw new Error("503");
+      },
+      { onRetired: retired },
+    );
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    let slow = 0;
+    while (timer.runNext()) {
+      await tick();
+      slow += 1;
+      expect(slow).toBeLessThan(40);
+    }
+    const backoff = timer.delays.filter((delay) => delay > 25);
+    expect(backoff.slice(0, 3)).toEqual([250, 500, 1_000]);
+    expect(backoff.slice(3).every((delay) => delay === 1_000)).toBe(true);
+    const total = backoff.reduce((sum, delay) => sum + delay, 0);
+    expect(total).toBeGreaterThanOrEqual(15_000);
+    expect(total).toBeLessThan(16_000);
+    expect(published).toEqual([]);
+    expect(diagnostics.at(-1)).toMatchObject({ outcome: "exhausted", failure: "read-failed" });
+    // The terminal isn't left showing stale authority: the generation retires.
+    expect(retired).toHaveBeenCalledTimes(1);
+    supervisor.dispose();
+  });
+
+  it("starts the backoff over after a read succeeds", async () => {
+    const timer = fakeRefreshClock();
+    let fail = true;
+    const { supervisor, published } = await adopted(timer, async () => {
+      if (fail) throw new Error("503");
+      return resource(1);
+    });
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext(); // the 250 ms backoff
+    await tick();
+    expect(timer.delays.at(-1)).toBe(500);
+    fail = false;
+    timer.runNext();
+    await tick();
+    expect(published).toEqual([1]);
+    // A later failure (a consumer request, so no event resets it) starts at
+    // the first step again.
+    fail = true;
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    expect(timer.delays.at(-1)).toBe(250);
+    supervisor.dispose();
+  });
+
+  it("lets a new event cut a slow backoff short and start a fresh budget", async () => {
+    const timer = fakeRefreshClock();
+    let fail = true;
+    const { socket, supervisor, published, reads } = await adopted(timer, async () => {
+      if (fail) throw new Error("503");
+      return resource(2);
+    });
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    expect(timer.delays.at(-1)).toBe(250);
+    fail = false;
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 2,
+      causeOperationId: null,
+    });
+    await tick();
+    // The event reads at once instead of waiting out the 250 ms backoff.
+    expect(reads()).toBe(4);
+    expect(published).toEqual([2]);
+    expect(timer.pending).toBe(0);
+    supervisor.dispose();
+  });
+});
 
 describe("WorkspaceEventSupervisor", () => {
   it("bounds a sink-triggered refresh and cancels its delayed successor on dispose", async () => {
@@ -306,9 +484,11 @@ describe("WorkspaceEventSupervisor", () => {
     expect(timer.pending).toBe(1);
     timer.runNext();
     await tick();
-    expect(timer.pending).toBe(0);
     expect(diagnostics.slice(-3).map(({ attempt }) => attempt)).toEqual([1, 2, 3]);
-    expect(diagnostics.at(-1)).toMatchObject({ outcome: "exhausted" });
+    // Past the fast retries a failed read backs off slowly rather than going
+    // quiet (#764); the budget's end is pinned in the #764 tests above.
+    expect(timer.pending).toBe(1);
+    expect(diagnostics.at(-1)).toMatchObject({ outcome: "backoff", delayMs: 250 });
     supervisor.dispose();
   });
 
@@ -529,17 +709,21 @@ describe("WorkspaceEventSupervisor", () => {
     for (let index = 0; index < 1_000; index += 1) supervisor.refreshTerminalRuntimeInventory();
     finalRefresh.reject(new Error("final failed"));
     await tick();
-    expect(timer.pending).toBe(0);
     expect(reads).toBe(4);
     expect(diagnostics.map(({ attempt }) => attempt)).toEqual([1, 2, 3]);
+    // The third failed attempt backs off (#764); the consumer requests that
+    // arrived during it stay coalesced for the next read.
+    expect(timer.pending).toBe(1);
     expect(diagnostics.at(-1)).toMatchObject({
-      outcome: "exhausted",
+      outcome: "backoff",
       failure: "read-failed",
+      coalescedRequests: 0,
     });
-    expect(diagnostics.at(-1)?.coalescedRequests).toBe(999);
+    // A new request reads at once instead of waiting out the backoff, as a
+    // fresh first attempt that reports what it absorbed.
     supervisor.refreshTerminalRuntimeInventory();
     await tick();
-    expect(diagnostics.at(-1)).toMatchObject({ attempt: 1, coalescedRequests: 0 });
+    expect(diagnostics.at(-1)).toMatchObject({ attempt: 1, coalescedRequests: 999 });
     supervisor.dispose();
   });
 
