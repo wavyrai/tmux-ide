@@ -52,7 +52,9 @@ import { fixtureAutoReply, fixtureState, FIXTURE } from "../mirror/__tests__/sim
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { createPaneStreamRuntime } from "./runtime.ts";
 import {
+  PANE_STREAM_OWNER_RETIRED_CLOSE,
   PaneStreamAdmissionCoordinator,
+  paneStreamCloseForRetirement,
   type PaneStreamMirror,
   type SessionRuntimePaneStreamTransportBinding,
 } from "./pane-stream-websocket.ts";
@@ -3368,6 +3370,56 @@ describe("PaneStreamAdmissionCoordinator", () => {
       shuttingDown: true,
     });
     expect(h.leaseManager.snapshot().leases).toHaveLength(0);
+    // A whole-daemon shutdown keeps its historical close.
+    expect(socket.closed).toEqual({ code: 1001, reason: "daemon-shutdown" });
+  });
+
+  // #840: a tmux server owner retired under a live daemon is not a daemon shutdown.
+  it("tells live and unredeemed sockets to reconnect when only the owner is retired", async () => {
+    const h = harness();
+    const { socket } = await connect(h);
+    await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId: freshRequestId(),
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error("expected an admission");
+    const unredeemed = new FakeSocket();
+    decision.admission.bind(unredeemed as never);
+    const retired = h.coordinator.shutdown(PANE_STREAM_OWNER_RETIRED_CLOSE);
+    // A later plain shutdown (the upgrade boundary, the runtime) joins the first one.
+    expect(h.coordinator.shutdown()).toBe(retired);
+    await retired;
+    expect(socket.closed).toEqual({ code: 1012, reason: "tmux-server-retired" });
+    expect(unredeemed.closed).toEqual({ code: 1012, reason: "tmux-server-retired" });
+    expect(h.coordinator.snapshot()).toMatchObject({ liveConnections: 0, shuttingDown: true });
+  });
+
+  it("maps every reason an owner is disposed to what its streams are told", () => {
+    const told = (retirement: Parameters<typeof paneStreamCloseForRetirement>[0]) => {
+      const close = paneStreamCloseForRetirement(retirement);
+      return `${close.code} ${close.reason}`;
+    };
+    expect(told(undefined)).toBe("1001 daemon-shutdown");
+    expect(told("shutdown")).toBe("1001 daemon-shutdown");
+    expect(told("generation-restart")).toBe("1012 daemon-restarting");
+    expect(told("server-gone")).toBe("1012 tmux-server-retired");
+    expect(told("server-replaced")).toBe("1012 tmux-server-retired");
+    expect(told("removed")).toBe("1012 tmux-server-retired");
   });
 });
 

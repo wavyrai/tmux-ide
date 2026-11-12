@@ -126,7 +126,7 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     base,
     route(async (c) =>
       c.json(
-        TmuxServersResourceSchemaZ.parse({ version: 1, servers: await options.owners.refresh() }),
+        TmuxServersResourceSchemaZ.parse({ version: 1, servers: await options.owners.observe() }),
       ),
     ),
   );

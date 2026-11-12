@@ -7,10 +7,18 @@ import { tmuxServerPaneStreamPath, type TmuxServerScope } from "@tmux-ide/contra
 import {
   TmuxServerOwners,
   MAX_TMUX_SERVER_OWNERS,
+  isTmuxServerObservation,
+  retirementKeepsGeneration,
+  type TmuxServerOwnerRetirement,
+  type TmuxServerOwnersEvent,
+  type TmuxServerProbeResult,
   type TmuxServerRegistration,
 } from "./tmux-server-owners.ts";
+import { paneStreamCloseForRetirement } from "../terminal/pane-stream/pane-stream-websocket.ts";
+import { logger } from "./log.ts";
+import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import {
-  createTmuxServerProbe,
+  createDiagnosedTmuxServerProbe,
   readTmuxServerRegistrations,
   writeTmuxServerRegistrations,
 } from "./tmux-server-registration.ts";
@@ -20,6 +28,28 @@ import {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
 } from "../server/pane-stream-upgrade.ts";
+
+/** Startup decides once whether the default owner is adopted, so a slow first answer is asked again. */
+export const DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS = 3;
+
+/** How often the background liveness check looks at sockets and server pids (no subprocess). */
+export const OWNER_SWEEP_INTERVAL_MS = 2_000;
+
+/** Every owner decision as one structured line: what was retired, kept or built, and why (#840). */
+export function logTmuxServerOwnersEvent(event: TmuxServerOwnersEvent): void {
+  const { type, ...fields } = event;
+  if (type === "owner-kept")
+    logger.warn("tmux-server-owners", "probe failed; healthy owner kept", fields);
+  else if (type === "owner-retired" && event.trigger === "owners-disposed")
+    logger.debug("tmux-server-owners", "owner disposed with its daemon generation", fields);
+  else if (type === "owner-retired")
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed", fields);
+  else if (type === "retirement-unconfirmed")
+    logger.warn("tmux-server-owners", "retirement evidence not confirmed; owner kept", fields);
+  else if (type === "owner-create-failed")
+    logger.warn("tmux-server-owners", "owner could not be built; server stays offline", fields);
+  else logger.info("tmux-server-owners", "owner built", fields);
+}
 
 /** Adapts the established default owner without duplicating its control clients. */
 export async function createEmbeddedTmuxServerOwners(options: {
@@ -32,11 +62,24 @@ export async function createEmbeddedTmuxServerOwners(options: {
   readonly defaultOwner: Omit<NativeTmuxServerOwner, "serverId" | "generation">;
   readonly stateDirectory: string;
   readonly webSocketBaseUrl: string;
+  readonly trackTeardown?: TrackTeardownStep;
 }) {
   const path = join(options.stateDirectory, "tmux-servers.json");
   const persisted = readTmuxServerRegistrations(path);
-  const probe = createTmuxServerProbe(options.defaultAuthority.executablePath);
-  const defaultObservation = await probe(options.defaultAuthority.socketSelector);
+  const probe = createDiagnosedTmuxServerProbe(options.defaultAuthority.executablePath);
+  // A missed answer here would leave the default owner unadopted, and the
+  // next server list would then replace it and drop its streams.
+  let defaultProbe: TmuxServerProbeResult = null;
+  for (let attempt = 1; attempt <= DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS; attempt += 1) {
+    defaultProbe = await probe(options.defaultAuthority.socketSelector);
+    if (isTmuxServerObservation(defaultProbe) || defaultProbe?.failure === "no-server") break;
+    logger.warn("tmux-server-owners", "default server probe failed at startup", {
+      attempt,
+      attempts: DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS,
+      ...(defaultProbe ?? { failure: "unknown" }),
+    });
+  }
+  const defaultObservation = isTmuxServerObservation(defaultProbe) ? defaultProbe : null;
   let established = persisted.find(
     (entry) =>
       JSON.stringify(entry.selector) === JSON.stringify(options.defaultAuthority.socketSelector),
@@ -44,7 +87,10 @@ export async function createEmbeddedTmuxServerOwners(options: {
   if (!established && defaultObservation) {
     for (const entry of persisted) {
       const observation = await probe(entry.selector);
-      if (observation?.fingerprint === defaultObservation.fingerprint) {
+      if (
+        isTmuxServerObservation(observation) &&
+        observation.fingerprint === defaultObservation.fingerprint
+      ) {
         established = entry;
         break;
       }
@@ -79,16 +125,31 @@ export async function createEmbeddedTmuxServerOwners(options: {
       );
   };
   let defaultRetired = false;
-  const retireDefault = async () => {
+  let defaultAdopted = false;
+  const retireDefault = async (retirement?: TmuxServerOwnerRetirement) => {
     if (defaultRetired) return;
     defaultRetired = true;
-    await options.defaultOwner.dispose();
+    if (retirementKeepsGeneration(retirement))
+      logger.warn(
+        "tmux-server-owners",
+        "default owner retired; legacy default routes now answer 410",
+        {
+          serverId: defaultRegistration.serverId,
+          generation: options.defaultGeneration,
+          retirement,
+        },
+      );
+    await options.defaultOwner.dispose(retirement);
   };
   const owners = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe,
+    onEvent: logTmuxServerOwnersEvent,
     persist: (registrations) => writeTmuxServerRegistrations(path, registrations),
     create: async (registration, scope, observation) => {
-      if (registration.serverId === defaultRegistration.serverId) await retireDefault();
+      // The default owner was never adopted (or already retired): the native
+      // owner about to be built replaces it while the daemon stays up.
+      if (registration.serverId === defaultRegistration.serverId)
+        await retireDefault("server-replaced");
       const route = tmuxServerPaneStreamPath(scope);
       const owner = await createNativeTmuxServerOwner({
         localImages: options.localImages,
@@ -96,20 +157,27 @@ export async function createEmbeddedTmuxServerOwners(options: {
         ...scope,
         tmuxAuthority: observation.authority,
         nativeServerIdentity: observation.nativeServerIdentity,
+        ...(options.trackTeardown ? { trackTeardown: options.trackTeardown } : {}),
         stateDirectory: join(options.stateDirectory, "server-owners", registration.serverId),
         webSocketUrl: new URL(route, options.webSocketBaseUrl).href,
       });
       attachOwner(route, owner);
       return {
         ...owner,
-        dispose: async () => {
+        dispose: async (retirement?: TmuxServerOwnerRetirement) => {
           const boundary = boundaries.get(route);
           boundaries.delete(route);
           pending.delete(route);
+          // The first shutdown call names the close reason; the boundary and
+          // the owner then only join it.
+          const streamsClosed = owner.paneStreamRuntime.coordinator.shutdown(
+            paneStreamCloseForRetirement(retirement),
+          );
+          streamsClosed.catch(() => undefined);
           try {
             await boundary?.close();
           } finally {
-            await owner.dispose();
+            await owner.dispose(retirement);
           }
         },
       };
@@ -124,6 +192,7 @@ export async function createEmbeddedTmuxServerOwners(options: {
         serverId: defaultRegistration.serverId,
         generation: options.defaultGeneration,
       });
+      defaultAdopted = true;
       owners.adopt(
         defaultRegistration,
         { serverId: defaultRegistration.serverId, generation: options.defaultGeneration },
@@ -155,6 +224,14 @@ export async function createEmbeddedTmuxServerOwners(options: {
     if (route.startsWith("/v2/tmux-servers/") && !pending.has(route))
       socket.end("HTTP/1.1 410 Gone\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
   };
+  // Read routes no longer check liveness, so this does. While the adopted
+  // default is the only server, its replacement belongs to the embedder's
+  // restart adapter (tmuxAuthorityReplaced), which rebuilds the generation.
+  const sweepTimer = setInterval(() => {
+    if (defaultAdopted && !defaultRetired && owners.list().length <= 1) return;
+    void owners.sweep().catch(() => undefined);
+  }, OWNER_SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
   return {
     owners,
     isDefaultCurrent() {
@@ -192,9 +269,10 @@ export async function createEmbeddedTmuxServerOwners(options: {
           ),
         );
     },
-    async dispose() {
+    async dispose(retirement: "shutdown" | "generation-restart" = "shutdown") {
+      clearInterval(sweepTimer);
       httpServer?.off("upgrade", refuseUnknownScope);
-      await owners.dispose();
+      await owners.dispose(retirement);
     },
     /** Legacy default routes remain bound to their original authority; never retarget. */
     get defaultRetired() {
