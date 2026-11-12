@@ -82,3 +82,7 @@ required-features = ["integration-test"]
 [[example]]
 name = "capture_window"
 required-features = ["visual-capture"]
+
+[[example]]
+name = "perf_bench"
+required-features = ["visual-capture"]
