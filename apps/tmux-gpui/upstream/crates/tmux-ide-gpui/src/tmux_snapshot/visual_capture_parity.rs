@@ -99,6 +99,9 @@ struct Case {
     cell_height: f32,
     origin: Point<Pixels>,
     images: bool,
+    /// Earlier frames show the rows one line lower, so retained rows are
+    /// queued again at another height in the captured frame.
+    scrolled: bool,
 }
 
 fn cases() -> Vec<Case> {
@@ -118,11 +121,14 @@ fn cases() -> Vec<Case> {
                 ("h20", 20., point(px(12.), px(8.))),
                 ("h17.35", 17.35, point(px(12.3), px(7.7))),
             ] {
-                for images in [false, true] {
+                for (images, scrolled) in
+                    [(false, false), (true, false), (false, true), (true, true)]
+                {
                     let name: &'static str = Box::leak(
                         format!(
-                            "{theme_name}-{bg_name}-{h_name}{}",
-                            if images { "-images" } else { "" }
+                            "{theme_name}-{bg_name}-{h_name}{}{}",
+                            if images { "-images" } else { "" },
+                            if scrolled { "-scrolled" } else { "" }
                         )
                         .into_boxed_str(),
                     );
@@ -133,6 +139,7 @@ fn cases() -> Vec<Case> {
                         cell_height,
                         origin,
                         images,
+                        scrolled,
                     });
                 }
             }
@@ -180,8 +187,17 @@ fn placement(key: &SurfaceGraphicsAssetKey, x: u16, y: u16, z: i32) -> SurfaceGr
 /// screenshot.
 fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<image::RgbaImage> {
     const COLS: usize = 60;
+    let rows = cells(COLS);
+    let mut earlier = rows.clone();
+    earlier.rotate_right(1);
+    let earlier = Arc::new(NativeFrame {
+        rows: earlier,
+        width: COLS as u16,
+        height: LINES.len() as u16,
+        cursor: None,
+    });
     let frame = Arc::new(NativeFrame {
-        rows: cells(COLS),
+        rows,
         width: COLS as u16,
         height: LINES.len() as u16,
         cursor: Some(CursorState {
@@ -209,7 +225,12 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
         painter.set_appearance(14., case.cell_height, case.theme.clone());
         painter.legacy_glyphs = legacy;
     }
-    let (origin, with_images, background) = (case.origin, case.images, case.theme.background);
+    let (origin, with_images, background, scrolled) = (
+        case.origin,
+        case.images,
+        case.theme.background,
+        case.scrolled,
+    );
     let handle = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
@@ -225,7 +246,11 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
             |_, cx| {
                 cx.new(|_| Painted {
                     painter: painter.clone(),
-                    frame: frame.clone(),
+                    frame: if scrolled {
+                        earlier.clone()
+                    } else {
+                        frame.clone()
+                    },
                     origin,
                     images: with_images.then(|| (images.clone(), placements.clone())),
                     background,
@@ -237,6 +262,18 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
     for _ in 0..4 {
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+    }
+    if scrolled {
+        cx.update_window(handle.into(), |root, window, cx| {
+            if let Ok(view) = root.downcast::<Painted>() {
+                view.update(cx, |view, _| view.frame = frame.clone());
+            }
+            window.refresh();
+        })?;
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.update_window(handle.into(), |_, window, _| window.refresh())?;
+        }
     }
     cx.run_until_parked();
     let image = cx.capture_screenshot(handle.into())?;
@@ -307,7 +344,10 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
     let mut failed = 0;
     for case in cases() {
         let legacy = render(&mut cx, &case, true)?;
+        let hits = crate::terminal_painter::ROW_HITS.load(std::sync::atomic::Ordering::Relaxed);
         let batched = render(&mut cx, &case, false)?;
+        let hits =
+            crate::terminal_painter::ROW_HITS.load(std::sync::atomic::Ordering::Relaxed) - hits;
         let differing = legacy
             .pixels()
             .zip(batched.pixels())
@@ -320,7 +360,7 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
             .filter(|p| p.0 != legacy.get_pixel(0, 0).0)
             .count();
         lines.push(format!(
-            "{:<32} {}x{} identical={same} differing_pixels={differing} non_background_pixels={inked}",
+            "{:<40} {}x{} identical={same} differing_pixels={differing} non_background_pixels={inked} retained_row_hits={hits}",
             case.name,
             legacy.width(),
             legacy.height(),

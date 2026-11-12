@@ -399,13 +399,22 @@ fn run(
         bytes: Vec::with_capacity(frames),
     };
     let mut timed = new();
-    // `GLYPH_AB`: odd frames paint glyph by glyph, interleaved with the
-    // batched ones so both see the same load.
-    let ab = std::env::var_os("GLYPH_AB").is_some();
+    // `GLYPH_AB=legacy`: odd frames paint glyph by glyph, interleaved with
+    // the batched ones so both see the same load. `GLYPH_AB=rows`: odd frames
+    // paint without retained rows. `GLYPH_ROWS=0` turns retained rows off.
+    let mode = std::env::var("GLYPH_AB").ok();
+    let ab = mode.is_some();
+    let rows_ab = mode.as_deref() == Some("rows");
+    let rows_on = std::env::var("GLYPH_ROWS").map_or(true, |v| v != "0");
     let mut legacy_timed = new();
     for index in 0..frames + WARMUP {
         let legacy = ab && index % 2 == 1;
-        crate::terminal_painter::LEGACY_GLYPHS.store(legacy, std::sync::atomic::Ordering::Relaxed);
+        crate::terminal_painter::LEGACY_GLYPHS
+            .store(legacy && !rows_ab, std::sync::atomic::Ordering::Relaxed);
+        crate::terminal_painter::RETAIN_ROWS.store(
+            rows_on && !(legacy && rows_ab),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let timed = if legacy {
             &mut legacy_timed
         } else {
@@ -478,8 +487,13 @@ pub fn perf_bench(counter: AllocCounter, frames: usize, filter: Option<&str>) ->
         )?;
         match legacy {
             Some(legacy) => {
-                eprintln!("{}", frames.line(&format!("{name}/batched")));
-                eprintln!("{}", legacy.line(&format!("{name}/legacy")));
+                let (a, b) = if std::env::var("GLYPH_AB").as_deref() == Ok("rows") {
+                    ("rows", "norows")
+                } else {
+                    ("batched", "legacy")
+                };
+                eprintln!("{}", frames.line(&format!("{name}/{a}")));
+                eprintln!("{}", legacy.line(&format!("{name}/{b}")));
             }
             None => eprintln!("{}", frames.line(name)),
         }

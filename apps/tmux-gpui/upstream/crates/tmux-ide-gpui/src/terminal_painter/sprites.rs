@@ -13,6 +13,7 @@
 //! scene it would sort to anyway, and its sort meets one long sorted run
 //! instead of shuffling every glyph.
 
+use super::rows::RowGlyph;
 use gpui::{
     FontId, GlyphId, Hsla, Pixels, PlacedGlyph, Point, ResolvedGlyph, Result, ShapedLine, Window,
     point, px,
@@ -35,7 +36,7 @@ struct Key {
 /// Multiply-rotate hashing: the keys are small integers, so SipHash's
 /// resistance to chosen keys buys nothing here.
 #[derive(Default)]
-struct Fx(u64);
+pub(super) struct Fx(u64);
 impl Hasher for Fx {
     fn finish(&self) -> u64 {
         self.0
@@ -58,11 +59,13 @@ impl Hasher for Fx {
         self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
     }
 }
+pub(super) type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<Fx>>;
 
 #[derive(Default)]
 pub(super) struct Sprites {
-    /// Each resolution and its slot in `tiles`.
-    resolved: HashMap<Key, Option<(ResolvedGlyph, u32)>, BuildHasherDefault<Fx>>,
+    resolved: FxMap<Key, Option<ResolvedGlyph>>,
+    /// Each tile queued this batch and its slot in `tiles`.
+    slot_of_tile: FxMap<u32, u32>,
     /// Per slot: its tile id, then (in `flush`) its rank among the tiles.
     tiles: Vec<u32>,
     batch: Vec<PlacedGlyph>,
@@ -72,6 +75,8 @@ pub(super) struct Sprites {
     ranks: Vec<(u32, u32)>,
     counts: Vec<u32>,
     ordered: Vec<PlacedGlyph>,
+    /// While a row is recorded for `rows`: its glyphs, as queued.
+    pub(super) recording: Option<Vec<RowGlyph>>,
 }
 
 impl Sprites {
@@ -79,6 +84,7 @@ impl Sprites {
     /// appearance may change between frames.
     pub(super) fn begin(&mut self) {
         self.resolved.clear();
+        self.slot_of_tile.clear();
         self.tiles.clear();
         self.batch.clear();
         self.slots.clear();
@@ -95,16 +101,14 @@ impl Sprites {
         color: Hsla,
         window: &mut Window,
     ) -> Result<()> {
-        let baseline = origin
-            + point(
-                px(0.),
-                (line_height - line.ascent - line.descent) / 2. + line.ascent,
-            );
+        let offset = (line_height - line.ascent - line.descent) / 2. + line.ascent;
+        let baseline = origin + point(px(0.), offset);
         for run in &line.runs {
             for glyph in &run.glyphs {
                 let position = baseline + point(glyph.position.x, px(0.));
                 self.push(
                     position,
+                    offset,
                     run.font_id,
                     glyph.id,
                     line.font_size,
@@ -121,6 +125,7 @@ impl Sprites {
     fn push(
         &mut self,
         position: Point<Pixels>,
+        offset: Pixels,
         font: FontId,
         glyph: GlyphId,
         font_size: Pixels,
@@ -145,21 +150,32 @@ impl Sprites {
         let resolved = match self.resolved.get(&key) {
             Some(resolved) => *resolved,
             None => {
-                let resolved = window
-                    .resolve_glyph(font, glyph, font_size, placement.variant, color, emoji)?
-                    .map(|resolved| {
-                        // Slots stay far below u32::MAX: one per distinct glyph in a frame.
-                        let slot = u32::try_from(self.tiles.len()).unwrap_or(u32::MAX);
-                        self.tiles.push(resolved.tile.tile_id.0);
-                        (resolved, slot)
-                    });
+                let resolved = window.resolve_glyph(
+                    font,
+                    glyph,
+                    font_size,
+                    placement.variant,
+                    color,
+                    emoji,
+                )?;
                 self.resolved.insert(key, resolved);
                 resolved
             }
         };
-        if let Some((resolved, slot)) = resolved {
-            self.slots.push(slot);
-            self.batch.push(PlacedGlyph {
+        if let Some(resolved) = resolved {
+            if let Some(recording) = &mut self.recording {
+                recording.push(RowGlyph {
+                    x: placement.origin.x,
+                    variant_y: placement.variant.y,
+                    logical_x: position.x,
+                    offset,
+                    emoji,
+                    glyph: resolved,
+                    color,
+                    font_size,
+                });
+            }
+            self.queue(PlacedGlyph {
                 origin: placement.origin,
                 glyph: resolved,
                 color,
@@ -170,10 +186,22 @@ impl Sprites {
         Ok(())
     }
 
+    /// Queues a glyph already placed and resolved.
+    pub(super) fn queue(&mut self, glyph: PlacedGlyph) {
+        let tile = glyph.glyph.tile.tile_id.0;
+        let next = u32::try_from(self.tiles.len()).unwrap_or(u32::MAX);
+        let slot = *self.slot_of_tile.entry(tile).or_insert(next);
+        if slot == next {
+            self.tiles.push(tile);
+        }
+        self.slots.push(slot);
+        self.batch.push(glyph);
+    }
+
     /// Inserts the queued glyphs ordered by tile, each tile's in the order
     /// they were queued: a counting sort over the frame's few distinct tiles.
     pub(super) fn flush(&mut self, window: &mut Window) {
-        // Rank the slots by tile id; slots sharing a tile share a rank.
+        // Rank the slots by tile id.
         self.ranks.clear();
         self.ranks.extend(
             (0..)
@@ -181,21 +209,11 @@ impl Sprites {
                 .map(|(slot, tile)| (*tile, slot)),
         );
         self.ranks.sort_unstable();
-        let mut rank = 0;
-        for index in 0..self.ranks.len() {
-            if index > 0 && self.ranks[index].0 != self.ranks[index - 1].0 {
-                rank += 1;
-            }
-            let slot = self.ranks[index].1 as usize;
-            self.tiles[slot] = rank;
+        for (rank, (_, slot)) in (0..).zip(self.ranks.iter()) {
+            self.tiles[*slot as usize] = rank;
         }
-        let ranks = if self.ranks.is_empty() {
-            0
-        } else {
-            rank as usize + 1
-        };
         self.counts.clear();
-        self.counts.resize(ranks + 1, 0);
+        self.counts.resize(self.tiles.len() + 1, 0);
         for slot in &self.slots {
             self.counts[self.tiles[*slot as usize] as usize + 1] += 1;
         }
@@ -210,15 +228,7 @@ impl Sprites {
             *start += 1;
         }
         window.insert_glyphs(&self.ordered);
-        self.batch.clear();
-        self.slots.clear();
         // The slots now hold ranks, not tile ids: start the next batch afresh.
-        self.tiles.clear();
-        self.resolved.clear();
-    }
-
-    #[cfg(test)]
-    pub(super) fn resolved_len(&self) -> usize {
-        self.resolved.len()
+        self.begin();
     }
 }
