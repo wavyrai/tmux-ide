@@ -515,3 +515,67 @@ fn missing_images_poll_slowly_until_dropped(cx: &mut TestAppContext) {
     });
     settle(&snapshot, cx);
 }
+
+/// A window resize that stops with the command queue full: the fit waits
+/// 150 ms, its deadline passes, and the task must yield to the render that
+/// applies it rather than spin (review-366's probe, kept as a regression test).
+#[gpui::test]
+fn a_settling_fit_with_a_full_queue_does_not_hang(cx: &mut TestAppContext) {
+    let choice = |id: &str, label: &str| browser::Choice {
+        id: id.into(),
+        label: label.into(),
+        pane_count: None,
+        window_id: None,
+        browser_icon: None,
+        display_name_source: None,
+        window_label: None,
+    };
+    let workspace = browser::State {
+        surface: browser::Surface::Workspace,
+        request: 7,
+        input_ready: true,
+        sessions: vec![choice("session-a", "Alpha")],
+        panes: vec![choice("pane-a", "Editor")],
+        selected_session: Some("session-a".into()),
+        ..Default::default()
+    };
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let filler = sender.clone();
+    let (host, cx) = cx.add_window_view(|window, cx| {
+        let snapshot =
+            cx.new(|cx| fit_test_support::fixture_view(window, cx, sender, 7, workspace));
+        let content = agent_spinner::window_root(snapshot.clone(), window, cx).into();
+        Host { snapshot, content }
+    });
+    cx.simulate_resize(size(px(520.), px(400.)));
+    let snapshot = host.read_with(cx, |host, _| host.snapshot.clone());
+    let mailbox: browser::Mailbox = Default::default();
+    cx.update(|window, cx| {
+        snapshot.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |entity, cx| {
+                super::run_browser(entity, mailbox, cx).await
+            })
+            .detach();
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+    receiver.try_iter().for_each(drop);
+    filler
+        .try_send(browser::Command::Presence {
+            active: true,
+            revision: 99,
+        })
+        .unwrap();
+    cx.update(|_, cx| snapshot.update(cx, |view, _| view.last_resize = Some((7, 10, 10))));
+    cx.simulate_resize(size(px(700.), px(500.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.update(|_, cx| snapshot.read(cx).fit_settle.due_at())
+            .is_some()
+    );
+    // Returns only if the task yields; before the fix this never returned.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+}
