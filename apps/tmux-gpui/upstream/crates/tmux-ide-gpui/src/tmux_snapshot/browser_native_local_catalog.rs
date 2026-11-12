@@ -20,6 +20,12 @@ impl Local {
         self.state.sessions.clear();
         self.catalog_identity = Some(snapshot.identity);
         let servers = self.catalog_servers(snapshot.servers);
+        if servers.is_empty() && self.recovery.is_some() {
+            // No server is online right now. Recovery decides: the open
+            // session's server may only be out of the daemon's sight.
+            self.reconnect_catalog()?;
+            return Ok(());
+        }
         if servers.is_empty() {
             self.local_creation.offer = None;
             if self.machine_id == "local"

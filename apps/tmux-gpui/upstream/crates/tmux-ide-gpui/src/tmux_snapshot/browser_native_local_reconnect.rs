@@ -1,8 +1,13 @@
-//! Recovery after a lost terminal stream. While the daemon is the same one, the
-//! app re-issues a lease for the same session and keeps retrying with backoff; the
-//! terminal loop keeps the last frame on screen meanwhile. Only a changed daemon
-//! sends recovery through rediscovery, which also keeps the window as it was
-//! until it ends. A new daemon authorizes an old server generation only for
+//! Recovery after a lost terminal stream. The first try is at once: a lease for
+//! the same session from the daemon the stream came from. Every failed try reads
+//! the daemon record again and backs off, to a cap, for as long as the window is
+//! open, active or not; the terminal loop keeps the last frame on screen
+//! meanwhile. A daemon that no longer knows the generation or session sends
+//! recovery through rediscovery, which also keeps the window as it was. Recovery
+//! ends only when the stream is ready, when the session ended (its server is
+//! online without it, or stayed away for [`AWAY_LIMIT`]), or on a stop no
+//! retry can pass
+//! ([`UPDATE_APP`], [`SSH_IDENTITY`]). A new daemon authorizes an old server generation only for
 //! the same local daemon record, or over SSH the same saved machine and remote
 //! environment, with the identical server and live session
 //! (`reconnect_catalog`), so retrying through a daemon update can never bind
@@ -17,14 +22,13 @@ struct Rebind {
     panes: Vec<String>,
     selected: String,
 }
-/// The stop a session recovery ends in, for the act-needed card (r3).
-pub(super) const GAVE_UP: &str = GIVE_UP;
+/// The stop an unrecoverable stream identity ends in, for the act-needed card (r3).
+pub(super) const GAVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
 pub(super) struct Recovery {
     target: Target,
     pane: Option<String>,
     attempts: u32,
     due: Option<Instant>,
-    others: u8,
     /// The private local record recovery began on; `None` for any remote source.
     local_record: Option<PathBuf>,
     /// Over SSH: the saved machine and the remote environment recovery began
@@ -32,8 +36,36 @@ pub(super) struct Recovery {
     remote: Option<(String, String)>,
     /// `Some` while the daemon is the one the stream was issued by.
     rebind: Option<Rebind>,
-    /// The daemon was unreachable: rediscover its record before the next try.
+    /// A try failed: read the daemon record again before the next one.
     rediscover_owner: bool,
+    /// The session's name when the stream dropped, for [`Local::session_ended`].
+    label: Option<String>,
+    /// Since when every catalog has listed the session's server as away.
+    away_since: Option<Instant>,
+}
+/// A stream that drops again within [`SETTLED`] of its recovery continues that
+/// recovery's backoff, so a flapping daemon is not retried in a tight loop.
+#[derive(Default)]
+pub(super) struct Flap(Option<(Instant, u32)>);
+const SETTLED: Duration = Duration::from_secs(5);
+impl Flap {
+    /// A recovery ended in a ready stream after `attempts` tries.
+    pub(super) fn recovered(&mut self, attempts: u32) {
+        self.0 = Some((Instant::now(), attempts));
+    }
+    /// The tries a new recovery starts from: none after a settled stream.
+    fn carried(&mut self) -> u32 {
+        self.0
+            .take()
+            .filter(|(at, _)| at.elapsed() < SETTLED)
+            .map_or(0, |(_, attempts)| attempts)
+    }
+    #[cfg(test)]
+    pub(super) fn age(&mut self, by: Duration) {
+        if let Some((at, _)) = &mut self.0 {
+            *at -= by;
+        }
+    }
 }
 impl Recovery {
     /// A recovery of `target` that is due now, for tests outside this module.
@@ -44,11 +76,12 @@ impl Recovery {
             pane: None,
             attempts: 1,
             due: None,
-            others: 0,
             local_record: None,
             remote: None,
             rebind: None,
             rediscover_owner: false,
+            label: None,
+            away_since: None,
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -58,14 +91,34 @@ impl Recovery {
     pub(super) fn attempt(&self) -> u32 {
         self.attempts.max(1)
     }
+    /// The tries so far, for [`Flap`].
+    pub(super) fn attempts(&self) -> u32 {
+        self.attempts
+    }
+    /// The wait before the next try: none before the first, then 250 ms
+    /// doubling to the cap. A local try is a record read and a loopback
+    /// request; over SSH it may start a transport, so the cap is longer.
+    fn delay(&self) -> Duration {
+        let Some(failed) = self.attempts.checked_sub(1) else {
+            return Duration::ZERO;
+        };
+        let cap = if self.local_record.is_some() {
+            MAX_DELAY_LOCAL
+        } else {
+            MAX_DELAY_REMOTE
+        };
+        Duration::from_millis(250)
+            .saturating_mul(1u32.checked_shl(failed.min(16)).unwrap_or(u32::MAX))
+            .min(cap)
+    }
 }
-/// Backoff doubles from 250 ms to this cap and never gives up on the same daemon.
-const MAX_DELAY: Duration = Duration::from_secs(30);
-/// Other and identity failures rediscovery takes before it stops: a budget for
-/// the whole recovery, never refilled by a catalog listing (only a stream that
-/// is ready again ends a recovery), so at most about ten minutes at the cap.
-const MAX_OTHERS: u8 = 20;
-const GIVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
+const MAX_DELAY_LOCAL: Duration = Duration::from_secs(5);
+const MAX_DELAY_REMOTE: Duration = Duration::from_secs(30);
+/// How long the session's server may stay offline or unlisted, in catalogs the
+/// daemon did answer, before the session counts as ended. A daemon that lost
+/// sight of a live server finds it again within a probe or two; a server that
+/// was killed never comes back.
+const AWAY_LIMIT: Duration = Duration::from_secs(60);
 /// Over SSH a different identity may be a different machine: stop at once.
 pub(super) const SSH_IDENTITY: &str =
     "A different daemon answered for this machine. Check the machine, then refresh sessions.";
@@ -75,18 +128,20 @@ pub(super) const UPDATE_APP: &str =
 pub(super) const RECONNECTING: &str = "Connection lost. Reconnecting…";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
-    /// Retried with backoff, forever.
+    /// Retried with backoff, for as long as the window is open.
     Unreachable,
     /// A different daemon answered, or a stale record named the old one while
     /// the new one already answered. A rebind turns into rediscovery. Locally,
-    /// rediscovery reads the record again and backs off, from the same budget
-    /// as [`Failure::Other`]; over SSH it stops at once ([`SSH_IDENTITY`]).
+    /// rediscovery reads the record again and backs off; over SSH it stops at
+    /// once ([`SSH_IDENTITY`]).
     Identity,
     /// The daemon speaks another protocol: recovery ends with [`UPDATE_APP`].
     Incompatible,
-    /// A rebind turns into rediscovery; rediscovery backs off, and stops after
-    /// [`MAX_OTHERS`] in a row without a catalog listing the session.
+    /// A rebind turns into rediscovery; rediscovery backs off and tries again.
     Other,
+    /// The catalog was read, but the session's server is offline or not
+    /// listed: the daemon may only have lost sight of it. Tried again.
+    Away,
 }
 impl Failure {
     pub(super) fn of(error: &herdr_client::tmux_daemon::Error) -> Self {
@@ -116,10 +171,6 @@ impl Local {
         let Some(route) = self.active.as_ref() else {
             return Ok(());
         };
-        if matches!(self.stage, Some(Stage::Owner { .. } | Stage::Create { .. })) {
-            return self
-                .unavailable("Connection lost during an action — refresh to inspect its outcome");
-        }
         let panes: Vec<String> = self.state.panes.iter().map(|p| p.id.clone()).collect();
         let rebind = self
             .state
@@ -132,24 +183,32 @@ impl Local {
                 panes: panes.clone(),
                 selected,
             });
+        let label = (self.state.sessions.iter())
+            .find(|choice| choice.id == route.target.live)
+            .map(|choice| choice.label.clone());
+        let carried = self.flap.carried();
         let recovery = self.recovery.take().unwrap_or_else(|| Recovery {
             target: route.target.clone(),
             pane: self.state.selected_pane.clone(),
-            attempts: 0,
+            attempts: carried,
             due: None,
-            others: 0,
             local_record: self.current_local_record(),
             remote: self.current_remote(),
             rebind,
             rediscover_owner: false,
+            label,
+            away_since: None,
         });
-        // A drop, not navigation: agents and the catalog stay on screen.
+        // A drop, not navigation: agents and the catalog stay on screen. An
+        // action in flight is cancelled, never replayed; a session creation
+        // keeps its uncertain id (`drop_link`).
         self.drop_link()?;
         self.recovery = Some(recovery);
-        self.reconnect_retry(Failure::Unreachable)
+        self.reconnect_schedule()
     }
-    /// Schedule the next try. Same-daemon failures back off from 250 ms to 30 s and
-    /// never give up; a changed daemon ends a rebind and starts rediscovery.
+    /// A try failed: schedule the next. Nothing but [`Failure::Incompatible`]
+    /// and an SSH identity change ends recovery; a daemon that no longer knows
+    /// the generation or session ends a rebind and starts rediscovery.
     pub(super) fn reconnect_retry(&mut self, failure: Failure) -> Result<(), Error> {
         let Some(recovery) = self.recovery.as_mut() else {
             return Ok(());
@@ -160,26 +219,24 @@ impl Local {
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
             // Not the daemon or session the stream came from: look it up again.
             recovery.rebind = None;
-            recovery.others = 0;
-        } else if recovery.rebind.is_none() {
-            if failure == Failure::Identity && recovery.local_record.is_none() {
-                return self.unavailable(SSH_IDENTITY);
-            }
-            if matches!(failure, Failure::Other | Failure::Identity) {
-                recovery.others = recovery.others.saturating_add(1);
-            }
-            if recovery.others > MAX_OTHERS {
-                return self.unavailable(GIVE_UP);
-            }
+        } else if recovery.rebind.is_none()
+            && failure == Failure::Identity
+            && recovery.local_record.is_none()
+        {
+            return self.unavailable(SSH_IDENTITY);
         }
-        recovery.rediscover_owner |= failure == Failure::Unreachable && recovery.attempts > 0;
-        let delay = Duration::from_millis(250)
-            .saturating_mul(
-                1u32.checked_shl(recovery.attempts.min(16))
-                    .unwrap_or(u32::MAX),
-            )
-            .min(MAX_DELAY);
-        recovery.due = Some(Instant::now() + delay);
+        if failure != Failure::Away {
+            recovery.away_since = None;
+        }
+        // The record may name a new port or token by now.
+        recovery.rediscover_owner = true;
+        self.reconnect_schedule()
+    }
+    fn reconnect_schedule(&mut self) -> Result<(), Error> {
+        let Some(recovery) = self.recovery.as_mut() else {
+            return Ok(());
+        };
+        recovery.due = Some(Instant::now() + recovery.delay());
         self.stage = None;
         self.submitted = false;
         self.state.status = RECONNECTING.into();
@@ -199,12 +256,8 @@ impl Local {
         Ok(())
     }
     pub(super) fn reconnect_tick(&mut self) -> Result<(), Error> {
-        if !self.foreground
-            || self
-                .recovery
-                .as_ref()
-                .is_none_or(|r| r.due.is_none_or(|due| Instant::now() < due))
-        {
+        // Active or not: a visible window must not stay frozen until clicked.
+        if (self.recovery.as_ref()).is_none_or(|r| r.due.is_none_or(|due| Instant::now() < due)) {
             return Ok(());
         }
         let Some(mut recovery) = self.recovery.take() else {
@@ -235,6 +288,36 @@ impl Local {
         self.recovery = Some(recovery);
         self.publish()
     }
+    /// Whether the fresh catalog lists the session's server as online: the
+    /// exact generation, or any generation of it when `known` (the same local
+    /// record or saved machine).
+    fn server_online(&self, scope: &ServerScope, known: bool) -> bool {
+        let listed = (self.state.fleet.iter())
+            .flat_map(|fleet| fleet.groups.first())
+            .flat_map(|group| &group.servers)
+            .any(|server| {
+                server.state == fleet::ServerPhase::Online
+                    && server.id == scope.server_id
+                    && (known || server.generation.as_ref() == Some(&scope.generation))
+            });
+        // A server that lists any session is online.
+        listed
+            || self.targets.values().any(|target| {
+                target.scope.server_id == scope.server_id
+                    && (known || target.scope.generation == scope.generation)
+            })
+    }
+    /// The session is gone from a server that answered, or its server is gone:
+    /// Home, freshly loaded, with a notice that says so. Every other session
+    /// stays one click away.
+    fn session_ended(&mut self, label: Option<&str>, gone: &str) -> Result<(), Error> {
+        let label = label.map_or_else(|| "The session".to_owned(), |l| format!("“{l}”"));
+        let notice = format!("{label} ended: its tmux {gone} is no longer running.");
+        let request = self.state.request;
+        self.home(request)?;
+        self.state.home_notice = Some(notice);
+        self.publish()
+    }
     fn current_local_record(&self) -> Option<PathBuf> {
         match self.sources.observation_source().ok()? {
             CatalogSource::Local(record) if self.selected_profile.is_none() => Some(record),
@@ -256,7 +339,7 @@ impl Local {
     /// tmux server pid, session id and creation time, so an identical id on the
     /// same server and the same private record is the same tmux session.
     pub(super) fn reconnect_catalog(&mut self) -> Result<bool, Error> {
-        let Some(recovery) = self.recovery.take() else {
+        let Some(mut recovery) = self.recovery.take() else {
             return Ok(false);
         };
         let same_local_daemon =
@@ -281,9 +364,28 @@ impl Local {
             })
             .map(|(key, _)| key.clone());
         let Some(key) = key else {
-            self.unavailable(
-                "Previous session identity changed or disappeared — select a session",
-            )?;
+            let known = same_local_daemon || same_remote_machine;
+            let server = &recovery.target.scope.server_id;
+            if self.server_online(&recovery.target.scope, known) {
+                // The server answered and no longer has the session.
+                self.session_ended(recovery.label.as_deref(), "session")?;
+            } else if known {
+                // Offline or unlisted: the daemon may only have lost sight of
+                // the server (a slow probe). The session may still be there.
+                let since = *recovery.away_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= AWAY_LIMIT {
+                    return self
+                        .session_ended(recovery.label.as_deref(), "server")
+                        .map(|()| true);
+                }
+                eprintln!("tmux-ide: reconnect: server {server} is not online yet");
+                self.recovery = Some(recovery);
+                self.reconnect_retry(Failure::Away)?;
+            } else {
+                self.unavailable(
+                    "Previous session identity changed or disappeared — select a session",
+                )?;
+            }
             return Ok(true);
         };
         self.open(self.state.request, key, recovery.pane.clone())?;

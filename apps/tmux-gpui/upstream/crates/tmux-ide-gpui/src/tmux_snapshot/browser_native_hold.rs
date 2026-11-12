@@ -80,12 +80,17 @@ impl Hold {
         self.held.as_ref().map(|held| held.lost_input)
     }
     /// What the UI sees. The held frame stands in while the same request has no
-    /// live frame; navigation, a give-up, or a live frame ends the hold.
+    /// live frame; navigation, a give-up, an ended session, or a live frame
+    /// ends the hold.
     pub fn publication(&mut self, state: &State) -> State {
         let Some(held) = &mut self.held else {
             return state.clone();
         };
-        if state.request != held.request || state.home_phase == HomePhase::Unavailable {
+        // A Home notice is the catalog's own end of the open: the session ended.
+        if state.request != held.request
+            || state.home_phase == HomePhase::Unavailable
+            || state.home_notice.is_some()
+        {
             self.clear();
             return state.clone();
         }

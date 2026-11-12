@@ -135,36 +135,44 @@ fn a_new_daemon_slow_to_serve_its_catalog_is_retried_with_a_capped_backoff() {
     let (mut local, _events) = attached();
     let target = through_the_update(&mut local);
     let mut waited = Duration::ZERO;
-    for _ in 0..MAX_OTHERS {
+    for _ in 0..40 {
         let before = Instant::now();
         local
             .reconnect_retry(Failure::of(&E::RequestStatus(503)))
             .unwrap();
         assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
         let delay = local.recovery.as_ref().unwrap().due.unwrap() - before;
-        assert!(delay <= MAX_DELAY + Duration::from_millis(50), "{delay:?}");
+        assert!(delay <= Duration::from_millis(5050), "{delay:?}");
         waited += delay;
         rediscover(&mut local);
     }
     assert_eq!(local.state.status, RECONNECTING);
-    assert!(waited > Duration::from_secs(8 * 60), "{waited:?}");
+    assert!(waited > Duration::from_secs(150), "{waited:?}");
     // The daemon came up: the same session is listed and reopened.
     new_daemon_lists(&mut local, &target);
     assert!(local.reconnect_catalog().unwrap());
     reopened_the_same_session(&local);
 }
 
+/// Owner, 12 Nov 2026: recovery keeps trying for as long as the window is open.
+/// This replaces the 20-failure budget of the earlier rounds.
 #[test]
-fn rediscovery_stops_after_a_run_of_other_failures_with_no_listing() {
+fn rediscovery_never_stops_on_other_failures_with_no_listing() {
     let (mut local, _events) = attached();
     through_the_update(&mut local);
-    for _ in 0..MAX_OTHERS {
+    for _ in 0..200 {
         local.reconnect_retry(Failure::Other).unwrap();
         rediscover(&mut local);
     }
-    local.reconnect_retry(Failure::Other).unwrap();
-    // Many publications queue behind a full test channel; read the state itself.
-    ended_on_home(&local, GIVE_UP);
+    still_reconnecting(&local);
+}
+
+/// Still on the session window, waiting for the next try.
+fn still_reconnecting(local: &Local) {
+    assert!(local.recovery.is_some());
+    assert_eq!(local.state.surface, Surface::Workspace);
+    assert!(local.state.home_phase != HomePhase::Unavailable);
+    assert_eq!(local.state.status, RECONNECTING);
 }
 
 /// Ended on Home, unavailable, with a message that says what to do.
@@ -176,11 +184,10 @@ fn ended_on_home(local: &Local, message: &str) {
     assert_eq!(local.state.status, message);
 }
 
-/// Review round 1, item 1: a session that is listed but whose reopening keeps
-/// failing must not refill the budget. The reviewer's probe: list, then fail,
-/// up to 200 times.
+/// A session that is listed but whose reopening keeps failing is retried at
+/// the capped backoff, never faster: list, then fail, 200 times.
 #[test]
-fn a_listed_session_that_keeps_failing_to_open_still_stops() {
+fn a_listed_session_that_keeps_failing_to_open_is_retried_at_the_cap() {
     let (mut local, _events) = attached();
     let target = through_the_update(&mut local);
     let mut cycles = 0;
@@ -191,18 +198,19 @@ fn a_listed_session_that_keeps_failing_to_open_still_stops() {
         local
             .reconnect_retry(Failure::of(&E::RequestStatus(500)))
             .unwrap();
-        if local.recovery.is_some() {
-            rediscover(&mut local);
-        }
+        let wait = local.recovery.as_ref().unwrap().due.unwrap() - Instant::now();
+        assert!(cycles < 6 || wait > Duration::from_millis(4900), "{wait:?}");
+        rediscover(&mut local);
         cycles += 1;
     }
-    assert_eq!(cycles, usize::from(MAX_OTHERS) + 1);
-    ended_on_home(&local, GIVE_UP);
+    assert_eq!(cycles, 200);
+    still_reconnecting(&local);
 }
 
-/// Review round 1, item 2: identity failures are bounded too.
+/// A local identity mismatch reads the record again on every try, so it is
+/// retried like any other failure.
 #[test]
-fn a_local_identity_mismatch_that_never_clears_stops() {
+fn a_local_identity_mismatch_that_never_clears_keeps_retrying() {
     let (mut local, _events) = attached();
     through_the_update(&mut local);
     let mut tries = 0;
@@ -210,13 +218,11 @@ fn a_local_identity_mismatch_that_never_clears_stops() {
         local
             .reconnect_retry(Failure::of(&E::IdentityChanged))
             .unwrap();
-        if local.recovery.is_some() {
-            rediscover(&mut local);
-        }
+        rediscover(&mut local);
         tries += 1;
     }
-    assert_eq!(tries, usize::from(MAX_OTHERS) + 1);
-    ended_on_home(&local, GIVE_UP);
+    assert_eq!(tries, 200);
+    still_reconnecting(&local);
 }
 
 /// Review round 1, item 2: over SSH an identity failure in rediscovery may be
@@ -261,8 +267,9 @@ fn navigation_during_the_hold_cancels_recovery() {
     assert_eq!(seen.reconnect_attempt, None);
 }
 
-/// Keys typed during the rediscovery hold are refused and latched, and nothing
-/// is sent when the session is back.
+/// Keys typed during the rediscovery hold are refused, and nothing is sent
+/// when the session is back. The latch they set lifts with the reconnect, so
+/// typing again needs no click.
 #[gpui::test]
 fn keys_during_the_hold_are_refused_and_never_replayed(cx: &mut gpui::TestAppContext) {
     let (mut local, events) = attached();
@@ -311,7 +318,7 @@ fn keys_during_the_hold_are_refused_and_never_replayed(cx: &mut gpui::TestAppCon
         .filter(|c| c["type"] == "input" && c["input"]["kind"] != "resize")
         .collect();
     assert!(replayed.is_empty(), "{replayed:?}");
-    view.read_with(cx, |view, _| assert!(view.input_interrupted));
+    view.read_with(cx, |view, _| assert!(!view.input_interrupted));
 }
 
 #[test]
@@ -322,9 +329,14 @@ fn a_session_gone_after_the_update_ends_recovery_on_home() {
     new_daemon_lists(&mut local, &target);
     assert!(local.reconnect_catalog().unwrap());
     assert!(local.recovery.is_none());
+    // Home is loaded again, with a notice, not an empty window.
     let seen = last_catalog(&events);
     assert_eq!(seen.surface, Surface::Home);
-    assert!(seen.home_phase == HomePhase::Unavailable);
+    assert!(seen.home_phase == HomePhase::Loading);
+    assert_eq!(
+        seen.home_notice.as_deref(),
+        Some("The session ended: its tmux session is no longer running.")
+    );
 }
 
 fn ssh_profile(id: &str) -> herdr_client::tmux_daemon::SavedMachine {
@@ -403,16 +415,22 @@ fn a_different_saved_machine_is_refused() {
 }
 
 #[test]
-fn another_tmux_server_or_a_restored_session_is_refused() {
+fn another_tmux_server_or_a_restored_session_is_never_reopened() {
+    // The same machine lists another server only: the session's own server
+    // may still come back, so recovery waits for it and opens nothing else.
     let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
         target.scope.server_id = "other-server".into();
     });
-    selects_a_session(&local);
-    // `servers upgrade` restores sessions on a new server: new live ids.
+    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
+    assert!(local.stage.is_none());
+    // `servers upgrade` restores sessions on the server with new live ids:
+    // the session this window showed has ended.
     let (local, _events) = ssh_update(Some(ENVIRONMENT), Some(ENVIRONMENT), PROFILE, |target| {
         target.live = "live-session.restored".into();
     });
-    selects_a_session(&local);
+    assert!(local.recovery.is_none());
+    assert!(!matches!(local.stage, Some(Stage::Open { .. })));
+    assert!(local.state.home_notice.is_some());
 }
 
 #[test]

@@ -265,6 +265,10 @@ pub(super) struct Watch {
     /// it until the agent lane's re-read clears the flag, even once the link
     /// is back and the connection's words are gone.
     pub(super) agents_marked: std::cell::Cell<bool>,
+    /// The input latch was set only by keys typed while reconnecting. Those
+    /// keys were refused and said so; the latch then lifts by itself once the
+    /// stream is back, so typing needs no click (`release_refused_keys`).
+    pub(super) keys_refused: bool,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -275,6 +279,7 @@ impl Default for Watch {
             _wake: None,
             _away_wake: None,
             agents_marked: std::cell::Cell::new(false),
+            keys_refused: false,
         }
     }
 }

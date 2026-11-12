@@ -43,6 +43,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             agents: Default::default(),
             appearance: None,
             recovery: None,
+            flap: Default::default(),
             home: Default::default(),
             background_fleet: Default::default(),
             registry: Default::default(),
@@ -80,6 +81,13 @@ fn restarted(local: &mut Local, mut target: Target, server: &str, live: &str) {
     target.live = live.into();
     local.targets.insert("new-token".into(), target);
 }
+/// The server is online without the session: Home is loaded again with a notice.
+fn ended(local: &Local) {
+    assert!(local.recovery.is_none());
+    assert!(matches!(local.stage, Some(Stage::Servers)));
+    assert!(local.state.home_phase != HomePhase::Unavailable);
+    assert!(local.state.home_notice.as_ref().unwrap().contains("ended"));
+}
 fn fell_back(local: &Local) {
     assert!(local.stage.is_none());
     assert!(local.recovery.is_none());
@@ -102,7 +110,7 @@ fn local_restart_with_the_same_live_id_reopens_that_session() {
     assert!(local.recovery.is_some());
 }
 #[test]
-fn same_generation_with_another_live_session_falls_back() {
+fn same_generation_with_another_live_session_ends_the_session() {
     let (mut local, _events) = fixture();
     let mut target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
@@ -110,25 +118,34 @@ fn same_generation_with_another_live_session_falls_back() {
     target.live = "$9".into();
     local.targets.insert("other-token".into(), target);
     local.reconnect_catalog().unwrap();
-    fell_back(&local);
+    ended(&local);
 }
 #[test]
-fn local_restart_with_a_recreated_session_falls_back() {
+fn local_restart_with_a_recreated_session_ends_the_session() {
     let (mut local, _events) = fixture();
     let target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
     restarted(&mut local, target, "server", "$9");
     local.reconnect_catalog().unwrap();
-    fell_back(&local);
+    ended(&local);
 }
 #[test]
-fn local_restart_on_another_server_falls_back() {
+fn local_restart_on_another_server_never_reopens_there() {
     let (mut local, _events) = fixture();
     let target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
     restarted(&mut local, target, "other-server", "$1");
     local.reconnect_catalog().unwrap();
-    fell_back(&local);
+    // The session's own server is away: tried again, for a minute at most.
+    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
+    assert!(local.stage.is_none());
+    local.recovery.as_mut().unwrap().away_since = Some(Instant::now() - Duration::from_secs(61));
+    local.reconnect_catalog().unwrap();
+    assert!(local.recovery.is_none());
+    assert_eq!(
+        local.state.home_notice.as_deref(),
+        Some("The session ended: its tmux server is no longer running.")
+    );
 }
 #[test]
 fn replacement_generation_cannot_reopen_same_session_id() {
@@ -189,15 +206,13 @@ fn a_pane_action_in_flight_across_a_restart_is_not_replayed() {
     local.submitted = true;
     let target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
-    assert!(local.recovery.is_none());
+    // The action is cancelled, never sent again; the session is reconnected.
+    assert!(local.recovery.is_some());
     assert!(local.stage.is_none());
-    assert_eq!(
-        local.state.status,
-        "Connection lost during an action — refresh to inspect its outcome"
-    );
+    assert_eq!(local.state.status, "Connection lost. Reconnecting…");
     restarted(&mut local, target, "server", "$1");
-    assert!(!local.reconnect_catalog().unwrap());
-    assert!(local.stage.is_none());
+    assert!(local.reconnect_catalog().unwrap());
+    assert!(matches!(local.stage, Some(Stage::Open { .. })));
 }
 #[test]
 fn a_mutation_in_flight_across_a_restart_is_not_replayed() {
@@ -212,20 +227,19 @@ fn a_mutation_in_flight_across_a_restart_is_not_replayed() {
     let target = local.active.as_ref().unwrap().target.clone();
     local.reconnect_start().unwrap();
     restarted(&mut local, target, "server", "$1");
-    assert!(!local.reconnect_catalog().unwrap());
-    assert!(local.stage.is_none());
-    assert!(local.recovery.is_none());
+    assert!(local.reconnect_catalog().unwrap());
+    assert!(matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(local.uncertain_create, Some(operation_id));
 }
 #[test]
-fn background_defers_reconnect_and_user_navigation_cancels_it() {
+fn background_does_not_defer_reconnect_and_user_navigation_cancels_it() {
     let (mut local, _events) = fixture();
     local.reconnect_start().unwrap();
     local.recovery.as_mut().unwrap().due = Some(Instant::now());
     local.foreground = false;
     local.reconnect_tick().unwrap();
-    assert!(local.stage.is_none());
-    assert_eq!(local.recovery.as_ref().unwrap().attempts, 0);
+    assert!(local.stage.is_some());
+    assert_eq!(local.recovery.as_ref().unwrap().attempts, 1);
     local.home(8).unwrap();
     assert!(local.recovery.is_none());
 }
@@ -235,26 +249,6 @@ fn delay(local: &Local, before: Instant) -> u128 {
     due.duration_since(before).as_millis() / 250 * 250
 }
 #[test]
-fn an_unreachable_daemon_backs_off_to_a_thirty_second_cap() {
-    let (mut local, _events) = fixture();
-    let before = Instant::now();
-    local.reconnect_start().unwrap();
-    let mut delays = vec![delay(&local, before)];
-    for _ in 0..8 {
-        local.recovery.as_mut().unwrap().due = Some(Instant::now());
-        local.reconnect_tick().unwrap();
-        assert_eq!(local.state.status, "Connection lost. Reconnecting…");
-        let before = Instant::now();
-        local.reconnect_retry(Failure::Unreachable).unwrap();
-        assert_eq!(local.state.status, "Connection lost. Reconnecting…");
-        delays.push(delay(&local, before));
-    }
-    assert_eq!(
-        delays,
-        [250, 500, 1000, 2000, 4000, 8000, 16000, 30000, 30000]
-    );
-}
-#[test]
 fn an_unreachable_daemon_is_retried_forever() {
     let (mut local, _events) = fixture();
     local.reconnect_start().unwrap();
@@ -262,7 +256,7 @@ fn an_unreachable_daemon_is_retried_forever() {
     let before = Instant::now();
     local.reconnect_retry(Failure::Unreachable).unwrap();
     assert!(local.recovery.as_ref().unwrap().waiting());
-    assert_eq!(delay(&local, before), 30000);
+    assert_eq!(delay(&local, before), 5000);
     assert_eq!(local.state.status, "Connection lost. Reconnecting…");
     assert_eq!(local.recovery.as_ref().unwrap().attempt(), 400);
 }
@@ -294,37 +288,6 @@ fn daemon_errors_are_classified_for_recovery() {
     assert_eq!(Failure::of(&E::RequestStatus(500)), Failure::Other);
 }
 #[test]
-fn other_failures_get_a_bounded_run_of_retries() {
-    let (mut local, _events) = fixture();
-    local.reconnect_start().unwrap();
-    assert_eq!(local.recovery.as_ref().unwrap().others, 0);
-    for _ in 0..MAX_OTHERS {
-        local.reconnect_retry(Failure::Other).unwrap();
-    }
-    assert_eq!(local.recovery.as_ref().unwrap().others, MAX_OTHERS);
-    assert!(local.recovery.as_ref().unwrap().waiting());
-    assert_eq!(local.state.status, "Connection lost. Reconnecting…");
-    local.reconnect_retry(Failure::Other).unwrap();
-    assert!(local.recovery.is_none());
-    assert_eq!(
-        local.state.status,
-        "Couldn't reconnect. Refresh sessions to try again."
-    );
-}
-#[test]
-fn retry_budget_stops() {
-    let (mut local, _events) = fixture();
-    local.reconnect_start().unwrap();
-    local.recovery.as_mut().unwrap().others = MAX_OTHERS;
-    local.reconnect_retry(Failure::Other).unwrap();
-    assert!(local.recovery.is_none());
-    assert!(local.stage.is_none());
-    assert_eq!(
-        local.state.status,
-        "Couldn't reconnect. Refresh sessions to try again."
-    );
-}
-#[test]
 fn mutation_interruption_retains_uncertain_id_without_retry() {
     let (mut local, _events) = fixture();
     let operation_id = uuid::Uuid::new_v4();
@@ -336,7 +299,7 @@ fn mutation_interruption_retains_uncertain_id_without_retry() {
     local.submitted = true;
     local.reconnect_start().unwrap();
     assert_eq!(local.uncertain_create, Some(operation_id));
-    assert!(local.recovery.is_none());
+    assert!(local.recovery.is_some());
     assert!(local.stage.is_none());
 }
 #[test]
@@ -396,11 +359,12 @@ fn stale_ready_does_not_clear_recovery() {
         pane: Some("%2".into()),
         attempts: 1,
         due: None,
-        others: 1,
         local_record: None,
         remote: None,
         rebind: None,
         rediscover_owner: false,
+        label: None,
+        away_since: None,
     });
     local
         .command(Command::NativeTerminalReady {
@@ -586,7 +550,7 @@ fn a_catalog_error_on_an_open_session_becomes_a_reconnect() {
             "native catalog result did not match its request",
         ))
         .unwrap();
-    assert_eq!(local.recovery.as_ref().unwrap().others, 1);
+    assert!(local.recovery.as_ref().is_some_and(Recovery::waiting));
 }
 #[test]
 fn a_catalog_error_at_home_becomes_a_refresh_notice() {
@@ -752,7 +716,6 @@ fn a_changed_daemon_or_session_turns_the_rebind_into_rediscovery() {
         // Rediscovery, not a give-up.
         let recovery = local.recovery.as_ref().unwrap();
         assert!(recovery.rebind.is_none());
-        assert_eq!(recovery.others, 0);
         local.recovery.as_mut().unwrap().due = Some(Instant::now());
         local.reconnect_tick().unwrap();
         assert!(matches!(local.stage, Some(Stage::Servers)), "{failure:?}");
@@ -914,7 +877,7 @@ fn a_repeated_drop_continues_the_backoff() {
             workspace: "fixture".into(),
         });
     }
-    assert_eq!(delays, [250, 500, 1000, 2000]);
+    assert_eq!(delays, [0, 250, 500, 1000]);
 }
 
 /// Review round 1, item 2 (C21): Retry never restarts an attempt in flight.
@@ -934,5 +897,7 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
     assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
 }
 
+#[path = "browser_native_local_reconnect_always_tests.rs"]
+mod always;
 #[path = "browser_native_local_update_tests.rs"]
 mod update;

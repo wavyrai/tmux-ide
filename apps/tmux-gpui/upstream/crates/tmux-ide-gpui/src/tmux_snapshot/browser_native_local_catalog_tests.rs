@@ -37,6 +37,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             agents: Default::default(),
             appearance: None,
             recovery: None,
+            flap: Default::default(),
             home: Default::default(),
             background_fleet: Default::default(),
             registry: Default::default(),

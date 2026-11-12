@@ -37,8 +37,16 @@ fn a_daemon_without_input_lifetime_stops_with_an_update_message() {
     let identity = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
         tmux_native_session::Error::Transport(tmux_stream::Error::Identity),
     )));
+    // A ready frame that is not the lease's is recovered like any drop.
+    assert!(Stop::new(&identity, 4, Some("2.9.7")).is_none());
+    // Over SSH another machine may have answered: that still stops.
+    let remote = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+        tmux_native_session::Error::Transport(tmux_stream::Error::RemoteIdentity(
+            herdr_client::tmux_ssh::IdentityError::Mismatch,
+        )),
+    )));
     assert_eq!(
-        Stop::new(&identity, 4, Some("2.9.7")).unwrap().status,
+        Stop::new(&remote, 4, Some("2.9.7")).unwrap().status,
         "Couldn't reconnect. Refresh sessions to try again."
     );
     let disconnected = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(

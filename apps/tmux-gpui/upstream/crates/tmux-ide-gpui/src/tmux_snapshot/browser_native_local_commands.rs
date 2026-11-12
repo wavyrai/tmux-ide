@@ -154,7 +154,7 @@ impl Local {
                     self.stage = None;
                     self.publish()?;
                 }
-                if !active && matches!(self.stage, Some(Stage::Issue { .. })) {
+                if !self.lease_allowed() && matches!(self.stage, Some(Stage::Issue { .. })) {
                     self.worker.cancel();
                     self.submitted = false;
                 }
@@ -202,23 +202,30 @@ impl Local {
                 presence_revision,
                 ..
             } => {
-                if self.active.as_ref().is_some_and(|r| {
-                    r.id == id
-                        && r.request == request
-                        && r.target.scope.generation == generation
-                        && r.target.live == live_session_id
-                }) && input_ready
-                    && coherent
-                    && self.foreground
-                    && presence_revision == self.presence_revision
+                if !(coherent
+                    && self.active.as_ref().is_some_and(|r| {
+                        r.id == id
+                            && r.request == request
+                            && r.target.scope.generation == generation
+                            && r.target.live == live_session_id
+                    }))
                 {
-                    let recovered = self.recovery.take().is_some();
+                    return Ok(());
+                }
+                let current = presence_revision == self.presence_revision;
+                // An inactive window has no input to wait for: its stream is
+                // back once frames flow. A visit still needs the active window.
+                if !(current && (input_ready || !self.foreground)) {
+                    return Ok(());
+                }
+                if let Some(recovery) = self.recovery.take() {
+                    self.flap.recovered(recovery.attempts());
+                    // Drop the Reconnecting badge and Retry button.
+                    self.state.status = "Connected".into();
+                    self.publish()?;
+                }
+                if input_ready && self.foreground {
                     self.accept_visit()?;
-                    if recovered {
-                        // Drop the Reconnecting badge and Retry button.
-                        self.state.status = "Connected".into();
-                        self.publish()?;
-                    }
                 }
                 Ok(())
             }

@@ -88,6 +88,7 @@ struct Local {
     agents: agents::Gate,
     appearance: Option<crate::tmux_snapshot::appearance::native::Owner>,
     recovery: Option<reconnect::Recovery>,
+    flap: reconnect::Flap,
     home: home_recovery::Recovery,
     background_fleet: background_fleet::Gate,
     registry: registry::Gate,
@@ -165,6 +166,7 @@ fn start_source(
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        flap: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),
@@ -322,6 +324,10 @@ impl Local {
         });
         Ok(())
     }
+    /// Whether a terminal lease may be requested now.
+    fn lease_allowed(&self) -> bool {
+        self.foreground || self.recovery.is_some()
+    }
     fn open(&mut self, request: u64, key: String, preferred: Option<String>) -> Result<(), Error> {
         if !self.background_fleet.allows_current() {
             return Ok(());
@@ -445,8 +451,9 @@ impl Local {
         if !self.submitted
             && let Some(stage) = &self.stage
         {
-            // Do not create an interactive lease while backgrounded.
-            if self.foreground || !matches!(stage, Stage::Issue { .. }) {
+            // No new interactive lease for an inactive window, except to put
+            // back the stream it already had (the daemon is told its presence).
+            if self.lease_allowed() || !matches!(stage, Stage::Issue { .. }) {
                 let action = stage.action();
                 let worker = if stage.local_owner() {
                     self.registry_worker.as_mut()
@@ -572,10 +579,7 @@ impl Local {
         }
         self.preference_tick()?;
         self.agent_tick()?;
-        if self.foreground
-            && self.recovery.as_ref().is_some_and(|r| r.waiting())
-            && self.stage.is_none()
-        {
+        if self.recovery.as_ref().is_some_and(|r| r.waiting()) && self.stage.is_none() {
             match input.recv_timeout(Duration::from_millis(50)) {
                 Ok(command) => self.command(command)?,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(Some(self.cancel())),
@@ -587,7 +591,7 @@ impl Local {
             && !self.split.busy()
             && !self.agents.busy()
             && (self.stage.is_none()
-                || (!self.foreground
+                || (!self.lease_allowed()
                     && !self.submitted
                     && matches!(self.stage, Some(Stage::Issue { .. }))))
         {

@@ -101,10 +101,11 @@ impl Stop {
     pub(super) fn new(error: &NativeError, request: u64, version: Option<&str>) -> Option<Self> {
         let status = match code(error) {
             "stream-daemon-too-old" => daemon_too_old(version),
-            // A peer that fails identity is not the daemon we issued against.
-            "stream-identity" | "stream-remote-identity" => {
-                "Couldn't reconnect. Refresh sessions to try again.".into()
-            }
+            // Over SSH a peer that fails identity may be another machine. A
+            // local "stream-identity" (a ready frame that is not the lease's,
+            // as after the daemon rebuilt the server owner) is recovered like
+            // any drop: the catalog proves the daemon again before a new lease.
+            "stream-remote-identity" => "Couldn't reconnect. Refresh sessions to try again.".into(),
             _ => return None,
         };
         Some(Self { request, status })
