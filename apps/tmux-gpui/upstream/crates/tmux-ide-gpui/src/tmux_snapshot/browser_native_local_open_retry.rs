@@ -6,6 +6,9 @@
 use super::*;
 
 pub(super) const NO_PANES: &str = "Session has no attachable terminal panes";
+/// Home's words while the daemon answers and its tmux server does not.
+pub(super) const TMUX_NOT_ANSWERING: &str =
+    "The tmux server is not answering. Tmux IDE keeps trying.";
 /// Tries in all: the first open, then one after 100, 200, 400, 800 and 1600 ms.
 const TRIES: u32 = 6;
 struct Waiting {
@@ -114,8 +117,16 @@ impl Local {
             eprintln!("tmux-ide: opening the session failed, trying again: {error}");
             return self.reconnect_opening(target, pane, failure);
         }
-        // Home keeps looking for the daemon meanwhile.
-        self.unavailable_retrying("Session changed or is unavailable — refresh to retry")?;
+        // Home keeps looking for the daemon meanwhile. A daemon that answers
+        // 503 is there, but its tmux server is not answering it: say that,
+        // not "refresh", which cannot help (soak: a tmux server that could
+        // not finish kill-server answered nothing for an hour).
+        let unanswered = matches!(error, herdr_client::tmux_daemon::Error::RequestStatus(503));
+        self.unavailable_retrying(if unanswered {
+            TMUX_NOT_ANSWERING
+        } else {
+            "Session changed or is unavailable — refresh to retry"
+        })?;
         if matches!(stage, Stage::Servers) {
             self.offer_local_setup()?;
         }

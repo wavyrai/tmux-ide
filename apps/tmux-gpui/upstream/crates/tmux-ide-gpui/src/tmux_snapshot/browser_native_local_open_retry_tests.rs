@@ -210,3 +210,29 @@ fn a_failure_during_a_recovery_backs_off_and_tries_again() {
     local.reconnect_tick().unwrap();
     assert!(local.stage.is_none(), "the failed try did not back off");
 }
+
+/// Long soak, 12 Nov 2026: with the daemon answering 503 for a tmux server
+/// that had stopped answering, a refresh ended on "refresh to retry". Home
+/// now says what is wrong, and goes on looking by itself as before.
+#[test]
+fn a_daemon_whose_tmux_server_does_not_answer_is_named_and_retried() {
+    let (mut local, events, _target) = opening();
+    local.state.surface = Surface::Home;
+    let unanswered = herdr_client::tmux_daemon::Error::RequestStatus(503);
+    local.stage_failed(Stage::Servers, &unanswered).unwrap();
+    let published = last_catalog(&events);
+    assert_eq!(
+        published.status,
+        "The tmux server is not answering. Tmux IDE keeps trying."
+    );
+    assert!(local.home.quiet.due_now(), "Home does not keep looking");
+    // Any other refusal keeps the general words.
+    let (mut local, events, _target) = opening();
+    local.state.surface = Surface::Home;
+    let other = herdr_client::tmux_daemon::Error::RequestStatus(500);
+    local.stage_failed(Stage::Servers, &other).unwrap();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+}
