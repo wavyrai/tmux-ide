@@ -27026,11 +27026,31 @@ function boundedTmuxRead(executable, args, options) {
         output = stdout;
       }
     );
+    let abandon = null;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (escalation) clearTimeout(escalation);
+      if (abandon) clearTimeout(abandon);
+      options.signal?.removeEventListener("abort", stop3);
+      if (failure4) reject(failure4);
+      else resolve47(output);
+    };
     const stop3 = () => {
       failure4 ??= new Error("Tmux read cancelled or deadline exceeded");
       if (escalation) return;
       child.kill("SIGTERM");
-      escalation = setTimeout(() => child.kill("SIGKILL"), 250);
+      escalation = setTimeout(() => {
+        child.kill("SIGKILL");
+        abandon = setTimeout(() => {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          settle();
+        }, BOUNDED_TMUX_KILL_GRACE_MS);
+        abandon.unref?.();
+      }, BOUNDED_TMUX_KILL_GRACE_MS);
       escalation.unref?.();
     };
     const deadline = setTimeout(stop3, options.timeoutMs ?? 5e3);
@@ -27039,20 +27059,16 @@ function boundedTmuxRead(executable, args, options) {
     child.once("error", (error) => {
       failure4 ??= error;
     });
-    child.once("close", () => {
-      clearTimeout(deadline);
-      if (escalation) clearTimeout(escalation);
-      options.signal?.removeEventListener("abort", stop3);
-      if (failure4) reject(failure4);
-      else resolve47(output);
-    });
+    child.once("close", settle);
     if (options.signal?.aborted) stop3();
   });
 }
+var BOUNDED_TMUX_KILL_GRACE_MS;
 var init_bounded_tmux_read = __esm({
   "packages/daemon/src/lib/bounded-tmux-read.ts"() {
     "use strict";
     init_bundled_tmux();
+    BOUNDED_TMUX_KILL_GRACE_MS = 250;
   }
 });
 
@@ -35568,17 +35584,49 @@ function tmuxInteractionWaitCommand(bufferName, channel) {
 }
 function defaultWaiter(authority2, bufferName) {
   const prefix = socketArguments(authority2);
-  return (channel, signal) => new Promise((resolve47, reject) => {
-    execFile8(
-      authority2.executablePath,
-      [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
-      { signal, encoding: "utf8", windowsHide: true },
+  return (channel, signal) => waitForBlockingTmuxClient(
+    authority2.executablePath,
+    [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
+    signal
+  );
+}
+function waitForBlockingTmuxClient(executable, args, signal, killGraceMs = BLOCKING_CLIENT_KILL_GRACE_MS) {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve47, reject) => {
+    let settled = false;
+    let failure4 = null;
+    let escalation = null;
+    const child = execFile8(
+      executable,
+      [...args],
+      { encoding: "utf8", windowsHide: true },
       (error) => {
-        if (!error) resolve47();
-        else if (signal.aborted) resolve47();
-        else reject(error);
+        failure4 ??= error;
       }
     );
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (escalation) clearTimeout(escalation);
+      signal.removeEventListener("abort", cancel);
+      if (!failure4 || signal.aborted) resolve47();
+      else reject(failure4);
+    };
+    const cancel = () => {
+      if (escalation) return;
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    child.once("error", (error) => {
+      failure4 ??= error;
+      settle();
+    });
+    child.once("exit", (code2, exitSignal) => {
+      if (code2 !== 0 && !failure4)
+        failure4 = new Error(`tmux wait client ended with ${exitSignal ?? `code ${String(code2)}`}`);
+      settle();
+    });
   });
 }
 function abortableDelay(milliseconds, signal) {
@@ -35654,7 +35702,7 @@ function hookIndexes(output, hookName) {
   }
   return indexes;
 }
-var HOOK_MARKER, OWNED_HOOK_MARKER, FIELD_SEPARATOR, EVENT_SEPARATOR2, RUNTIME_PANE, RETRY_MS, DEFAULT_HOOK_HEALTHCHECK_SCHEDULE, TmuxExternalInteractionObserver;
+var HOOK_MARKER, OWNED_HOOK_MARKER, FIELD_SEPARATOR, EVENT_SEPARATOR2, RUNTIME_PANE, RETRY_MS, DEFAULT_HOOK_HEALTHCHECK_SCHEDULE, BLOCKING_CLIENT_KILL_GRACE_MS, TmuxExternalInteractionObserver;
 var init_tmux_external_interaction_observer = __esm({
   "packages/daemon/src/lib/tmux-external-interaction-observer.ts"() {
     "use strict";
@@ -35675,6 +35723,7 @@ var init_tmux_external_interaction_observer = __esm({
       baseMs: 1e3,
       maxMs: 3e4
     });
+    BLOCKING_CLIENT_KILL_GRACE_MS = 250;
     TmuxExternalInteractionObserver = class {
       #daemonInstanceId;
       #registry;
@@ -49705,7 +49754,7 @@ import { setTimeout as waitForPublication } from "node:timers/promises";
 import { accessSync as accessSync7, constants as constants14, realpathSync as realpathSync17, statSync as statSync15 } from "node:fs";
 import { isAbsolute as isAbsolute22 } from "node:path";
 import { execFile as execFile9 } from "node:child_process";
-var MirrorService;
+var OWNERSHIP_RETRY_MS, MirrorService;
 var init_mirror_service = __esm({
   "packages/daemon/src/terminal/mirror/mirror-service.ts"() {
     "use strict";
@@ -49719,6 +49768,7 @@ var init_mirror_service = __esm({
     init_control_channel();
     init_session_channel();
     init_control_mode_ownership();
+    OWNERSHIP_RETRY_MS = [100, 250, 500, 1e3];
     MirrorService = class {
       opts;
       channels = /* @__PURE__ */ new Map();
@@ -49739,23 +49789,64 @@ var init_mirror_service = __esm({
         };
       }
       invalidateRegisteredWindows() {
+        this.opts.onWindowOwnershipDiagnostic?.("guard-invalidate", {
+          wasPending: this.registeredWindows?.pending() ?? null
+        });
         this.registeredWindows?.invalidate();
+      }
+      /**
+       * #764: a failed re-read must not leave every session "being verified"
+       * for good. Nothing else re-reads until the next operation, so retry with
+       * a short bounded backoff while a channel is retained; success pushes
+       * any conflict as usual.
+       */
+      ownershipRetries = 0;
+      ownershipRetry = null;
+      retryRegisteredWindows(guard) {
+        if (this.ownershipRetry || this.disposed || guard !== this.registeredWindows) return;
+        if (this.channelSessions.size === 0) return;
+        const delay5 = OWNERSHIP_RETRY_MS[Math.min(this.ownershipRetries, OWNERSHIP_RETRY_MS.length - 1)];
+        this.ownershipRetries += 1;
+        this.ownershipRetry = setTimeout(() => {
+          this.ownershipRetry = null;
+          if (this.disposed || guard !== this.registeredWindows || !guard.pending()) return;
+          void this.verifyRegisteredWindows().catch(() => {
+          });
+        }, delay5);
+        this.ownershipRetry.unref?.();
       }
       async verifyRegisteredWindows() {
         const guard = this.registeredWindows;
         if (!guard) return;
-        await guard.verify();
+        const diagnostic5 = this.opts.onWindowOwnershipDiagnostic;
+        diagnostic5?.("guard-verify-start", { pending: guard.pending() });
+        try {
+          await guard.verify();
+        } catch (error) {
+          diagnostic5?.("guard-verify-failed", {
+            reason: error instanceof Error ? error.message.slice(0, 200) : "unknown"
+          });
+          this.retryRegisteredWindows(guard);
+          throw error;
+        }
+        this.ownershipRetries = 0;
         if (guard !== this.registeredWindows || this.disposed)
           throw new Error("Window ownership changed during discovery");
+        const blocked = [];
         for (const [channel, session] of this.channelSessions) {
           if (guard.blocked(session)) {
+            blocked.push(session);
             channel.setGeometryParticipation(false);
             if (!this.registeredConflicts.has(session)) {
               this.registeredConflicts.add(session);
+              diagnostic5?.("guard-conflict-push", { session });
               this.opts.onSharedWindowConflict?.(session, true);
             }
-          } else this.registeredConflicts.delete(session);
+          } else if (this.registeredConflicts.delete(session)) {
+            this.opts.onSharedWindowConflict?.(session, false);
+          }
         }
+        diagnostic5?.("guard-verify-ok", { blocked, channels: this.channelSessions.size });
       }
       pendingDisposals = /* @__PURE__ */ new Set();
       drainingChannels = /* @__PURE__ */ new Map();
@@ -50048,6 +50139,7 @@ var init_mirror_service = __esm({
           const session = this.channelSessions.get(peer);
           if (session === void 0) continue;
           if (conflict) peer.setGeometryParticipation(false);
+          this.opts.onWindowOwnershipDiagnostic?.("membership-conflict-push", { session, conflict });
           this.opts.onSharedWindowConflict?.(session, conflict);
         }
       }
@@ -50153,6 +50245,8 @@ var init_mirror_service = __esm({
       }
       async dispose() {
         this.disposed = true;
+        if (this.ownershipRetry) clearTimeout(this.ownershipRetry);
+        this.ownershipRetry = null;
         this.registeredWindows?.dispose();
         this.sessionExitListeners.clear();
         const entries = [...this.channels.values()];
@@ -50206,6 +50300,10 @@ var init_mirror_service = __esm({
               hasSharedWindowConflict: () => this.hasSharedWindowConflict(session),
               beforeIdentityRepair: () => this.verifyRegisteredWindows(),
               onWindowTopologyChanged: () => {
+                this.opts.onWindowOwnershipDiagnostic?.("topology-notification", {
+                  session,
+                  current: this.channelSessions.has(channel)
+                });
                 if (this.channelSessions.has(channel)) this.invalidateRegisteredWindows();
               },
               ownedViewer,
@@ -72573,6 +72671,13 @@ var init_registry2 = __esm({
       #scheduler;
       #observability;
       #createTraceCorrelator;
+      #onInventoryRecovered;
+      #announceInventory(session) {
+        try {
+          this.#onInventoryRecovered?.(session);
+        } catch {
+        }
+      }
       #sessions = /* @__PURE__ */ new Map();
       #listenerDisposal = null;
       #proofPrewarmOwnership = /* @__PURE__ */ new Map();
@@ -72586,6 +72691,7 @@ var init_registry2 = __esm({
         this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
         this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
         this.#createTraceCorrelator = options.createTraceCorrelator ?? ((scheduler) => new RuntimeTraceCorrelator(scheduler));
+        this.#onInventoryRecovered = options.onInventoryRecovered ?? null;
         const diagnosticMirrorOptions = {
           onInputAccepted: (session, action, acceptedAtMicros, ok2) => {
             for (const traceId of action.traceIds ?? []) {
@@ -72690,6 +72796,7 @@ var init_registry2 = __esm({
           onSharedWindowConflict: (session, conflict) => {
             options.mirror?.onSharedWindowConflict?.(session, conflict);
             if (conflict) this.#sessions.get(session)?.invalidateSharedWindowAuthority();
+            else if (!this.#mirror.hasSharedWindowConflict(session)) this.#announceInventory(session);
           },
           onNativeClientActivity: (session) => {
             options.mirror?.onNativeClientActivity?.(session);
@@ -72777,7 +72884,9 @@ var init_registry2 = __esm({
           }
           signal?.throwIfAborted();
           await abortable(this.#mirror.verifyRegisteredWindows(), signal);
+          const wasQualified = runtime.trustedInventoryQualified();
           runtime.qualifyTrustedInventory(runtimeSessionId);
+          if (!wasQualified && runtime.trustedInventoryQualified()) this.#announceInventory(session);
         } finally {
           this.#releaseProofPrewarmRuntime(runtime);
         }
@@ -80952,6 +81061,11 @@ var init_wire_ledger = __esm({
 // packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts
 import { inflateSync as inflateSync2 } from "node:zlib";
 import { z as z124 } from "zod";
+function paneStreamCloseForRetirement(retirement) {
+  if (retirement === void 0 || retirement === "shutdown")
+    return PANE_STREAM_DAEMON_SHUTDOWN_CLOSE;
+  return retirement === "generation-restart" ? PANE_STREAM_DAEMON_RESTARTING_CLOSE : PANE_STREAM_OWNER_RETIRED_CLOSE;
+}
 function semanticBackendRefusal(error) {
   let candidate = error;
   for (let depth = 0; depth < 3; depth += 1) {
@@ -81046,7 +81160,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -81065,6 +81179,18 @@ var init_pane_stream_websocket = __esm({
     init_wire_ledger();
     PANE_STREAM_MAX_REDEMPTION_BYTES = 4 * 1024;
     PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
+    PANE_STREAM_DAEMON_SHUTDOWN_CLOSE = Object.freeze({
+      code: 1001,
+      reason: "daemon-shutdown"
+    });
+    PANE_STREAM_OWNER_RETIRED_CLOSE = Object.freeze({
+      code: 1012,
+      reason: "tmux-server-retired"
+    });
+    PANE_STREAM_DAEMON_RESTARTING_CLOSE = Object.freeze({
+      code: 1012,
+      reason: "daemon-restarting"
+    });
     PANE_STREAM_MAX_REDEMPTION_MS = 1e3;
     WS_OPEN3 = 1;
     CANONICAL_KEY_INPUT_FRAME_PREFIX = Buffer.from('{"kind":"key",', "utf8");
@@ -81354,16 +81480,28 @@ var init_pane_stream_websocket = __esm({
       flowSnapshot() {
         return this.#ledger.snapshot();
       }
-      shutdown() {
+      /**
+       * Close every stream and refuse new ones. The first caller decides what the
+       * clients are told: the daemon going away, or only this tmux server owner
+       * being retired while the daemon stays up (reconnect now).
+       */
+      shutdown(close2 = PANE_STREAM_DAEMON_SHUTDOWN_CLOSE) {
         if (this.#shutdownPromise) return this.#shutdownPromise;
         this.#shuttingDown = true;
-        this.#shutdownPromise = this.#finishShutdown();
+        const routine = close2.reason === "daemon-shutdown" && this.#live.size === 0 && this.#preAuth.size === 0;
+        logger[routine ? "debug" : "info"]("pane-stream", "coordinator shutdown", {
+          code: close2.code,
+          reason: close2.reason,
+          liveStreams: this.#live.size,
+          unredeemed: this.#preAuth.size
+        });
+        this.#shutdownPromise = this.#finishShutdown(close2);
         return this.#shutdownPromise;
       }
-      async #finishShutdown() {
-        for (const admission of [...this.#preAuth]) admission.close(1001, "daemon-shutdown");
+      async #finishShutdown(close2) {
+        for (const admission of [...this.#preAuth]) admission.close(close2.code, close2.reason);
         await this.#exclusive(async () => {
-          for (const connection of [...this.#live]) connection.close(1001, "daemon-shutdown");
+          for (const connection of [...this.#live]) connection.close(close2.code, close2.reason);
           for (const pending of [...this.#pending.values()]) await this.#retirePending(pending);
         });
         await Promise.all([...this.#retiringReleases]);
@@ -81703,6 +81841,8 @@ var init_pane_stream_websocket = __esm({
           "panes-closed",
           "peer-closed",
           "daemon-shutdown",
+          "tmux-server-retired",
+          "daemon-restarting",
           "redemption-rejected",
           "unknown"
         ])).has(closeReason ?? "") ? closeReason : closeReason ? "unknown" : "none";
@@ -83482,16 +83622,49 @@ var init_runtime = __esm({
           }
         });
       }
-      dispose() {
+      /** `close` says what the streams are told; the default is a daemon shutdown. */
+      dispose(close2) {
         if (!this.#disposePromise) {
           this.#disposePromise = (async () => {
             this.nativeSurfaces?.close();
-            await this.coordinator.shutdown();
+            await this.coordinator.shutdown(close2);
           })();
         }
         return this.#disposePromise;
       }
     };
+  }
+});
+
+// packages/daemon/src/lib/tmux-server-owner-teardown.ts
+function createNativeOwnerTeardown(parts) {
+  let teardown = null;
+  return (retirement) => {
+    if (teardown) return teardown;
+    parts.markRetired();
+    const streamsClosed = parts.paneStreams.dispose(paneStreamCloseForRetirement(retirement));
+    streamsClosed.catch(() => void 0);
+    const steps = parts.begin(streamsClosed);
+    const track = parts.track ?? (async (_step, work) => await work());
+    teardown = (async () => {
+      const failures = [];
+      for (const [step, close2] of steps) {
+        try {
+          await track(`owner:${parts.serverId}:${step}`, close2);
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      if (failures.length)
+        throw new AggregateError(failures, "Tmux server owner retirement failed");
+    })();
+    return teardown;
+  };
+}
+var init_tmux_server_owner_teardown = __esm({
+  "packages/daemon/src/lib/tmux-server-owner-teardown.ts"() {
+    "use strict";
+    init_pane_stream_websocket();
   }
 });
 
@@ -84225,7 +84398,6 @@ async function createNativeTmuxServerOwner(options) {
     io: { runTmux: generationRun }
   });
   let disposed = false;
-  let disposePromise = null;
   let observerStarted = null;
   const interactionReceipts = new InteractionReceiptJournal();
   const interactionEvidence = new InteractionEvidenceAuthority(options.environmentId, {
@@ -84517,40 +84689,34 @@ async function createNativeTmuxServerOwner(options) {
       return backend2.mutate(...args);
     }
   };
-  const dispose2 = () => {
-    if (disposePromise) return disposePromise;
-    disposed = true;
-    credentialLifetime.abort();
-    sourceCredentials.dispose();
-    authoredReceiptEnricher.dispose();
-    const observationDisposal = observationSelector.dispose();
-    disposePromise = (async () => {
-      const failures = [];
-      for (const close2 of [
-        () => observationDisposal,
-        () => sessionOpener.dispose(),
-        () => sessionCreator.dispose(),
-        () => paneCreation.dispose(),
-        () => paneStreamRuntime.dispose(),
-        () => observer.dispose(),
-        () => terminalInventoryRuntime.dispose(),
-        () => multiplexer.dispose(),
-        () => sessionRuntimeRegistry.dispose(),
-        () => interactionReceipts.dispose(),
-        () => interactionEvidence.dispose(),
-        () => interactionObservation.dispose()
-      ]) {
-        try {
-          await close2();
-        } catch (error) {
-          failures.push(error);
-        }
-      }
-      if (failures.length)
-        throw new AggregateError(failures, "Tmux server owner retirement failed");
-    })();
-    return disposePromise;
-  };
+  const dispose2 = createNativeOwnerTeardown({
+    serverId: options.serverId,
+    paneStreams: paneStreamRuntime,
+    track: options.trackTeardown,
+    markRetired: () => {
+      disposed = true;
+    },
+    begin: (streamsClosed) => {
+      credentialLifetime.abort();
+      sourceCredentials.dispose();
+      authoredReceiptEnricher.dispose();
+      const observationDisposal = observationSelector.dispose();
+      return [
+        ["observation-selector", () => observationDisposal],
+        ["session-opener", () => sessionOpener.dispose()],
+        ["session-creator", () => sessionCreator.dispose()],
+        ["pane-creation", () => paneCreation.dispose()],
+        ["pane-streams", () => streamsClosed],
+        ["interaction-observer", () => observer.dispose()],
+        ["terminal-inventory", () => terminalInventoryRuntime.dispose()],
+        ["multiplexer", () => multiplexer.dispose()],
+        ["session-runtimes", () => sessionRuntimeRegistry.dispose()],
+        ["interaction-receipts", () => interactionReceipts.dispose()],
+        ["interaction-evidence", () => interactionEvidence.dispose()],
+        ["interaction-observation", () => interactionObservation.dispose()]
+      ];
+    }
+  });
   try {
     await terminalInventoryRuntime.whenReady();
     await catalog();
@@ -84716,6 +84882,7 @@ var init_tmux_server_owner = __esm({
     init_native_runtime();
     init_agent_status_probe();
     init_runtime();
+    init_tmux_server_owner_teardown();
     init_live_session_identity();
     init_registry2();
     init_multiplexer_backend();
@@ -84733,7 +84900,32 @@ var init_tmux_server_owner = __esm({
 
 // packages/daemon/src/lib/tmux-server-owners.ts
 import { randomUUID as randomUUID38 } from "node:crypto";
-var MAX_TMUX_SERVER_OWNERS, TmuxServerSelectorSchemaZ, TmuxServerRegistrationSchemaZ, TmuxServerScopeError, TmuxServerOwners;
+function isTmuxServerObservation(result2) {
+  return result2 !== null && "fingerprint" in result2;
+}
+function retirementKeepsGeneration(retirement) {
+  return retirement !== void 0 && retirement !== "shutdown" && retirement !== "generation-restart";
+}
+function createRetryDelayMs(failures) {
+  return Math.min(CREATE_RETRY_MAX_MS, CREATE_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1));
+}
+function processAlive3(pid) {
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+function describeError2(error) {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 300);
+}
+function unrefDelay(milliseconds) {
+  return new Promise((resolve47) => {
+    setTimeout(resolve47, milliseconds).unref?.();
+  });
+}
+var MAX_TMUX_SERVER_OWNERS, TmuxServerSelectorSchemaZ, TmuxServerRegistrationSchemaZ, OBSERVE_MIN_INTERVAL_MS, OBSERVE_MAX_WAIT_MS, CREATE_RETRY_BASE_MS, CREATE_RETRY_MAX_MS, RETIREMENT_OF, TmuxServerScopeError, TmuxServerOwners;
 var init_tmux_server_owners = __esm({
   "packages/daemon/src/lib/tmux-server-owners.ts"() {
     "use strict";
@@ -84743,6 +84935,18 @@ var init_tmux_server_owners = __esm({
     TmuxServerRegistrationSchemaZ = TmuxServerRegistrationRequestSchemaZ.extend({
       serverId: TmuxServerIdSchemaZ
     }).strict();
+    OBSERVE_MIN_INTERVAL_MS = 1e3;
+    OBSERVE_MAX_WAIT_MS = 1e3;
+    CREATE_RETRY_BASE_MS = 500;
+    CREATE_RETRY_MAX_MS = 3e4;
+    RETIREMENT_OF = {
+      "server-process-gone": "server-gone",
+      "socket-identity-changed": "server-gone",
+      "server-identity-unknown": "server-gone",
+      "fingerprint-changed": "server-replaced",
+      removed: "removed",
+      "owners-disposed": "shutdown"
+    };
     TmuxServerScopeError = class extends Error {
       constructor(code2) {
         super(`tmux server ${code2}`);
@@ -84762,11 +84966,19 @@ var init_tmux_server_owners = __esm({
       #disposePromise = null;
       #queuedRefresh = null;
       #queuedRefreshTail = null;
+      #inFlight = 0;
+      #onlinePass = null;
+      #lastOnlinePassAt = Number.NEGATIVE_INFINITY;
       #serial(work) {
+        this.#inFlight += 1;
         const run = this.#tail.then(() => {
           if (this.#disposed) throw new TmuxServerScopeError("disposed");
           return work();
         });
+        const settled = () => {
+          this.#inFlight -= 1;
+        };
+        run.then(settled, settled);
         this.#tail = run.catch(() => void 0);
         return run;
       }
@@ -84787,18 +84999,101 @@ var init_tmux_server_owners = __esm({
       #save() {
         this.options.persist?.(this.registrations());
       }
-      async #retire(entry) {
+      #now() {
+        return (this.options.now ?? performance.now.bind(performance))();
+      }
+      #emit(event) {
+        try {
+          this.options.onEvent?.(event);
+        } catch {
+        }
+      }
+      async #retire(entry, trigger, probe, retirement = RETIREMENT_OF[trigger]) {
         const owner = entry.owner;
+        const generation = entry.scope?.generation;
         entry.owner = null;
         entry.scope = null;
         entry.observation = null;
-        if (owner) await owner.dispose();
+        entry.probeFailures = 0;
+        if (!owner) return;
+        const started = this.#now();
+        let failure4;
+        try {
+          await owner.dispose(retirement);
+        } catch (error) {
+          failure4 = error;
+        }
+        this.#emit({
+          type: "owner-retired",
+          serverId: entry.registration.serverId,
+          generation: generation ?? "",
+          trigger,
+          ...probe?.failure ? { probe: probe.failure } : {},
+          ...probe ? { probeMs: Math.round(probe.ms) } : {},
+          disposeMs: Math.round(this.#now() - started),
+          ...failure4 === void 0 ? {} : { disposeError: describeError2(failure4) }
+        });
+        if (failure4 !== void 0) throw failure4;
       }
-      async #refresh(entry, observed) {
-        const next = observed === void 0 ? await this.options.probe(entry.registration.selector) : observed;
-        if (next && entry.observation?.fingerprint === next.fingerprint && entry.observation.valid())
+      /** Positive evidence that needs no subprocess: the socket was replaced or the server process is gone. */
+      #hasCheapEvidence(entry) {
+        const current = entry.observation;
+        if (!entry.owner || !current) return false;
+        if (!current.valid()) return true;
+        const pid = current.nativeServerIdentity?.pid;
+        return pid !== void 0 && !(this.options.serverProcessAlive ?? processAlive3)(pid);
+      }
+      async #refresh(entry, observed, pass = {}) {
+        if (!entry.owner && pass.respectBackoff && this.#now() < entry.nextCreateAt) return;
+        const probeStarted = this.#now();
+        const result2 = observed === void 0 ? await this.options.probe(entry.registration.selector) : observed;
+        const probeMs = this.#now() - probeStarted;
+        const next = isTmuxServerObservation(result2) ? result2 : null;
+        const current = entry.observation;
+        if (next && current?.fingerprint === next.fingerprint && current.valid()) {
+          entry.probeFailures = 0;
           return;
-        await this.#retire(entry);
+        }
+        let trigger = "fingerprint-changed";
+        const failure4 = result2 === null ? { failure: "no-server" } : isTmuxServerObservation(result2) ? null : result2;
+        if (!next && entry.owner && entry.scope && current) {
+          const pid = current.nativeServerIdentity?.pid;
+          if (!current.valid()) trigger = "socket-identity-changed";
+          else if (pid === void 0) trigger = "server-identity-unknown";
+          else if (!(this.options.serverProcessAlive ?? processAlive3)(pid))
+            trigger = "server-process-gone";
+          else {
+            entry.probeFailures += 1;
+            this.#emit({
+              type: "owner-kept",
+              serverId: entry.registration.serverId,
+              generation: entry.scope.generation,
+              probe: failure4,
+              probeMs: Math.round(probeMs),
+              consecutiveProbeFailures: entry.probeFailures
+            });
+            return;
+          }
+        } else if (next && current && !current.valid()) trigger = "socket-identity-changed";
+        if (entry.owner && entry.scope && !pass.confirming) {
+          const generation = entry.scope.generation;
+          const again = await this.options.probe(entry.registration.selector);
+          if (this.#disposed) return;
+          await this.#refresh(entry, again, { ...pass, confirming: true });
+          if (entry.scope?.generation === generation)
+            this.#emit({
+              type: "retirement-unconfirmed",
+              serverId: entry.registration.serverId,
+              generation,
+              trigger
+            });
+          return;
+        }
+        await this.#retire(entry, trigger, { failure: failure4, ms: probeMs });
+        if (!next) {
+          entry.offlineMisses += 1;
+          entry.nextSweepProbeAt = this.#now() + createRetryDelayMs(entry.offlineMisses);
+        }
         if (this.#disposed || !next || !next.valid()) return;
         const duplicate = [...this.#entries.values()].find(
           (other) => other !== entry && other.observation?.fingerprint === next.fingerprint && other.observation.valid()
@@ -84806,18 +85101,42 @@ var init_tmux_server_owners = __esm({
         if (duplicate) return;
         const scope2 = { serverId: entry.registration.serverId, generation: randomUUID38() };
         let owner;
+        const createStarted = this.#now();
         try {
           owner = await this.options.create(entry.registration, scope2, next);
-        } catch {
+        } catch (error) {
+          entry.createFailures += 1;
+          const retryInMs = createRetryDelayMs(entry.createFailures);
+          entry.nextCreateAt = this.#now() + retryInMs;
+          this.#emit({
+            type: "owner-create-failed",
+            serverId: scope2.serverId,
+            generation: scope2.generation,
+            createMs: Math.round(this.#now() - createStarted),
+            error: describeError2(error),
+            consecutiveCreateFailures: entry.createFailures,
+            retryInMs
+          });
           return;
         }
         if (this.#disposed || !next.valid()) {
-          await owner.dispose();
+          await owner.dispose(this.#disposed ? "shutdown" : "server-gone");
           return;
         }
         entry.observation = next;
         entry.scope = scope2;
         entry.owner = owner;
+        entry.probeFailures = 0;
+        entry.createFailures = 0;
+        entry.nextCreateAt = 0;
+        entry.offlineMisses = 0;
+        entry.nextSweepProbeAt = 0;
+        this.#emit({
+          type: "owner-created",
+          serverId: scope2.serverId,
+          generation: scope2.generation,
+          createMs: Math.round(this.#now() - createStarted)
+        });
       }
       register(input) {
         return this.#serial(async () => {
@@ -84834,14 +85153,25 @@ var init_tmux_server_owners = __esm({
           }
           if (this.#entries.has(registration.serverId))
             throw new TypeError("Server registration already exists");
-          const observation2 = await this.options.probe(registration.selector);
+          const probed = await this.options.probe(registration.selector);
           if (this.#disposed) throw new TmuxServerScopeError("disposed");
+          const observation2 = isTmuxServerObservation(probed) ? probed : null;
           const alias = observation2 && [...this.#entries.values()].find(
             (entry2) => entry2.observation?.fingerprint === observation2.fingerprint && entry2.observation.valid()
           );
           if (alias) return this.#descriptor(alias);
           if (this.#entries.size >= MAX_TMUX_SERVER_OWNERS) throw new TmuxServerScopeError("capacity");
-          const entry = { registration, observation: null, scope: null, owner: null };
+          const entry = {
+            registration,
+            observation: null,
+            scope: null,
+            owner: null,
+            probeFailures: 0,
+            createFailures: 0,
+            nextCreateAt: 0,
+            offlineMisses: 0,
+            nextSweepProbeAt: 0
+          };
           this.#entries.set(registration.serverId, entry);
           try {
             this.#save();
@@ -84849,7 +85179,7 @@ var init_tmux_server_owners = __esm({
             this.#entries.delete(registration.serverId);
             throw error;
           }
-          await this.#refresh(entry, observation2);
+          await this.#refresh(entry, probed);
           return this.#descriptor(entry);
         });
       }
@@ -84859,13 +85189,24 @@ var init_tmux_server_owners = __esm({
         const scope2 = TmuxServerScopeSchemaZ.parse(scopeInput);
         if (scope2.serverId !== registration.serverId || this.#entries.size || this.#disposed)
           throw new TypeError("Invalid default owner adoption");
-        this.#entries.set(scope2.serverId, { registration, scope: scope2, observation: observation2, owner });
+        this.#entries.set(scope2.serverId, {
+          registration,
+          scope: scope2,
+          observation: observation2,
+          owner,
+          probeFailures: 0,
+          createFailures: 0,
+          nextCreateAt: 0,
+          offlineMisses: 0,
+          nextSweepProbeAt: 0
+        });
       }
       refresh() {
         if (this.#queuedRefresh && this.#tail === this.#queuedRefreshTail) return this.#queuedRefresh;
         const queued = this.#serial(async () => {
           if (this.#queuedRefresh === queued) this.#queuedRefresh = null;
-          for (const entry of this.#entries.values()) await this.#refresh(entry);
+          for (const entry of this.#entries.values())
+            await this.#refresh(entry, void 0, { respectBackoff: true });
           return this.list();
         });
         this.#queuedRefresh = queued;
@@ -84875,6 +85216,46 @@ var init_tmux_server_owners = __esm({
         };
         queued.then(settle, settle);
         return queued;
+      }
+      /**
+       * What a read route may do (#840). It never probes, retires or replaces an
+       * owner: it answers from what is known. For servers that are offline it
+       * starts at most one shared, rate-limited pass that may bring them online,
+       * and it waits a bounded time for work already in flight, so a list can
+       * neither close a stream nor hang behind a teardown.
+       */
+      async observe() {
+        if (this.#disposed) throw new TmuxServerScopeError("disposed");
+        const now = this.#now();
+        const offlineDue = [...this.#entries.values()].some(
+          (entry) => !entry.owner && now >= entry.nextCreateAt
+        );
+        if (offlineDue && !this.#onlinePass && now - this.#lastOnlinePassAt >= OBSERVE_MIN_INTERVAL_MS) {
+          this.#lastOnlinePassAt = now;
+          const pass = this.#serial(async () => {
+            for (const entry of this.#entries.values())
+              if (!entry.owner) await this.#refresh(entry, void 0, { respectBackoff: true });
+          }).catch(() => void 0).finally(() => {
+            if (this.#onlinePass === pass) this.#onlinePass = null;
+          });
+          this.#onlinePass = pass;
+        }
+        if (this.#inFlight > 0)
+          await Promise.race([this.#tail, (this.options.delay ?? unrefDelay)(OBSERVE_MAX_WAIT_MS)]);
+        return this.list();
+      }
+      /**
+       * The background liveness check. Costs no subprocess while every owner's
+       * socket and server process are still there; only evidence of a change, or
+       * an offline server whose retry is due, starts the confirmed refresh.
+       */
+      sweep() {
+        if (this.#disposed) return Promise.resolve([]);
+        const now = this.#now();
+        const due = [...this.#entries.values()].some(
+          (entry) => entry.owner ? this.#hasCheapEvidence(entry) : now >= Math.max(entry.nextCreateAt, entry.nextSweepProbeAt)
+        );
+        return due ? this.refresh() : Promise.resolve(this.list());
       }
       current(scopeInput) {
         const scope2 = TmuxServerScopeSchemaZ.parse(scopeInput);
@@ -84903,17 +85284,20 @@ var init_tmux_server_owners = __esm({
             this.#entries.set(serverId, entry);
             throw error;
           }
-          await this.#retire(entry);
+          await this.#retire(entry, "removed");
         });
       }
-      dispose() {
+      /** `retirement` says whether the daemon stops or only restarts its generation. */
+      dispose(retirement = "shutdown") {
         if (this.#disposePromise) return this.#disposePromise;
         this.#disposed = true;
         this.#disposePromise = (async () => {
           await this.#tail;
           const entries = [...this.#entries.values()];
           this.#entries.clear();
-          await Promise.allSettled(entries.map((entry) => this.#retire(entry)));
+          await Promise.allSettled(
+            entries.map((entry) => this.#retire(entry, "owners-disposed", void 0, retirement))
+          );
         })();
         return this.#disposePromise;
       }
@@ -84958,15 +85342,27 @@ function writeTmuxServerRegistrations(path2, registrations) {
     }
   }
 }
-function createTmuxServerProbe(executable) {
+function classifyTmuxServerProbeError(error, durationMs2) {
+  const failed = error;
+  const detail = (typeof failed?.stderr === "string" && failed.stderr.trim() || (error instanceof Error ? error.message : String(error))).slice(0, 200);
+  const failure4 = failed?.killed === true || typeof failed?.signal === "string" && failed.signal.length > 0 ? "timeout" : typeof failed?.code === "number" ? "no-server" : "exec-error";
+  return { failure: failure4, detail, durationMs: Math.round(durationMs2) };
+}
+function createDiagnosedTmuxServerProbe(executable) {
   const executablePath = realpathSync20(executable);
   const env = tmuxClientEnvironment(process.env, executablePath);
   return async (selector) => {
+    const started = performance.now();
+    const failed = (failure4, detail) => ({
+      failure: failure4,
+      detail,
+      durationMs: Math.round(performance.now() - started)
+    });
     const args = selector.kind === "path" ? ["-S", selector.path] : ["-L", selector.name];
     const read = async (selection) => (await exec(
       executablePath,
       [...selection, "-N", "display-message", "-p", "#{socket_path}|#{pid}|#{start_time}"],
-      { env, encoding: "utf8", timeout: 500, maxBuffer: 8192 }
+      { env, encoding: "utf8", timeout: TMUX_SERVER_PROBE_TIMEOUT_MS, maxBuffer: 8192 }
     )).stdout.trimEnd();
     try {
       let pinned = null;
@@ -84978,13 +85374,14 @@ function createTmuxServerProbe(executable) {
       }
       const first = await read(pinned ? ["-S", pinned.path] : args);
       const match = /^(.*)\|([1-9][0-9]*)\|([1-9][0-9]*)$/u.exec(first);
-      if (!match) return null;
+      if (!match) return failed("unparsable", `${first.length} bytes of probe output`);
       const reportedSocket = captureUnixSocketIdentity(match[1]);
       const socket = pinned ?? reportedSocket;
       if (pinned) {
         if (reportedSocket.path !== pinned.path || reportedSocket.dev !== pinned.dev || reportedSocket.ino !== pinned.ino)
-          return null;
-      } else if (await read(["-S", socket.path]) !== first) return null;
+          return failed("socket-mismatch", "the server answered from another socket");
+      } else if (await read(["-S", socket.path]) !== first)
+        return failed("socket-mismatch", "the explicit-path proof differed");
       revalidateUnixSocketIdentity(socket);
       return {
         nativeServerIdentity: { pid: match[2], startTime: match[3] },
@@ -84999,12 +85396,12 @@ function createTmuxServerProbe(executable) {
           }
         }
       };
-    } catch {
-      return null;
+    } catch (error) {
+      return classifyTmuxServerProbeError(error, performance.now() - started);
     }
   };
 }
-var exec, FileSchema2;
+var exec, FileSchema2, TMUX_SERVER_PROBE_TIMEOUT_MS;
 var init_tmux_server_registration = __esm({
   "packages/daemon/src/lib/tmux-server-registration.ts"() {
     "use strict";
@@ -85019,6 +85416,7 @@ var init_tmux_server_registration = __esm({
       if (new Set(file.servers.map((server) => server.serverId)).size !== file.servers.length)
         ctx.addIssue({ code: "custom", message: "Duplicate server registration" });
     });
+    TMUX_SERVER_PROBE_TIMEOUT_MS = 500;
   }
 });
 
@@ -85145,18 +85543,42 @@ var init_pane_stream_upgrade = __esm({
 // packages/daemon/src/lib/embedded-tmux-server-owners.ts
 import { randomUUID as randomUUID40 } from "node:crypto";
 import { join as join39 } from "node:path";
+function logTmuxServerOwnersEvent(event) {
+  const { type, ...fields } = event;
+  if (type === "owner-kept")
+    logger.warn("tmux-server-owners", "probe failed; healthy owner kept", fields);
+  else if (type === "owner-retired" && event.trigger === "owners-disposed")
+    logger.debug("tmux-server-owners", "owner disposed with its daemon generation", fields);
+  else if (type === "owner-retired")
+    logger.warn("tmux-server-owners", "owner retired; its streams were closed", fields);
+  else if (type === "retirement-unconfirmed")
+    logger.warn("tmux-server-owners", "retirement evidence not confirmed; owner kept", fields);
+  else if (type === "owner-create-failed")
+    logger.warn("tmux-server-owners", "owner could not be built; server stays offline", fields);
+  else logger.info("tmux-server-owners", "owner built", fields);
+}
 async function createEmbeddedTmuxServerOwners(options) {
   const path2 = join39(options.stateDirectory, "tmux-servers.json");
   const persisted = readTmuxServerRegistrations(path2);
-  const probe = createTmuxServerProbe(options.defaultAuthority.executablePath);
-  const defaultObservation = await probe(options.defaultAuthority.socketSelector);
+  const probe = createDiagnosedTmuxServerProbe(options.defaultAuthority.executablePath);
+  let defaultProbe2 = null;
+  for (let attempt = 1; attempt <= DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS; attempt += 1) {
+    defaultProbe2 = await probe(options.defaultAuthority.socketSelector);
+    if (isTmuxServerObservation(defaultProbe2) || defaultProbe2?.failure === "no-server") break;
+    logger.warn("tmux-server-owners", "default server probe failed at startup", {
+      attempt,
+      attempts: DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS,
+      ...defaultProbe2 ?? { failure: "unknown" }
+    });
+  }
+  const defaultObservation = isTmuxServerObservation(defaultProbe2) ? defaultProbe2 : null;
   let established = persisted.find(
     (entry) => JSON.stringify(entry.selector) === JSON.stringify(options.defaultAuthority.socketSelector)
   );
   if (!established && defaultObservation) {
     for (const entry of persisted) {
       const observation2 = await probe(entry.selector);
-      if (observation2?.fingerprint === defaultObservation.fingerprint) {
+      if (isTmuxServerObservation(observation2) && observation2.fingerprint === defaultObservation.fingerprint) {
         established = entry;
         break;
       }
@@ -85191,16 +85613,29 @@ async function createEmbeddedTmuxServerOwners(options) {
       );
   };
   let defaultRetired = false;
-  const retireDefault = async () => {
+  let defaultAdopted = false;
+  const retireDefault = async (retirement) => {
     if (defaultRetired) return;
     defaultRetired = true;
-    await options.defaultOwner.dispose();
+    if (retirementKeepsGeneration(retirement))
+      logger.warn(
+        "tmux-server-owners",
+        "default owner retired; legacy default routes now answer 410",
+        {
+          serverId: defaultRegistration.serverId,
+          generation: options.defaultGeneration,
+          retirement
+        }
+      );
+    await options.defaultOwner.dispose(retirement);
   };
   const owners = new TmuxServerOwners({
     probe,
+    onEvent: logTmuxServerOwnersEvent,
     persist: (registrations) => writeTmuxServerRegistrations(path2, registrations),
     create: async (registration, scope2, observation2) => {
-      if (registration.serverId === defaultRegistration.serverId) await retireDefault();
+      if (registration.serverId === defaultRegistration.serverId)
+        await retireDefault("server-replaced");
       const route = tmuxServerPaneStreamPath(scope2);
       const owner = await createNativeTmuxServerOwner({
         localImages: options.localImages,
@@ -85208,20 +85643,25 @@ async function createEmbeddedTmuxServerOwners(options) {
         ...scope2,
         tmuxAuthority: observation2.authority,
         nativeServerIdentity: observation2.nativeServerIdentity,
+        ...options.trackTeardown ? { trackTeardown: options.trackTeardown } : {},
         stateDirectory: join39(options.stateDirectory, "server-owners", registration.serverId),
         webSocketUrl: new URL(route, options.webSocketBaseUrl).href
       });
       attachOwner(route, owner);
       return {
         ...owner,
-        dispose: async () => {
+        dispose: async (retirement) => {
           const boundary2 = boundaries.get(route);
           boundaries.delete(route);
           pending.delete(route);
+          const streamsClosed = owner.paneStreamRuntime.coordinator.shutdown(
+            paneStreamCloseForRetirement(retirement)
+          );
+          streamsClosed.catch(() => void 0);
           try {
             await boundary2?.close();
           } finally {
-            await owner.dispose();
+            await owner.dispose(retirement);
           }
         }
       };
@@ -85233,6 +85673,7 @@ async function createEmbeddedTmuxServerOwners(options) {
         serverId: defaultRegistration.serverId,
         generation: options.defaultGeneration
       });
+      defaultAdopted = true;
       owners.adopt(
         defaultRegistration,
         { serverId: defaultRegistration.serverId, generation: options.defaultGeneration },
@@ -85261,6 +85702,11 @@ async function createEmbeddedTmuxServerOwners(options) {
     if (route.startsWith("/v2/tmux-servers/") && !pending.has(route))
       socket.end("HTTP/1.1 410 Gone\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
   };
+  const sweepTimer = setInterval(() => {
+    if (defaultAdopted && !defaultRetired && owners.list().length <= 1) return;
+    void owners.sweep().catch(() => void 0);
+  }, OWNER_SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
   return {
     owners,
     isDefaultCurrent() {
@@ -85298,9 +85744,10 @@ async function createEmbeddedTmuxServerOwners(options) {
           )
         );
     },
-    async dispose() {
+    async dispose(retirement = "shutdown") {
+      clearInterval(sweepTimer);
       httpServer?.off("upgrade", refuseUnknownScope);
-      await owners.dispose();
+      await owners.dispose(retirement);
     },
     /** Legacy default routes remain bound to their original authority; never retarget. */
     get defaultRetired() {
@@ -85308,14 +85755,19 @@ async function createEmbeddedTmuxServerOwners(options) {
     }
   };
 }
+var DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS, OWNER_SWEEP_INTERVAL_MS;
 var init_embedded_tmux_server_owners = __esm({
   "packages/daemon/src/lib/embedded-tmux-server-owners.ts"() {
     "use strict";
     init_src2();
     init_tmux_server_owners();
+    init_pane_stream_websocket();
+    init_log();
     init_tmux_server_registration();
     init_tmux_server_owner();
     init_pane_stream_upgrade();
+    DEFAULT_SERVER_STARTUP_PROBE_ATTEMPTS = 3;
+    OWNER_SWEEP_INTERVAL_MS = 2e3;
   }
 });
 
@@ -85700,6 +86152,17 @@ async function startOwnedEmbeddedDaemon(options, start3) {
     },
     tmuxAuthorityReplaced: () => current.tmuxAuthorityReplaced?.() ?? Promise.resolve(false),
     compatibilityTerminalAttachmentRuntimeConstructed: () => current.compatibilityTerminalAttachmentRuntimeConstructed(),
+    stopDiagnostics: () => current.stopDiagnostics?.() ?? {
+      started: false,
+      finished: false,
+      elapsedMs: 0,
+      stage: null,
+      stageMs: 0,
+      completed: [],
+      openSteps: [],
+      stepsSettled: 0
+    },
+    abandon: () => current.abandon?.(),
     activateProject: (name, activationOptions) => {
       if (closed || !available) return Promise.reject(new Error("Embedded daemon is retiring"));
       return current.activateProject(name, activationOptions);
@@ -92564,6 +93027,68 @@ var init_daemon_provenance = __esm({
   }
 });
 
+// packages/daemon/src/lib/daemon-stop-progress.ts
+function createStopProgress(now = () => performance.now()) {
+  const open5 = /* @__PURE__ */ new Map();
+  let stepsSettled = 0;
+  let startedAt = null;
+  let finishedAt = null;
+  let stage = null;
+  let stageStartedAt = 0;
+  const completed = [];
+  const snapshot3 = () => {
+    const at = finishedAt ?? now();
+    return {
+      started: startedAt !== null,
+      finished: finishedAt !== null,
+      elapsedMs: startedAt === null ? 0 : Math.round(at - startedAt),
+      stage,
+      stageMs: stage === null ? 0 : Math.round(at - stageStartedAt),
+      completed: completed.map((entry) => ({ ...entry })),
+      openSteps: [...open5.values()].map((entry) => ({
+        step: entry.step,
+        ms: Math.round(at - entry.startedAt)
+      })),
+      stepsSettled
+    };
+  };
+  return {
+    begin() {
+      startedAt ??= now();
+    },
+    async run(name, operation) {
+      stage = name;
+      stageStartedAt = now();
+      try {
+        await operation();
+      } finally {
+        completed.push({ stage: name, ms: Math.round(now() - stageStartedAt) });
+        stage = null;
+      }
+    },
+    async track(step, work) {
+      const key2 = Symbol(step);
+      open5.set(key2, { step, startedAt: now() });
+      try {
+        return await work();
+      } finally {
+        open5.delete(key2);
+        stepsSettled += 1;
+      }
+    },
+    finish() {
+      finishedAt ??= now();
+      return snapshot3();
+    },
+    snapshot: snapshot3
+  };
+}
+var init_daemon_stop_progress = __esm({
+  "packages/daemon/src/lib/daemon-stop-progress.ts"() {
+    "use strict";
+  }
+});
+
 // packages/daemon/src/plugins/plugin-log.ts
 import { appendFileSync as appendFileSync2, existsSync as existsSync28, mkdirSync as mkdirSync26, readFileSync as readFileSync30, renameSync as renameSync16, statSync as statSync22 } from "node:fs";
 import { dirname as dirname36, join as join44 } from "node:path";
@@ -94823,7 +95348,7 @@ function mountAutomationRoutes(app, options) {
       const panes = [];
       const credential = c.req.header(PANE_SOURCE_CREDENTIAL_HEADER);
       let source = null;
-      for (const scope2 of await options.owners.refresh()) {
+      for (const scope2 of await options.owners.observe()) {
         if (!scope2.generation) continue;
         await options.owners.withOwner(
           { serverId: scope2.serverId, generation: scope2.generation },
@@ -95748,7 +96273,7 @@ function mountTmuxServerRoutes(app, options) {
     base2,
     route(
       async (c) => c.json(
-        TmuxServersResourceSchemaZ.parse({ version: 1, servers: await options.owners.refresh() })
+        TmuxServersResourceSchemaZ.parse({ version: 1, servers: await options.owners.observe() })
       )
     )
   );
@@ -106272,6 +106797,7 @@ async function startEmbeddedDaemonGeneration(opts) {
     };
     let terminalAttachmentRuntime = null;
     let paneStreamRuntime = null;
+    const stopProgress = createStopProgress();
     let localImages;
     let serverOwners = null;
     let defaultEditorContextRetired = false;
@@ -106367,6 +106893,7 @@ async function startEmbeddedDaemonGeneration(opts) {
         createWriteStream(runtimeTracePath, { flags: "a", highWaterMark: 64 * 1024 }),
         { processId: `daemon:${process.pid}`, daemonInstanceId: instanceId }
       ) : null;
+      let windowOwnershipDiagnostic;
       const runtimeObservability = runtimeTracePath ? createSessionRuntimeObservability({
         // The JSONL stream is the qualifying record. Keep only a small
         // in-memory diagnostic tail so a sustained terminal flood cannot
@@ -106397,10 +106924,18 @@ async function startEmbeddedDaemonGeneration(opts) {
         };
         externalInteractionObserver.setDiagnostics(diagnostics);
         setFleetFactsObserverDiagnostics(diagnostics);
+        windowOwnershipDiagnostic = (phase, details = {}) => publishObserverDiagnostic({
+          operation: "window-ownership",
+          phase,
+          atMicros: Math.floor(performance3.now() * 1e3),
+          ...details
+        });
       }
       const nativeSurfaces = process.platform === "darwin" ? new NativeSurfaceProviderRegistry(instanceId) : void 0;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
+        // An idle client that met the 503 re-reads when the inventory is trusted again.
+        onInventoryRecovered: (session) => broadcastTerminalsChanged(session),
         ...runtimeObservability ? { observability: runtimeObservability } : {},
         semanticMutations: {
           captureInteractionContext: (intent) => {
@@ -106428,6 +106963,8 @@ async function startEmbeddedDaemonGeneration(opts) {
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId)
         },
         mirror: {
+          // #764 diagnostics (draft only): the window-ownership guard.
+          ...windowOwnershipDiagnostic ? { onWindowOwnershipDiagnostic: windowOwnershipDiagnostic } : {},
           onNativeClientPresence: (session, present) => nativeSurfaces?.demand.presence(session, present),
           splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
           splitLayoutPrepare: createNativeSplitReadiness({
@@ -106628,6 +107165,7 @@ async function startEmbeddedDaemonGeneration(opts) {
       });
       await externalInteractionObserver.start();
       serverOwners = await createEmbeddedTmuxServerOwners({
+        trackTeardown: stopProgress.track,
         localImages,
         environmentId,
         onDefaultScope: async (scope2) => {
@@ -106825,21 +107363,26 @@ async function startEmbeddedDaemonGeneration(opts) {
           sessionRuntimeRegistry,
           terminalInventoryRuntime,
           paneStreamRuntime,
-          dispose: async () => {
+          dispose: async (retirement) => {
             defaultEditorContextRetired = true;
             defaultDiagnosticsLifetime.abort();
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
+            const step = (name, work) => stopProgress.track(`default-owner:${name}`, work);
             const transportResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
-              Promise.resolve().then(() => paneStreamRuntime.dispose())
+              step("terminal-attachments", () => terminalAttachmentRuntime?.dispose()),
+              step(
+                "pane-streams",
+                () => paneStreamRuntime.dispose(paneStreamCloseForRetirement(retirement))
+              )
             ]);
             const authorityResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalInventoryRuntime.dispose()),
-              Promise.resolve().then(() => workspacePaneCreation.dispose()),
-              Promise.resolve().then(() => workspaceOpen.dispose()),
-              Promise.resolve().then(() => workspaceOpenHandoff?.dispose()),
-              Promise.resolve().then(
+              step("terminal-inventory", () => terminalInventoryRuntime.dispose()),
+              step("pane-creation", () => workspacePaneCreation.dispose()),
+              step("workspace-open", () => workspaceOpen.dispose()),
+              step("workspace-open-handoff", () => workspaceOpenHandoff?.dispose()),
+              step(
+                "session-backends",
                 () => Promise.all([
                   workspacePromotion.dispose(),
                   defaultSessionOpener.dispose(),
@@ -106847,12 +107390,12 @@ async function startEmbeddedDaemonGeneration(opts) {
                 ]).then(() => {
                 })
               ),
-              Promise.resolve().then(() => appWindowMutation.dispose()),
-              Promise.resolve().then(() => workspaceMultiplexer.dispose()),
-              Promise.resolve().then(() => disposeInteractionObservation())
+              step("app-window-mutation", () => appWindowMutation.dispose()),
+              step("multiplexer", () => workspaceMultiplexer.dispose()),
+              step("interaction-observation", () => disposeInteractionObservation())
             ]);
             try {
-              await sessionRuntimeRegistry.dispose();
+              await step("session-runtimes", () => sessionRuntimeRegistry.dispose());
             } finally {
               interactionReceipts.dispose();
               interactionEvidence?.dispose();
@@ -106973,9 +107516,9 @@ async function startEmbeddedDaemonGeneration(opts) {
       terminalAttachmentBoundary,
       paneStreamBoundary
     } = startedServer;
-    const retirePaneStreamTransport = async () => {
+    const retirePaneStreamTransport = async (close2) => {
       const transportResults = await Promise.allSettled([
-        Promise.resolve().then(() => paneStreamRuntime.dispose()),
+        Promise.resolve().then(() => paneStreamRuntime.dispose(close2)),
         Promise.resolve().then(() => paneStreamBoundary.close())
       ]);
       const runtimeResults = await Promise.allSettled([
@@ -107084,6 +107627,13 @@ async function startEmbeddedDaemonGeneration(opts) {
     });
     let stopped = false;
     let stopping = null;
+    const releaseCanonicalPublication = () => {
+      try {
+        clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+      } finally {
+        releaseCanonicalDaemonClaim(claim);
+      }
+    };
     let stopSelf = null;
     const activeProjectStops = /* @__PURE__ */ new Map();
     const activateProjectOnDaemon = async (projectName, _options = {}) => {
@@ -107205,38 +107755,53 @@ async function startEmbeddedDaemonGeneration(opts) {
       wsUrl,
       localBypassToken,
       compatibilityTerminalAttachmentRuntimeConstructed: () => terminalAttachmentRuntime !== null,
-      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+      stopDiagnostics: () => stopProgress.snapshot(),
+      abandon: () => releaseCanonicalPublication(),
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS, restarting = false } = {}) => {
         if (stopping) return stopping;
         if (stopped) return;
         stopping = (async () => {
           const failures = [];
-          const capture = async (operation) => {
+          const capture = async (stage, operation) => {
             try {
-              await operation();
+              await stopProgress.run(stage, operation);
             } catch (error) {
               failures.push(error);
             }
           };
           try {
             stopped = true;
-            await capture(() => pluginSupervisor?.stop());
-            await capture(() => setActivationBackend(null));
-            await capture(() => sessionMonitor?.stop());
+            stopProgress.begin();
+            await capture("plugins", () => pluginSupervisor?.stop());
+            await capture("activation-backend", () => setActivationBackend(null));
+            await capture("session-monitor", () => sessionMonitor?.stop());
             paneSourceCredentials.dispose();
-            await capture(() => serverOwners?.dispose());
-            failures.push(
-              ...await retireTerminalAttachmentTransport(
-                terminalAttachmentRuntime,
-                terminalAttachmentBoundary
-              )
-            );
-            failures.push(...await retirePaneStreamTransport());
-            await capture(() => localImages?.dispose());
-            await capture(() => terminalInventoryRuntime.dispose());
-            await capture(() => workspacePaneCreation.dispose());
-            await capture(() => workspaceOpen.dispose());
-            await capture(() => workspaceOpenHandoff?.dispose());
             await capture(
+              "tmux-server-owners",
+              () => serverOwners?.dispose(restarting ? "generation-restart" : "shutdown")
+            );
+            await capture("terminal-attachments", async () => {
+              failures.push(
+                ...await retireTerminalAttachmentTransport(
+                  terminalAttachmentRuntime,
+                  terminalAttachmentBoundary
+                )
+              );
+            });
+            await capture("pane-streams", async () => {
+              failures.push(
+                ...await retirePaneStreamTransport(
+                  restarting ? PANE_STREAM_DAEMON_RESTARTING_CLOSE : void 0
+                )
+              );
+            });
+            await capture("local-images", () => localImages?.dispose());
+            await capture("terminal-inventory", () => terminalInventoryRuntime.dispose());
+            await capture("pane-creation", () => workspacePaneCreation.dispose());
+            await capture("workspace-open", () => workspaceOpen.dispose());
+            await capture("workspace-open-handoff", () => workspaceOpenHandoff?.dispose());
+            await capture(
+              "session-backends",
               () => Promise.all([
                 workspacePromotion.dispose(),
                 defaultSessionOpener.dispose(),
@@ -107244,9 +107809,9 @@ async function startEmbeddedDaemonGeneration(opts) {
               ]).then(() => {
               })
             );
-            await capture(() => appWindowMutation.dispose());
-            await capture(() => workspaceMultiplexer.dispose());
-            await capture(() => disposeInteractionObservation());
+            await capture("app-window-mutation", () => appWindowMutation.dispose());
+            await capture("workspace-multiplexer", () => workspaceMultiplexer.dispose());
+            await capture("interaction-observation", () => disposeInteractionObservation());
             let closePromise;
             try {
               closePromise = waitForServerClose(server);
@@ -107254,36 +107819,44 @@ async function startEmbeddedDaemonGeneration(opts) {
               failures.push(error);
               closePromise = Promise.resolve();
             }
-            await capture(() => closeClients());
+            await capture("http-clients", () => closeClients());
             for (const stop3 of activeProjectStops.values()) {
-              await capture(() => stop3.stop());
+              await capture("active-projects", () => stop3.stop());
             }
             activeProjectStops.clear();
-            await capture(() => shutdownPtyBridges());
-            await capture(() => Promise.race([closePromise, delay2(gracefulMs)]));
+            await capture("pty-bridges", () => shutdownPtyBridges());
+            await capture(
+              "http-close-grace",
+              () => Promise.race([closePromise, delay2(gracefulMs)])
+            );
             for (const socket of sockets) {
-              await capture(() => {
+              await capture("http-sockets", () => {
                 socket.destroy();
               });
             }
-            await capture(() => Promise.race([closePromise, delay2(100)]));
-            await capture(() => closeWsServers());
-            await capture(() => shutdownWsEventObservation());
-            await capture(() => setFleetFactsTmuxRunner(null));
-            await capture(() => closeRuntimeTraceStream());
-            await capture(() => setRemoteAccessRestartBackend(null));
-            await capture(() => setDaemonShutdownBackend(null));
-            await capture(() => setDaemonRestartBackend(null));
+            await capture("http-close-final", () => Promise.race([closePromise, delay2(100)]));
+            await capture("ws-servers", () => closeWsServers());
+            await capture("ws-event-observation", () => shutdownWsEventObservation());
+            await capture("fleet-facts-runner", () => setFleetFactsTmuxRunner(null));
+            await capture("runtime-trace", () => closeRuntimeTraceStream());
+            await capture("remote-access-backend", () => setRemoteAccessRestartBackend(null));
+            await capture("shutdown-backend", () => setDaemonShutdownBackend(null));
+            await capture("restart-backend", () => setDaemonRestartBackend(null));
             if (failures.length > 0) {
               const cause = failures.length === 1 ? failures[0] : new AggregateError(failures, "Daemon resources reported shutdown failures");
               throw new DaemonShutdownError("Daemon shutdown failed", { cause });
             }
           } finally {
-            try {
-              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
-            } finally {
-              releaseCanonicalDaemonClaim(claim);
-            }
+            const progress = stopProgress.finish();
+            const notable = restarting || failures.length > 0 || progress.elapsedMs >= 1e3;
+            logger[notable ? "info" : "debug"]("daemon-lifecycle", "generation stopped", {
+              generationInstanceId: instanceId,
+              port,
+              stopMs: progress.elapsedMs,
+              failures: failures.length,
+              slowestStages: [...progress.completed].sort((left, right) => right.ms - left.ms).slice(0, 5)
+            });
+            releaseCanonicalPublication();
           }
         })();
         return stopping;
@@ -107350,6 +107923,7 @@ var init_daemon_embed = __esm({
     init_tmux_server_generation_runner();
     init_tmux_server_owner();
     init_embedded_tmux_server_owners();
+    init_pane_stream_websocket();
     init_tmux_server_proof();
     init_canonical_daemon_bootstrap();
     init_runtime_namespace();
@@ -107398,6 +107972,7 @@ var init_daemon_embed = __esm({
     init_environment_identity();
     init_daemon_provenance();
     init_log();
+    init_daemon_stop_progress();
     init_daemon_plugins();
     init_canonical_daemon();
     requireFromHere2 = createRequire3(import.meta.url);
@@ -107415,8 +107990,19 @@ var init_daemon_embed = __esm({
 // packages/daemon/src/lib/headless-daemon.ts
 var headless_daemon_exports = {};
 __export(headless_daemon_exports, {
+  SIGNAL_STOP_DEADLINE_MS: () => SIGNAL_STOP_DEADLINE_MS,
+  SIGNAL_STOP_MAX_MS: () => SIGNAL_STOP_MAX_MS,
+  SIGNAL_STOP_TIMEOUT_EXIT_CODE: () => SIGNAL_STOP_TIMEOUT_EXIT_CODE,
   runHeadlessDaemon: () => runHeadlessDaemon
 });
+function activeResourceCounts() {
+  const counts = {};
+  try {
+    for (const name of process.getActiveResourcesInfo()) counts[name] = (counts[name] ?? 0) + 1;
+  } catch {
+  }
+  return counts;
+}
 function parsePort(value) {
   if (value == null) return void 0;
   const port = typeof value === "number" ? value : Number(value);
@@ -107570,7 +108156,7 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
     tmuxServerIntent: options.tmuxServerIntent === void 0 ? resolveTmuxServerIntent() : options.tmuxServerIntent
   };
   let restoreTmuxWorkspaces = false;
-  const lifecycle = {};
+  const lifecycle = { generations: 0, startReason: "initial" };
   while (true) {
     const result2 = await runHeadlessDaemonGeneration(
       options,
@@ -107584,17 +108170,84 @@ async function runHeadlessDaemon(options = {}, deps2 = defaultDependencies2) {
 }
 async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces, lifecycle) {
   const port = parsePort(lifecycle.restart?.port ?? options.port);
+  const generation = lifecycle.generations += 1;
+  const startReason = lifecycle.startReason;
+  const generationStartedAt = performance.now();
   let restartRequested = false;
   let stopStarted = false;
   let handle = null;
   let signalRequested = false;
-  const requestStop = () => {
+  let retireTrigger = null;
+  const deadlineMs = deps2.signalStopDeadlineMs ?? SIGNAL_STOP_DEADLINE_MS;
+  let deadlineTimer = null;
+  let rejectDeadline;
+  const deadlineExceeded = new Promise((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  deadlineExceeded.catch(() => void 0);
+  const maxMs = Math.max(deadlineMs, deps2.signalStopMaxMs ?? SIGNAL_STOP_MAX_MS);
+  let signalledAt = 0;
+  let lastProgress = "";
+  const readStop = () => {
+    try {
+      return handle?.stopDiagnostics?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const progressOf = (stop3) => stop3 ? `${stop3.completed.length}:${stop3.stepsSettled}` : "";
+  const stopDeadlineExceeded = (signal) => {
+    const stop3 = readStop();
+    const waitedMs = Math.round(performance.now() - signalledAt);
+    const progress = progressOf(stop3);
+    if (progress !== lastProgress && waitedMs + deadlineMs <= maxMs) {
+      lastProgress = progress;
+      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+      return;
+    }
+    logger.error("daemon-lifecycle", "stop missed the signal deadline; exiting anyway", {
+      signal,
+      deadlineMs,
+      maxMs,
+      waitedMs,
+      generation,
+      startReason,
+      generationInstanceId: handle?.instanceId ?? null,
+      phase: !handle ? "starting" : stopStarted ? "stopping" : "running",
+      stuckStage: stop3?.stage ?? null,
+      stuckStageMs: stop3?.stageMs ?? null,
+      openSteps: stop3?.openSteps ?? [],
+      stepsSettled: stop3?.stepsSettled ?? 0,
+      completedStages: stop3?.completed ?? [],
+      activeResources: activeResourceCounts()
+    });
+    try {
+      handle?.abandon?.();
+    } catch {
+    }
+    (deps2.exit ?? ((code2) => process.exit(code2)))(SIGNAL_STOP_TIMEOUT_EXIT_CODE);
+    rejectDeadline(
+      new IdeError(`Daemon stop did not finish within ${deadlineMs}ms of ${signal}`, {
+        code: "DAEMON_STOP_TIMEOUT",
+        exitCode: SIGNAL_STOP_TIMEOUT_EXIT_CODE
+      })
+    );
+  };
+  const requestStop = (signal) => {
     signalRequested = true;
+    retireTrigger ??= `signal:${signal}`;
+    if (!deadlineTimer) {
+      signalledAt = performance.now();
+      lastProgress = progressOf(readStop());
+      deadlineTimer = setTimeout(() => stopDeadlineExceeded(signal), deadlineMs);
+    }
     if (handle) void handle.stop().catch(() => void 0);
   };
-  deps2.onSignal("SIGINT", requestStop);
-  deps2.onSignal("SIGTERM", requestStop);
-  try {
+  const onSigint = () => requestStop("SIGINT");
+  const onSigterm = () => requestStop("SIGTERM");
+  deps2.onSignal("SIGINT", onSigint);
+  deps2.onSignal("SIGTERM", onSigterm);
+  const runGeneration = async () => {
     let existing;
     try {
       existing = await findLiveCanonicalDaemon(deps2, options, lifecycle.predecessor);
@@ -107627,6 +108280,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
             if (!handle || stopStarted || signalRequested) return;
             lifecycle.restart = request3;
             restartRequested = true;
+            retireTrigger ??= `restart-request:${"kind" in request3 ? request3.kind : "settings"}`;
             await handle.stop();
           },
           localBypassToken: generateAuthToken(),
@@ -107661,9 +108315,24 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
     const originalStop = handle.stop.bind(handle);
     const mutableHandle = handle;
     mutableHandle.stop = async (stopOptions) => {
+      if (!stopStarted) {
+        retireTrigger ??= "stop-requested";
+        logger[restartRequested && !signalRequested ? "info" : "debug"](
+          "daemon-lifecycle",
+          "generation retiring",
+          {
+            generation,
+            generationInstanceId: handle?.instanceId ?? null,
+            trigger: retireTrigger,
+            uptimeMs: Math.round(performance.now() - generationStartedAt)
+          }
+        );
+      }
       stopStarted = true;
       try {
-        await originalStop(stopOptions);
+        await originalStop(
+          restartRequested && !signalRequested ? { ...stopOptions, restarting: true } : stopOptions
+        );
         if (restartRequested && !signalRequested && options.supervisionId && ownedPublication)
           lifecycle.predecessor = ownedPublication;
       } catch (error) {
@@ -107721,6 +108390,13 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       throw error;
     }
     emitStatus(deps2, options.json === true, "ready", info);
+    logger[generation > 1 ? "info" : "debug"]("daemon-lifecycle", "generation ready", {
+      generation,
+      startReason,
+      generationInstanceId: info.instanceId,
+      port: info.port,
+      startMs: Math.round(performance.now() - generationStartedAt)
+    });
     let probing = false;
     const timer = handle.tmuxAuthorityReplaced ? setInterval(() => {
       if (probing || stopStarted) return;
@@ -107728,6 +108404,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       void handle.tmuxAuthorityReplaced().then((replaced) => {
         if (!replaced || stopStarted || signalRequested) return;
         restartRequested = true;
+        retireTrigger ??= "tmux-authority-replaced";
         return handle.stop();
       }).catch(() => void 0).finally(() => {
         probing = false;
@@ -107740,13 +108417,19 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
       if (timer) clearInterval(timer);
     }
     if (stopFailure) throw stopFailure;
-    return restartRequested && !signalRequested ? "restart" : "stopped";
+    const outcome = restartRequested && !signalRequested ? "restart" : "stopped";
+    if (outcome === "restart") lifecycle.startReason = retireTrigger ?? "restart";
+    return outcome;
+  };
+  try {
+    return await Promise.race([runGeneration(), deadlineExceeded]);
   } finally {
-    deps2.offSignal("SIGINT", requestStop);
-    deps2.offSignal("SIGTERM", requestStop);
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+    deps2.offSignal("SIGINT", onSigint);
+    deps2.offSignal("SIGTERM", onSigterm);
   }
 }
-var defaultDependencies2, DAEMON_ATTACHABILITY_TIMEOUT_MS, DAEMON_ATTACHABILITY_POLL_MS;
+var SIGNAL_STOP_DEADLINE_MS, SIGNAL_STOP_MAX_MS, SIGNAL_STOP_TIMEOUT_EXIT_CODE, defaultDependencies2, DAEMON_ATTACHABILITY_TIMEOUT_MS, DAEMON_ATTACHABILITY_POLL_MS;
 var init_headless_daemon = __esm({
   "packages/daemon/src/lib/headless-daemon.ts"() {
     "use strict";
@@ -107756,7 +108439,11 @@ var init_headless_daemon = __esm({
     init_src2();
     init_daemon_embed();
     init_errors2();
+    init_log();
     init_auth_token();
+    SIGNAL_STOP_DEADLINE_MS = 1e4;
+    SIGNAL_STOP_MAX_MS = 25e3;
+    SIGNAL_STOP_TIMEOUT_EXIT_CODE = 1;
     defaultDependencies2 = {
       inspectCanonicalDaemonInfo: prepareCanonicalDaemonInfoForBootstrap,
       isCanonicalDaemonAlive,
@@ -111237,7 +111924,7 @@ function writeWorkerResult(path2, result2) {
   });
   renameSync23(temporary, path2);
 }
-function processAlive3(pid) {
+function processAlive4(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -111430,7 +112117,7 @@ The restart continues in the background. Log: ${handle.log}`);
         for (; ; ) {
           const result2 = readWorkerResult(handle.resultPath);
           if (result2) return result2;
-          if (!processAlive3(handle.pid) || Date.now() > deadline) {
+          if (!processAlive4(handle.pid) || Date.now() > deadline) {
             return readWorkerResult(handle.resultPath);
           }
           await new Promise((resolve47) => setTimeout(resolve47, 200));
