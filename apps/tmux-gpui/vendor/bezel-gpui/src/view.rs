@@ -53,6 +53,10 @@ impl AnyView {
     /// renders it again. A plain cached view re-renders whenever any cached
     /// ancestor does.
     ///
+    /// While an assistive client is connected ([Window::is_a11y_active]) it
+    /// renders on every frame it is prepainted in: the accessibility tree is
+    /// built from prepainted elements, and a replayed view has none.
+    ///
     /// Use it only for a view that renders from state its owner keeps in step
     /// with it: the owner must notify this entity (or draw it uncached) on any
     /// frame whose change it shows, since a re-rendering ancestor no longer
@@ -566,7 +570,12 @@ fn prepaint_view(
                     && element_state.cache_key.text_style == text_style
                     && !window.dirty_views.contains(&entity_id)
                     && !if isolated {
-                        window.refresh_forced
+                        // A replayed view prepaints no element, so it adds
+                        // no node to the accessibility tree this frame is
+                        // building. Its parent is rendering and will send
+                        // that tree, so the view renders too while an
+                        // assistive client is connected.
+                        window.refresh_forced || window.a11y.is_active()
                     } else {
                         window.refreshing
                     }
