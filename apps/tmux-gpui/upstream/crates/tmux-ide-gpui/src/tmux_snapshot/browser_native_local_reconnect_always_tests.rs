@@ -544,7 +544,8 @@ fn a_refresh_in_an_inactive_window_reads_the_panes_again_within_the_recovery() {
     local.command(refresh("rebound", 6)).unwrap();
     assert!(local.active.is_some());
     local.command(refresh("rebound", 7)).unwrap();
-    let recovery = local.recovery.as_ref().expect("the refresh was dropped");
+    assert!(local.recovery.is_some(), "the refresh was dropped");
+    let recovery = local.recovery.as_ref().unwrap();
     assert!(
         recovery.rebind.is_none(),
         "the old pane list would be leased again"
