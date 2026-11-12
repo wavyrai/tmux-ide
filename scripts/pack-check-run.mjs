@@ -18,6 +18,10 @@ import { runPackedAutomationJourney } from "./lib/packed-automation-journey.mjs"
 import { assertNoPackagedContributorTests } from "./lib/packaged-runtime-files.mjs";
 import { createPackedCancellation } from "./lib/packed-cancellation.mjs";
 import {
+  collectDaemonStopDiagnostics,
+  daemonReportNodeOptions,
+} from "./lib/daemon-stop-diagnostics.mjs";
+import {
   captureGeneratedCliSource,
   restoreGeneratedCliSource,
 } from "./lib/generated-cli-source.mjs";
@@ -127,6 +131,7 @@ const privateEnvironment = privatePackedInstallEnvironment(capturedEnvironment, 
   cache: join(tmpRoot, "npm-cache"),
 });
 const mockReleaseDir = join(tmpRoot, "mock-release");
+const daemonReportDir = /\s/u.test(tmpRoot) ? null : join(tmpRoot, "daemon-reports");
 const runtimeName = `tmux-ide-tui-${platformTag}`;
 const mockReleaseBinaryPath = join(mockReleaseDir, runtimeName);
 const mockReleaseAssetPath = join(mockReleaseDir, `${runtimeName}.gz`);
@@ -143,6 +148,7 @@ mkdirSync(projectDir, { recursive: true });
 mkdirSync(homeDir, { recursive: true });
 mkdirSync(launchDir, { recursive: true });
 mkdirSync(mockReleaseDir, { recursive: true });
+if (daemonReportDir) mkdirSync(daemonReportDir, { recursive: true });
 chmodSync(tmuxTmpDir, 0o700);
 writeFileSync(
   mockFetchPreloadPath,
@@ -347,6 +353,7 @@ function sha256File(path) {
 
 function spawnInstalledCli(installedCli) {
   cancellation.check();
+  const daemonEnvironment = tmuxEnv(dirname(installedCli));
   const child = spawn(installedCli, ["--headless", "--json"], {
     cwd: projectDir,
     // The elected daemon and the later installed TUI must observe the same
@@ -354,8 +361,19 @@ function spawnInstalledCli(installedCli) {
     // workspace catalog is reading the developer's default tmux socket.
     env: {
       ...privateEnvironment,
-      ...tmuxEnv(dirname(installedCli)),
+      ...daemonEnvironment,
       npm_config_cache: join(tmpRoot, "npm-cache"),
+      // Costs nothing until a daemon ignores SIGTERM; then waitForChild asks
+      // it for a diagnostic report instead of failing with no evidence (#839).
+      // Appended, so the mock-release preload in NODE_OPTIONS stays in force.
+      ...(daemonReportDir
+        ? {
+            NODE_OPTIONS: daemonReportNodeOptions(
+              daemonReportDir,
+              daemonEnvironment.NODE_OPTIONS ?? "",
+            ),
+          }
+        : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -386,19 +404,38 @@ async function waitForChild(child, phase, timeoutMs = 20_000) {
     return { ...exit, ...childOutput.get(child) };
   } catch (cause) {
     const output = childOutput.get(child);
-    throw new Error(
-      `Installed daemon did not close during ${phase}: ${JSON.stringify({
-        pid: child.pid,
-        exitCode: child.exitCode,
-        signalCode: child.signalCode,
-        signalSent: child.killed,
-        stdoutClosed: child.stdout?.closed,
-        stderrClosed: child.stderr?.closed,
-        stdout: output?.stdout.slice(-4096),
-        stderr: output?.stderr.slice(-4096),
-      })}`,
-      { cause },
-    );
+    // The process is still there: record what it is doing before the gate's
+    // cleanup kills it. Process tree, thread states and a Node report tell a
+    // hung teardown from a blocked event loop.
+    const diagnostics =
+      child.pid !== undefined && child.exitCode === null && child.signalCode === null
+        ? await collectDaemonStopDiagnostics({ pid: child.pid, reportDirectory: daemonReportDir })
+        : null;
+    const failure = {
+      pid: child.pid,
+      exitCode: child.exitCode,
+      signalCode: child.signalCode,
+      signalSent: child.killed,
+      stdoutClosed: child.stdout?.closed,
+      stderrClosed: child.stderr?.closed,
+      stdout: output?.stdout.slice(-4096),
+      stderr: output?.stderr.slice(-4096),
+      diagnostics,
+    };
+    if (evidenceDir) {
+      try {
+        mkdirSync(evidenceDir, { recursive: true });
+        writeFileSync(
+          join(evidenceDir, `daemon-stop-timeout-${String(child.pid)}.json`),
+          `${JSON.stringify({ phase, ...failure, stdout: output?.stdout, stderr: output?.stderr }, null, 2)}\n`,
+        );
+      } catch {
+        // The error below still carries the bounded copy.
+      }
+    }
+    throw new Error(`Installed daemon did not close during ${phase}: ${JSON.stringify(failure)}`, {
+      cause,
+    });
   }
 }
 
