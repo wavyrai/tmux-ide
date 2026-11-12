@@ -368,6 +368,15 @@ export function createDirectLoopbackDaemonTransport(
   };
   let terminalReconnectTimer: unknown | null = null;
   let terminalReconnectController: AbortController | null = null;
+  // Failed terminal reconnects back off as the catalog-only one does (#764):
+  // a daemon that keeps refusing the inventory is asked at 1, 2, 4 … 30 s,
+  // never at a fixed 1 Hz forever. A committed reconnect resets it.
+  let terminalReconnectAttempt = 0;
+  const terminalReconnectDelay = (): number => {
+    const delayMs = Math.min(1_000 * 2 ** terminalReconnectAttempt, 30_000);
+    terminalReconnectAttempt += 1;
+    return delayMs;
+  };
   let catalogReconnectTimer: unknown | null = null;
   let catalogReconnectAttempt = 0;
   let scheduleCatalogOnlyReconnect = (): void => undefined;
@@ -544,7 +553,7 @@ export function createDirectLoopbackDaemonTransport(
                   terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
                     terminalReconnectTimer = null;
                     reconnect();
-                  }, 1_000);
+                  }, terminalReconnectDelay());
               };
               const commitReplacement = (): void => {
                 if (
@@ -563,6 +572,7 @@ export function createDirectLoopbackDaemonTransport(
                   retryReplacement();
                   return;
                 }
+                terminalReconnectAttempt = 0;
                 sink(resource);
                 if (retainedWorkspaceCatalogReady?.subscriber === catalogSubscriber)
                   retainedWorkspaceCatalogReady.resolve();
@@ -589,14 +599,14 @@ export function createDirectLoopbackDaemonTransport(
               terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
                 terminalReconnectTimer = null;
                 reconnect();
-              }, 1_000);
+              }, terminalReconnectDelay());
             });
         };
         if (retiredDuringReconnect) {
           terminalReconnectTimer = terminalReconnectClock.setTimeout(() => {
             terminalReconnectTimer = null;
             reconnect();
-          }, 1_000);
+          }, terminalReconnectDelay());
         } else {
           queueMicrotask(reconnect);
         }

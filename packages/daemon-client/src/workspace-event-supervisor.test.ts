@@ -98,6 +98,8 @@ async function adopted(
   timer: ReturnType<typeof fakeRefreshClock>,
   read: (attempt: number) => Promise<ReturnType<typeof resource>>,
   extra: Partial<Parameters<typeof createWorkspaceEventSupervisor>[0]> = {},
+  onPublish: (supervisor: ReturnType<typeof createWorkspaceEventSupervisor>) => void = () =>
+    undefined,
 ) {
   const socket = new FakeSocket();
   let reads = 0;
@@ -129,9 +131,10 @@ async function adopted(
   });
   const prepared = await preparing;
   const published: number[] = [];
-  supervisor.adoptTerminalRuntimeInventory(prepared, (next) =>
-    published.push(next.resourceRevision),
-  );
+  supervisor.adoptTerminalRuntimeInventory(prepared, (next) => {
+    published.push(next.resourceRevision);
+    onPublish(supervisor);
+  });
   return { socket, supervisor, published, diagnostics, reads: () => reads - 1 };
 }
 
@@ -233,6 +236,157 @@ describe("WorkspaceEventSupervisor terminal refresh after a burst of failed read
     timer.runNext();
     await tick();
     expect(timer.delays.at(-1)).toBe(250);
+    supervisor.dispose();
+  });
+
+  it("doesn't extend the budget for consumer requests", async () => {
+    const timer = fakeRefreshClock();
+    const retired = vi.fn();
+    const { supervisor } = await adopted(
+      timer,
+      async () => {
+        throw new Error("503");
+      },
+      { onRetired: retired },
+    );
+    const spent = () =>
+      timer.delays.filter((delay) => delay > 25).reduce((sum, delay) => sum + delay, 0);
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    // A consumer request at every step (one follows each scoped mutation):
+    // each reads at once, but the supervisor still retires on schedule.
+    for (let guard = 0; guard < 200 && !retired.mock.calls.length; guard += 1) {
+      if (!timer.runNext()) break;
+      await tick();
+      if (!retired.mock.calls.length) {
+        supervisor.refreshTerminalRuntimeInventory();
+        await tick();
+      }
+    }
+    expect(retired).toHaveBeenCalledTimes(1);
+    expect(spent()).toBeGreaterThanOrEqual(15_000);
+    expect(spent()).toBeLessThan(16_000);
+    supervisor.dispose();
+  });
+
+  it("restores the full budget on a daemon event", async () => {
+    const timer = fakeRefreshClock();
+    const retired = vi.fn();
+    const { socket, supervisor } = await adopted(
+      timer,
+      async () => {
+        throw new Error("503");
+      },
+      { onRetired: retired },
+    );
+    const backoff = () => timer.delays.filter((delay) => delay > 25);
+    const spent = () => backoff().reduce((sum, delay) => sum + delay, 0);
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    while (spent() < 12_000) {
+      expect(timer.runNext()).toBe(true);
+      await tick();
+    }
+    expect(retired).not.toHaveBeenCalled();
+    const before = backoff().length;
+    socket.frame({
+      type: "resource.changed",
+      sequence: 1,
+      workspaceName: "alpha",
+      resource: "terminal-runtime-inventory",
+      revision: 1,
+      causeOperationId: null,
+    });
+    await tick();
+    for (let guard = 0; guard < 80 && timer.runNext(); guard += 1) await tick();
+    const after = backoff().slice(before);
+    expect(after.slice(0, 3)).toEqual([250, 500, 1_000]);
+    const afterTotal = after.reduce((sum, delay) => sum + delay, 0);
+    expect(afterTotal).toBeGreaterThanOrEqual(15_000);
+    expect(afterTotal).toBeLessThan(16_000);
+    expect(retired).toHaveBeenCalledTimes(1);
+    supervisor.dispose();
+  });
+
+  it("never retires or re-reads after a detach or dispose, in flight or backing off", async () => {
+    for (const end of ["detach-in-flight", "detach-backing-off", "dispose-backing-off"] as const) {
+      const timer = fakeRefreshClock();
+      const retired = vi.fn();
+      const inFlight = deferred<ReturnType<typeof resource>>();
+      void inFlight.promise.catch(() => undefined);
+      let hold = false;
+      const { socket, supervisor, reads } = await adopted(
+        timer,
+        async () => {
+          if (hold) return inFlight.promise;
+          throw new Error("503");
+        },
+        { onRetired: retired },
+      );
+      const catalog = supervisor.connectWorkspaceCatalog(vi.fn());
+      await tick();
+      socket.frame({
+        type: "resource.interests-ack",
+        interestRevision: 2,
+        sequence: 0,
+        unavailableInterests: [],
+      });
+      await catalog.ready;
+      supervisor.refreshTerminalRuntimeInventory();
+      await tick();
+      timer.runNext();
+      await tick();
+      if (end === "detach-in-flight") hold = true;
+      timer.runNext();
+      await tick();
+      if (end === "dispose-backing-off") supervisor.dispose();
+      else {
+        void supervisor.selectWorkspaceCatalogOnly().catch(() => undefined);
+        await tick();
+      }
+      // A pending backoff is cancelled outright, not left to find no sink.
+      if (end !== "detach-in-flight") expect(timer.pending, end).toBe(0);
+      inFlight.reject(new Error("503"));
+      await tick();
+      const settled = reads();
+      for (let guard = 0; guard < 40 && timer.runNext(); guard += 1) await tick();
+      expect(reads(), end).toBe(settled);
+      expect(retired, end).not.toHaveBeenCalled();
+      supervisor.dispose();
+    }
+  });
+
+  it("returns to the 25 ms step after a backoff ends in a success", async () => {
+    const timer = fakeRefreshClock();
+    let fail = true;
+    let requeued = false;
+    const { supervisor, published } = await adopted(
+      timer,
+      async () => {
+        if (fail) throw new Error("503");
+        return resource(1);
+      },
+      {},
+      (owner) => {
+        // The sink asks again once while adopting, as a sink may.
+        if (!requeued) {
+          requeued = true;
+          owner.refreshTerminalRuntimeInventory();
+        }
+      },
+    );
+    supervisor.refreshTerminalRuntimeInventory();
+    await tick();
+    timer.runNext();
+    await tick();
+    timer.runNext();
+    await tick();
+    expect(timer.delays.at(-1)).toBe(250);
+    fail = false;
+    timer.runNext();
+    await tick();
+    expect(published).toEqual([1]);
+    expect(timer.delays.at(-1)).toBe(25);
     supervisor.dispose();
   });
 
@@ -597,7 +751,9 @@ describe("WorkspaceEventSupervisor", () => {
     const timer = fakeRefreshClock();
     let initial = true;
     const diagnostics: Readonly<Record<string, unknown>>[] = [];
+    const retired = vi.fn();
     const supervisor = createWorkspaceEventSupervisor({
+      onRetired: retired,
       socket,
       daemon,
       workspaceName: "alpha",
@@ -647,6 +803,8 @@ describe("WorkspaceEventSupervisor", () => {
       outcome: "exhausted",
       failure: "stale-revision",
     });
+    // Stale answers mean the daemon is live: no backoff and no retirement.
+    expect(retired).not.toHaveBeenCalled();
     supervisor.dispose();
   });
 

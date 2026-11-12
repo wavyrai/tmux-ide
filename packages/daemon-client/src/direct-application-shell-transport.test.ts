@@ -102,9 +102,11 @@ class FakeSocket implements WorkspaceEventSocket {
 class FakeReconnectClock {
   #next = 1;
   readonly callbacks = new Map<number, () => void>();
-  setTimeout = (callback: () => void): number => {
+  readonly delays: number[] = [];
+  setTimeout = (callback: () => void, delayMs = 0): number => {
     const handle = this.#next++;
     this.callbacks.set(handle, callback);
+    this.delays.push(delayMs);
     return handle;
   };
   clearTimeout = (handle: unknown): void => {
@@ -751,6 +753,84 @@ describe("direct application-shell transport version selection", () => {
     await tick();
     expect(verified).toBe(1);
     expect(clock.callbacks.size).toBe(0);
+    transport.disposeEventSupervisor();
+  });
+
+  it("backs a refused terminal reconnect off to 30 s and starts over after one commits (#764)", async () => {
+    const sockets: FakeSocket[] = [];
+    const clock = new FakeReconnectClock();
+    let terminalReads = 0;
+    let refuse = false;
+    const transport = createDirectLoopbackDaemonTransport({
+      descriptor,
+      resolveSessionName: () => "alpha",
+      terminalRuntimeAuthority: true,
+      terminalReconnectClock: clock,
+      createWebSocket: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      fetch: async () => {
+        terminalReads += 1;
+        // The daemon answering 503 while it re-qualifies the session.
+        if (refuse) throw new Error("503");
+        return json({
+          version: 1,
+          daemon,
+          resource: {
+            workspaceName: "workspace.alpha",
+            workspaceId: "workspace.0123456789abcdefabcd",
+            sessionId: "session.0123456789abcdefabcd",
+            resourceRevision: terminalReads,
+            semanticPaneIds: [`pane.${terminalReads}`],
+          },
+        });
+      },
+    }) as TerminalFirstDaemonTransport;
+    const answer = async (socket: FakeSocket): Promise<void> => {
+      socket.emit("open");
+      socket.frame({ type: "hello", daemon, sessions: [], eventSequence: 0 });
+      await tick();
+      socket.frame({
+        type: "resource.interests-ack",
+        interestRevision: 1,
+        sequence: 0,
+        unavailableInterests: [],
+      });
+      await tick();
+      await tick();
+    };
+    const preparation = transport.prepareTerminalRuntimeInventory(
+      target,
+      new AbortController().signal,
+    );
+    await answer(sockets[0]!);
+    const published: string[][] = [];
+    transport.adoptTerminalRuntimeInventory(await preparation, (resource) =>
+      published.push([...resource.semanticPaneIds]),
+    );
+
+    refuse = true;
+    sockets[0]!.emit("close");
+    await tick();
+    for (let attempt = 0; attempt < 7; attempt += 1) {
+      await answer(sockets.at(-1)!);
+      expect(clock.callbacks.size).toBe(1);
+      clock.runNext();
+    }
+    expect(clock.delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+
+    refuse = false;
+    await answer(sockets.at(-1)!);
+    expect(published.length).toBe(1);
+    expect(clock.callbacks.size).toBe(0);
+    // A later refusal starts at 1 s again.
+    refuse = true;
+    sockets.at(-1)!.emit("close");
+    await tick();
+    await answer(sockets.at(-1)!);
+    expect(clock.delays.at(-1)).toBe(1_000);
     transport.disposeEventSupervisor();
   });
 
