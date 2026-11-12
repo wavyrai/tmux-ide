@@ -244,11 +244,13 @@ fn run(
         .max_frame_size(Some(64 * 1024))
         .write_buffer_size(0)
         .max_write_buffer_size(8192);
-    let (mut socket, _) = tungstenite::client::client_with_config(request, socket, Some(config))
-        .map_err(|error| match error {
-            tungstenite::HandshakeError::Failure(error) => CatalogWatchError::from(error),
-            tungstenite::HandshakeError::Interrupted(_) => CatalogWatchError::Timeout,
-        })?;
+    let (mut socket, response) =
+        tungstenite::client::client_with_config(request, socket, Some(config)).map_err(
+            |error| match error {
+                tungstenite::HandshakeError::Failure(error) => CatalogWatchError::from(error),
+                tungstenite::HandshakeError::Interrupted(_) => CatalogWatchError::Timeout,
+            },
+        )?;
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(1)))?;
@@ -256,6 +258,10 @@ fn run(
         Some(after) => CatalogEvents::resume(endpoint.identity, after),
         None => CatalogEvents::new(endpoint.identity),
     };
+    // A daemon that advertises its heartbeat pings by itself: its own limit
+    // applies. Any other daemon is judged by the pongs to this lane's pings.
+    let silence = crate::tmux_heartbeat::Heartbeat::advertised(&response)
+        .map_or(UNANSWERED, |heartbeat| heartbeat.silence());
     let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut received = Instant::now();
     let mut ping = received;
@@ -263,9 +269,7 @@ fn run(
     loop {
         cancel.check()?;
         let now = Instant::now();
-        if (!lane.ready() && now >= ready_deadline)
-            || now.duration_since(received) >= Duration::from_secs(45)
-        {
+        if (!lane.ready() && now >= ready_deadline) || now.duration_since(received) >= silence {
             return Err(CatalogWatchError::Timeout);
         }
         // Fleet push covers separately registered tmux owners. Only a daemon
@@ -326,6 +330,8 @@ fn run(
         }
     }
 }
+/// Three of this lane's own pings (one every 15 s) without any frame back.
+const UNANSWERED: Duration = Duration::from_secs(45);
 #[cfg(all(test, unix))]
 #[path = "catalog_watch_tests.rs"]
 mod tests;

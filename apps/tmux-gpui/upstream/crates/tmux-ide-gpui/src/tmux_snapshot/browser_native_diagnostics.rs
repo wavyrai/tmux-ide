@@ -185,6 +185,7 @@ fn transport(error: &tmux_stream::Error) -> &'static str {
         Error::Disconnected | Error::Closed(_) => "stream-disconnected",
         Error::Cancelled => "stream-cancelled",
         Error::ReadyTimeout => "stream-ready-timeout",
+        Error::Silent => "stream-silent",
     }
 }
 

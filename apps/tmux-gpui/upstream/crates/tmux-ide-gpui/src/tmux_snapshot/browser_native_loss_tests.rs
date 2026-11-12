@@ -291,3 +291,42 @@ fn a_stream_that_gets_input_or_is_inactive_is_never_replaced() {
         assert!(!stall.expired(7, "a", false, now));
     }
 }
+
+/// The catalog picks its first reconnect step from why the stream ended, so
+/// the notice carries it; a failed command is never the daemon speaking.
+#[test]
+fn the_notice_says_why_the_stream_ended() {
+    let (active, state, _observed, _peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    let retired = NativeError::Controller(herdr_client::tmux_controller::Error::Transport(
+        herdr_client::tmux_stream::Error::Closed(herdr_client::tmux_stream::Close {
+            code: 1012,
+            reason: Some("tmux-server-retired".into()),
+        }),
+    ));
+    let cause_of = |command: Command| match command {
+        Command::NativeTerminalInterrupted { cause, .. } => cause,
+        _ => unreachable!("not an interruption"),
+    };
+    let lost = |error: &NativeError| {
+        stream_lost(
+            &active,
+            &mut VecDeque::new(),
+            &mut Hold::default(),
+            &state,
+            1,
+            error,
+        )
+    };
+    assert_eq!(cause_of(lost(&retired)), Cause::ServerRetired);
+    assert_eq!(cause_of(lost(&closed())), Cause::Lost);
+    let failed = command_failed(
+        Some(&active),
+        false,
+        &mut VecDeque::new(),
+        &mut Hold::default(),
+        &state,
+        1,
+    );
+    assert_eq!(cause_of(failed.unwrap()), Cause::Lost);
+}

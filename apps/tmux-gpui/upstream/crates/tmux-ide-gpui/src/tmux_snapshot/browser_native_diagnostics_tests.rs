@@ -229,6 +229,7 @@ fn the_close_reason_names_the_cause_and_an_unknown_one_is_a_plain_close() {
         (tmux_stream::Error::Disconnected, Cause::Lost),
         (tmux_stream::Error::ReadyTimeout, Cause::Lost),
         (tmux_stream::Error::Identity, Cause::Identity),
+        (tmux_stream::Error::Silent, Cause::Silent),
     ] {
         let error = transport(error);
         assert_eq!(cause(&error), expected);
