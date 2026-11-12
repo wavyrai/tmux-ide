@@ -246,8 +246,11 @@ export class MirrorService {
     try {
       await guard.verify();
     } catch (error) {
+      const detail = (error as { detail?: unknown } | null)?.detail;
       diagnostic?.("guard-verify-failed", {
         reason: error instanceof Error ? error.message.slice(0, 200) : "unknown",
+        // Which origin of the failure it was, when the thrower said so.
+        ...(typeof detail === "string" ? { detail: detail.slice(0, 80) } : {}),
       });
       this.retryRegisteredWindows(guard);
       throw error;
