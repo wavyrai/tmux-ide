@@ -393,6 +393,23 @@ impl SnapshotView {
         self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
     }
 
+    /// How long the open session's stream has been reconnecting, by the
+    /// watch's clock; `None` when it is not.
+    pub(super) fn session_reconnecting_for(&self) -> Option<Duration> {
+        let (Kind::Session, since, _) = self.connection.since? else {
+            return None;
+        };
+        let (now, _) = (self.connection.clock)();
+        Some(now.saturating_duration_since(since))
+    }
+    /// Moves the start of the wait back, as time passing would.
+    #[cfg(test)]
+    pub(super) fn age_connection_wait(&mut self, by: Duration) {
+        if let Some((_, since, _)) = &mut self.connection.since {
+            *since -= by;
+        }
+    }
+
     /// The slot's stage now, by the watch's clock.
     pub(super) fn connection_stage(&self) -> Stage {
         let Some((kind, since, _)) = self.connection.since else {

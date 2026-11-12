@@ -36,7 +36,8 @@ impl SnapshotView {
                 .is_some_and(|(paint, current)| paint.same(current))
             && self.browser_state.selected_pane.is_some()
     }
-    /// The catalog is reconnecting: keys are refused, not queued.
+    /// The catalog is reconnecting: keys are refused, unless the reconnect
+    /// only just began (`pending_input/reconnect.rs` holds those).
     fn reconnect_hold(&self) -> bool {
         self.browser_state.reconnect_attempt.is_some()
     }
@@ -77,7 +78,10 @@ impl SnapshotView {
             return false;
         }
         self.expire_pending_input(cx);
-        if !self.terminal_input_ready() && !self.pending_input_ready() {
+        if !self.terminal_input_ready()
+            && !self.pending_input_ready()
+            && !self.hold_reconnect_input()
+        {
             self.interrupt_input(cx);
         }
         // Only a current, ready terminal click clears this local latch. Publications,

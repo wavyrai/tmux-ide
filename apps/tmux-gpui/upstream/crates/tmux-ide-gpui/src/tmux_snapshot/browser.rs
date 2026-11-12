@@ -169,6 +169,9 @@ pub(super) struct State {
     /// `Some(attempt)` while the stream is being re-established; the last frame
     /// stays on screen, read-only, with the attempt count and a Retry button.
     pub reconnect_attempt: Option<u32>,
+    /// Keys typed just before the drop were not delivered. Keys typed after
+    /// them are then refused, never held: they must not run alone.
+    pub reconnect_keys_lost: bool,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
     /// Agent rows and pills are last known: their link dropped, or the one
@@ -625,6 +628,7 @@ impl Reader {
             input_ready: p.input_ready,
             retained_preview,
             reconnect_attempt: None,
+            reconnect_keys_lost: false,
             home_fault: false,
             agents_last_known: false,
             act: None,

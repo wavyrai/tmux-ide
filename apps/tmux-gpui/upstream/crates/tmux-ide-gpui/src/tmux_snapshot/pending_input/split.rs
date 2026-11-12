@@ -41,6 +41,7 @@ impl Pending {
     pub(super) fn limit(&self) -> Duration {
         match self.kind {
             Kind::Split(_) => SPLIT_LIMIT,
+            Kind::Reconnect(_) => reconnect::RECONNECT_LIMIT,
             _ => Duration::from_secs(1),
         }
     }
