@@ -283,3 +283,78 @@ fn the_welcomes_keys_end_at_the_welcome(cx: &mut TestAppContext) {
         draw(cx);
     }
 }
+
+/// While setup runs, the primary ("Setting up…") is disabled: no key and no
+/// click can ask for setup a second time.
+#[gpui::test]
+fn a_running_setup_cannot_be_asked_for_again(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, Some(Phase::Running), &[], fresh(&dir));
+    assert!(shown(cx));
+    // The disabled primary is never a keyboard stop, however Tab goes.
+    for keys in [
+        "enter",
+        "space",
+        "tab",
+        "tab",
+        "tab",
+        "shift-tab",
+        "shift-tab",
+        "cmd-enter",
+        "enter",
+    ] {
+        cx.simulate_keystrokes(keys);
+        draw(cx);
+        assert!(!primary_focused(&view, cx), "{keys}");
+    }
+    for button in ["welcome-button-0", "welcome-button-1"] {
+        if let Some(bounds) = cx.debug_bounds(button) {
+            cx.simulate_click(bounds.center(), Modifiers::default());
+            draw(cx);
+        }
+    }
+    assert!(no_setup(&rx), "no second LocalSetup");
+    let _ = view;
+}
+
+/// Commands → Welcome from a terminal goes to Home, where the welcome is.
+#[gpui::test]
+fn opening_the_welcome_from_a_terminal_goes_home(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    cx.update(|_, cx| {
+        view.update(cx, |v, _| {
+            v.browser_state.surface = browser::Surface::Workspace
+        })
+    });
+    draw(cx);
+    rx.try_iter().for_each(drop);
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    assert!(view.read_with(cx, |v, _| v.welcome.open));
+    assert!(
+        rx.try_iter()
+            .any(|c| matches!(c, browser::Command::Home { .. })),
+        "it asks for Home"
+    );
+}
+
+/// VoiceOver reads each checklist line's detail, the part that says what to
+/// do, not only its title and status.
+#[gpui::test]
+fn checklist_details_are_read_out(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, _rx) = home(cx, Some(Phase::Missing), &[], fresh(&dir));
+    assert!(shown(cx));
+    let detailed = view.read_with(cx, |v, cx| {
+        lines(stage(&v.browser_state, true), v.welcome_elapsed(cx), None)
+            .iter()
+            .filter_map(|line| line.detail.clone())
+            .count()
+    });
+    assert!(detailed > 0, "the fixture has a line with a detail");
+    let source = include_str!("render.rs");
+    assert!(
+        source.contains("row.aria_description(detail)"),
+        "each checklist row carries its detail as its accessibility description"
+    );
+}

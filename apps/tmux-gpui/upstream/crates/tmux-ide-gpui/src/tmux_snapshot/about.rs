@@ -25,7 +25,8 @@ thread_local! {
     pub(super) static CAPTURE_RELEASE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The open About card. Holding its focus keeps keys away from the terminal.
+/// The open About card. Holding its focus keeps keys away from the terminal;
+/// the window gives it back on render if anything else took it.
 pub(super) struct About {
     focus: FocusHandle,
     /// What had the keyboard before (a dialog, the welcome, the terminal),
@@ -33,6 +34,15 @@ pub(super) struct About {
     restore: Option<FocusHandle>,
     /// The control Tab has reached, if any; Return or Space acts on it.
     pub(super) focused: Option<usize>,
+}
+
+impl About {
+    pub(super) fn holds_focus(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+    }
+    pub(super) fn take_focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus.focus(window, cx);
+    }
 }
 
 /// The card's controls, in Tab order.
@@ -64,7 +74,7 @@ pub(super) fn step(from: Option<usize>, back: bool) -> usize {
     }
 }
 
-/// The bundle's version line: "Version 0.1.16 (2026111101)", or
+/// The bundle's version line: "Version 0.1.17 (2026111201)", or
 /// "Development build" outside a release bundle.
 pub(super) fn version_line(version: Option<&str>, build: Option<&str>) -> String {
     match (version, build) {
@@ -211,8 +221,8 @@ impl SnapshotView {
         #[cfg(feature = "visual-capture")]
         let native = if CAPTURE_RELEASE.with(std::cell::Cell::get) {
             super::diagnostics::NativeIdentity {
-                version: Some("0.1.16".into()),
-                build: Some("2026111101".into()),
+                version: Some("0.1.17".into()),
+                build: Some("2026111201".into()),
                 channel: Some("Alpha"),
             }
         } else {

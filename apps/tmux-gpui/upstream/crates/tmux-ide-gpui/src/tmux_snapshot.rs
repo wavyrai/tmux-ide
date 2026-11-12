@@ -635,6 +635,7 @@ impl SnapshotView {
                                 && view.picker.is_none()
                                 && view.pane_actions.is_none()
                                 && view.new_session.is_none()
+                                && view.about.is_none()
                             {
                                 window.handle_input(
                                     &view.terminal_focus,

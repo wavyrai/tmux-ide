@@ -122,6 +122,9 @@ impl SnapshotView {
                 .debug_selector(move || format!("welcome-line-{index}"))
                 .role(Role::ListItem)
                 .aria_label(label)
+                .when_some(line.detail.clone(), |row, detail| {
+                    row.aria_description(detail)
+                })
                 .w_full()
                 .px(px(16.))
                 .py(px(10.))

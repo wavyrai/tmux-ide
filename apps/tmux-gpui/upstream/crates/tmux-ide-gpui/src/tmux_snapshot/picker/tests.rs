@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
 mod about;
+mod about_terminal;
 mod attention;
 mod commands;
 mod direct_navigation;
