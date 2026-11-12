@@ -130,3 +130,4 @@ export * from "./terminal-history-anchor.ts";
 export * from "./terminal-delivery-binary-chunk.ts";
 
 export * from "./terminal-projection.ts";
+export * from "./websocket-heartbeat.ts";

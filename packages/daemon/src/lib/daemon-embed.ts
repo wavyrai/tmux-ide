@@ -161,6 +161,7 @@ import {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
 } from "../server/pane-stream-upgrade.ts";
+import { daemonWebSocketHeartbeat } from "../server/websocket-heartbeat.ts";
 import {
   createPaneStreamRuntime,
   type PaneStreamRuntime,
@@ -476,6 +477,8 @@ function attachWebSockets(
   closeServers: () => Promise<void>;
 } {
   const eventsWss = new WebSocketServer({ noServer: true });
+  const heartbeat = daemonWebSocketHeartbeat();
+  eventsWss.on("headers", (headers) => heartbeat.advertise(headers));
   const ptyWss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
 
@@ -502,6 +505,7 @@ function attachWebSockets(
     if (pathname === "/ws/events") {
       eventsWss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
+        heartbeat.watch(ws, "ws-events");
         const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
         handleWsEventsConnection(ws, opts.daemonIdentity, {
           mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
