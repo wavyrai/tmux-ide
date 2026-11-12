@@ -73,7 +73,8 @@ export async function snapshotNativeSources(workspace) {
   }
   // Fixed sibling dependency only; never walk arbitrary parent/vendor contents.
   const vendor = "../vendor",
-    apple = `${vendor}/bezel-gpui-apple`;
+    apple = `${vendor}/bezel-gpui-apple`,
+    core = `${vendor}/bezel-gpui`;
   let hasVendor = false;
   try {
     const parent = await lstat(join(root, vendor));
@@ -89,6 +90,13 @@ export async function snapshotNativeSources(workspace) {
     for (const path of ["Cargo.toml", "build.rs", "LICENSE-APACHE", "src", "gpui"])
       await walk(`${apple}/${path}`);
     await walk(`${vendor}/bezel-gpui-apple-provenance.json`);
+    const coreRoot = await lstat(join(root, core));
+    if (coreRoot.isSymbolicLink() || !coreRoot.isDirectory())
+      throw new Error("Invalid GPUI vendor root");
+    // README.md and assets/ are compiled in (include_str!, include_bytes!).
+    for (const path of ["Cargo.toml", "build.rs", "LICENSE-APACHE", "README.md", "src", "assets"])
+      await walk(`${core}/${path}`);
+    await walk(`${vendor}/bezel-gpui-provenance.json`);
   }
   files.sort((a, b) => a.path.localeCompare(b.path, "en"));
   return { version: 1, files, sha256: digest(JSON.stringify(files)) };

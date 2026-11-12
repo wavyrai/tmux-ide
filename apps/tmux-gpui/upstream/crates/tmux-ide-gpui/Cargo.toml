@@ -86,3 +86,7 @@ required-features = ["visual-capture"]
 [[example]]
 name = "perf_bench"
 required-features = ["visual-capture"]
+
+[[example]]
+name = "glyph_parity"
+required-features = ["visual-capture"]
