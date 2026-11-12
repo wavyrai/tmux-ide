@@ -169,7 +169,10 @@ describe("embedded owner initialization cleanup", () => {
         await vi.advanceTimersByTimeAsync(OWNER_SWEEP_INTERVAL_MS);
         expect(dispose).toHaveBeenCalledExactlyOnceWith("server-gone");
         const settled = mocks.probe.mock.calls.length;
+        expect(vi.getTimerCount()).toBe(1);
         await embedded.dispose();
+        // The sweep timer goes with the owners; nothing keeps ticking.
+        expect(vi.getTimerCount()).toBe(0);
         await vi.advanceTimersByTimeAsync(OWNER_SWEEP_INTERVAL_MS * 20);
         expect(mocks.probe.mock.calls.length).toBe(settled);
       } finally {

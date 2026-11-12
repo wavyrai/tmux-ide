@@ -556,6 +556,22 @@ describe("owner retirement needs positive evidence (#840)", () => {
     await f.owners.dispose();
   });
 
+  it("a read that brings an offline server online leaves the online ones unasked", async () => {
+    const f = liveFixture();
+    f.observations.set("a", f.native("a"));
+    f.alive.add("42");
+    const a = scope(await f.owners.register({ selector: { kind: "name", name: "a" }, label: "a" }));
+    await f.owners.register({ selector: { kind: "name", name: "b" }, label: "b" });
+    f.observations.set("b", f.native("b", "42"));
+    f.probe.mockClear();
+    f.clock.now += OBSERVE_MIN_INTERVAL_MS;
+    const listed = await f.owners.observe();
+    expect(listed.map((server) => server.state)).toEqual(["online", "online"]);
+    expect(listed[0]).toMatchObject({ generation: a.generation });
+    expect(f.probe.mock.calls.map(([selector]) => selector)).toEqual([{ kind: "name", name: "b" }]);
+    await f.owners.dispose();
+  });
+
   it("the sweep costs no probe while sockets and server processes are unchanged", async () => {
     const f = liveFixture();
     f.observations.set("a", f.native("a"));
