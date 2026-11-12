@@ -409,3 +409,34 @@ fn dragging_the_scrollbar_builds_the_rows_it_shows(cx: &mut TestAppContext) {
     assert!(!built(cx, 0), "the top rows went back to a spacer");
     cx.simulate_mouse_up(thumb.center(), MouseButton::Left, Modifiers::none());
 }
+
+/// With every row built for an assistive client no window of rows is
+/// planned, so nothing re-plans after a resize: the page must still ask for
+/// one render only, not one on every frame after (review of perf-paint).
+#[gpui::test]
+fn a_resize_with_every_row_built_asks_once(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    next_frame(cx);
+    draw(cx);
+    cx.update(|window, cx| {
+        window.set_a11y_active_for_test(true);
+        window.draw(cx).clear(cx);
+    });
+    let asked = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |v, _| v.home_filter.as_ref().unwrap().rows.asked())
+    };
+    next_frame(cx);
+    draw(cx);
+    let before = asked(cx);
+    cx.simulate_resize(size(px(1200.), px(1800.)));
+    draw(cx);
+    for _ in 0..4 {
+        next_frame(cx);
+        draw(cx);
+    }
+    assert!(
+        asked(cx) <= before + 1,
+        "the page kept asking: {} renders",
+        asked(cx) - before
+    );
+}

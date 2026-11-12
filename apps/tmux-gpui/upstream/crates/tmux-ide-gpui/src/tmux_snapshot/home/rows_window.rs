@@ -146,6 +146,10 @@ impl RowWindow {
                     (from - shown.top()).abs() > px(0.5) || (to - shown.bottom()).abs() > px(0.5)
                 });
                 if resized {
+                    // Asked for once: a render that plans no window of rows
+                    // (every row built, or none to build) must not leave
+                    // this asking on every frame.
+                    planned.set(Some((shown.top(), shown.bottom())));
                     #[cfg(test)]
                     asked.set(asked.get() + 1);
                     // Not during this draw: the next frame renders again.
