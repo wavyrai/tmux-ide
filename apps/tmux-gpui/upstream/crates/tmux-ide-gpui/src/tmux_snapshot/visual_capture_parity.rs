@@ -276,6 +276,20 @@ fn render(cx: &mut VisualTestAppContext, case: &Case, legacy: bool) -> Result<im
         }
     }
     cx.run_until_parked();
+    // The macOS window never draws subpixel sprites (its
+    // `is_subpixel_rendering_supported` is false, and the Metal renderer has
+    // no pass for them), so `GlyphKind::Subpixel` is never resolved and these
+    // cases can't compare its pixels. If a GPUI update turns it on, fail
+    // here rather than pass without covering it.
+    let subpixel = cx.update_window(handle.into(), |_, window, _| {
+        window.glyph_raster_state().subpixel_supported
+    })?;
+    if subpixel {
+        return Err(anyhow!(
+            "{}: this window draws subpixel sprites, which no parity case covers yet",
+            case.name
+        ));
+    }
     let image = cx.capture_screenshot(handle.into())?;
     cx.update_window(handle.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
@@ -378,5 +392,9 @@ pub fn glyph_parity(dir: &Path) -> Result<Vec<String>> {
     if failed > 0 {
         return Err(anyhow!("{failed} case(s) differ:\n{}", lines.join("\n")));
     }
+    lines.push(
+        "subpixel sprites: no window here draws them (checked per case), so that branch has no pixels to compare"
+            .into(),
+    );
     Ok(lines)
 }
