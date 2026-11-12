@@ -19,7 +19,8 @@ const target = {
   semanticPaneId: "pane-main",
 };
 
-function fixture() {
+/** `birth` null is a stock tmux server: its panes have no birth id. */
+function fixture(birth: string | null = "1") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "pane-reader-resolver-")));
   roots.push(root);
   mkdirSync(join(root, "docs"));
@@ -48,12 +49,12 @@ function fixture() {
     type: null,
     missionStamp: null,
     dir: root,
-    nativePaneBirthId: "1",
+    nativePaneBirthId: birth,
   };
   writeFileSync(join(root, "docs", "other.md"), "# Other\n");
   const state = {
     option: JSON.stringify({ version: 1, pid: 4242, path: md }) as string,
-    birth: "1",
+    birth: birth ?? "",
     semantic: "pane-main",
     panePid: "4242",
     extra: "",
@@ -150,6 +151,20 @@ it("refuses a dead reader process, a reused pane and a non-Markdown option", asy
       f.resolver.asset({ target, src: "a.png", page: null }, signal()),
     ).rejects.toBeInstanceOf(PaneReaderUnavailable);
   }
+});
+it("serves a reader pane on a stock tmux server, which has no pane birth id (#738)", async () => {
+  const f = fixture(null);
+  expect(await f.resolver.read({ target, have: null, page: null }, signal())).toMatchObject({
+    state: "ok",
+    name: "release-notes.md",
+  });
+});
+it("refuses a pane listed without a birth id that then reports one", async () => {
+  const f = fixture(null);
+  f.state.birth = "2";
+  await expect(
+    f.resolver.read({ target, have: null, page: null }, signal()),
+  ).rejects.toBeInstanceOf(PaneReaderUnavailable);
 });
 it("refuses when the pane is replaced during the read", async () => {
   const f = fixture();
