@@ -20,6 +20,7 @@ fn created() -> (CreatedSession, FleetCatalog) {
         display_name: "Fixture".into(),
     };
     let catalog = FleetCatalog {
+        service_version: None,
         identity: CatalogIdentity {
             instance_id: generation,
             environment_id: None,

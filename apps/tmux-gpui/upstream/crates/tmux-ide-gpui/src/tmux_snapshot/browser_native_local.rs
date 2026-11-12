@@ -70,6 +70,8 @@ struct Local {
     machine_id: String,
     machine_label: String,
     catalog_identity: Option<herdr_client::tmux_daemon::CatalogIdentity>,
+    /// The service version the current catalog reported (#831).
+    service_version: Option<String>,
     worker: CatalogWorker,
     events: outbox::Events,
     state: State,
@@ -143,6 +145,7 @@ fn start_source(
         machine_id,
         machine_label,
         catalog_identity: None,
+        service_version: None,
         worker,
         events: events.into(),
         state: State {
@@ -232,6 +235,14 @@ impl Local {
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
         state.act = home_recovery::act(self.home.fault(), &state);
+        // Shown on Home only, and only while the list that reported it is
+        // live: a terminal names its own service, which may be another
+        // machine's.
+        state.service_version = self.service_version.clone().filter(|_| {
+            state.surface == Surface::Home
+                && state.home_phase == HomePhase::Live
+                && !state.home_fault
+        });
         self.emit(Incoming::Catalog(Box::new(state)))
     }
     fn close(&mut self) -> Result<(), Error> {
@@ -312,6 +323,7 @@ impl Local {
         self.split.reset();
         self.targets.clear();
         self.catalog_identity = None;
+        self.service_version = None;
         self.home = Default::default();
         self.preferences.refresh();
         self.stage = Some(if self.selected_profile.is_some() && !profile_verified {

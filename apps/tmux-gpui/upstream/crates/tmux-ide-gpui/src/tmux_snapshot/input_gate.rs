@@ -44,7 +44,11 @@ impl SnapshotView {
         cx.notify();
     }
     pub(super) fn offer_terminal_input(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.picker.is_some() || self.pane_actions.is_some() || self.new_session.is_some() {
+        if self.picker.is_some()
+            || self.pane_actions.is_some()
+            || self.new_session.is_some()
+            || self.about.is_some()
+        {
             return false;
         }
         if self.divider.is_some() || self.resize_gesture.busy() {

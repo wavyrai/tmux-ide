@@ -19,6 +19,8 @@ impl Local {
         }
         self.state.sessions.clear();
         self.catalog_identity = Some(snapshot.identity);
+        self.service_version =
+            crate::tmux_snapshot::diagnostics::service_version(snapshot.service_version);
         let servers = self.catalog_servers(snapshot.servers);
         if servers.is_empty() {
             self.local_creation.offer = None;

@@ -233,3 +233,6 @@ mod tests;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod fit_tests;

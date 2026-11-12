@@ -2,6 +2,7 @@
 use super::*;
 fn snapshot() -> FleetCatalog {
     FleetCatalog {
+        service_version: None,
         identity: herdr_client::tmux_daemon::CatalogIdentity {
             instance_id: uuid::Uuid::new_v4().to_string(),
             environment_id: None,

@@ -67,7 +67,7 @@ pub(super) fn command_rows_with_settings(
         (Action::CopyDiagnostics, "Copy diagnostics"),
         (Action::Shortcuts, "Keyboard shortcuts…"),
         (Action::Help, "Using tmux-ide…"),
-        (Action::WhatsNew, "What’s new…"),
+        (Action::WhatsNew, "What's new…"),
         (Action::Welcome, "Welcome to Tmux IDE…"),
         (Action::About, "About Tmux IDE"),
         (Action::Home, "Home · F1"),
