@@ -25,6 +25,9 @@ pub(super) struct IdleTick {
     /// Tests turn the render's nudge off to see the input listeners' alone.
     #[cfg(test)]
     quiet_renders: bool,
+    /// A deadline tests set, as queued work would; cleared once it fires.
+    #[cfg(test)]
+    deadline: Option<Instant>,
 }
 impl IdleTick {
     /// A render's nudge: a render is activity, and queued work may follow it.
@@ -151,6 +154,8 @@ impl SnapshotView {
             self.fit_settle.due_at(),
             self.palette.due_at(),
             self.graphics.store.waiting().then_some(now + IMAGE_POLL),
+            #[cfg(test)]
+            self.idle_tick.deadline,
         ];
         // A deadline already passed is work this pass did not finish (a fit
         // waits for its render): poll for it rather than run again at once,
@@ -163,6 +168,13 @@ impl SnapshotView {
     }
 
     pub(super) fn browser_tick(&mut self, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        {
+            let now = cx.background_executor().now();
+            if self.idle_tick.deadline.is_some_and(|at| at <= now) {
+                self.idle_tick.deadline = None;
+            }
+        }
         if let Some(sender) = &self.browser_commands {
             self.presence.flush(sender);
         }

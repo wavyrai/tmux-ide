@@ -616,6 +616,16 @@ impl Store {
         let inner = self.lock();
         !inner.partials.is_empty() || !inner.referenced.is_empty()
     }
+    /// Placements that refer to `digest`, which has not arrived, as a
+    /// publication's would; `None` drops them. For tests outside this module.
+    #[cfg(test)]
+    pub(super) fn refer_for_test(&self, digest: Option<&str>) {
+        let mut inner = self.lock();
+        inner.referenced.clear();
+        if let Some(digest) = digest {
+            inner.referenced.insert(digest.into(), Instant::now());
+        }
+    }
     /// True once after any image completed or was evicted.
     pub(super) fn take_changed(&self) -> bool {
         std::mem::take(&mut self.lock().changed)

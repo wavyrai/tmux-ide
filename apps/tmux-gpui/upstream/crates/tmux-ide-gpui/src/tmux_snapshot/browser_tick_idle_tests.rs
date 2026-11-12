@@ -423,3 +423,95 @@ fn a_held_palette_query_sets_no_deadline(cx: &mut TestAppContext) {
     });
     assert_eq!(due, (Some(now + Duration::from_millis(5)), None));
 }
+
+/// Sets a test deadline `after` from now and nudges, as queued work would.
+fn deadline_in(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, after: Duration) {
+    let at = cx.executor().now() + after;
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.idle_tick.deadline = Some(at);
+            view.idle_tick.nudge();
+        })
+    });
+}
+
+/// Wakes over `ms` of 1 ms steps.
+fn wakes_over_ms(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext, ms: u32) -> u32 {
+    let before = cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes);
+    for _ in 0..ms {
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+    }
+    cx.update(|_, cx| snapshot.read(cx).idle_tick.wakes) - before
+}
+
+/// A deadline is kept to the millisecond: no wake before it, one at it.
+#[gpui::test]
+fn a_deadline_wakes_the_task_on_time(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    deadline_in(&snapshot, cx, Duration::from_millis(150));
+    cx.run_until_parked();
+    assert_eq!(
+        wakes_over_ms(&snapshot, cx, 149),
+        0,
+        "woke before the deadline"
+    );
+    assert_eq!(wakes_over_ms(&snapshot, cx, 2), 1, "missed the deadline");
+    settle(&snapshot, cx);
+}
+
+/// An earlier deadline set while the task waits for a later one re-arms it,
+/// and the earliest of several wins.
+#[gpui::test]
+fn an_earlier_deadline_rearms_the_wait(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    // The far one: a missing image's 250 ms poll.
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics
+                .store
+                .refer_for_test(Some("00000000000000ff00000000000000ff"));
+            view.idle_tick.nudge();
+        })
+    });
+    cx.run_until_parked();
+    wakes_over_ms(&snapshot, cx, 50);
+    deadline_in(&snapshot, cx, Duration::from_millis(70));
+    cx.run_until_parked();
+    assert_eq!(wakes_over_ms(&snapshot, cx, 69), 0);
+    assert_eq!(
+        wakes_over_ms(&snapshot, cx, 2),
+        1,
+        "the earlier deadline was not kept"
+    );
+}
+
+/// Missing images poll every 250 ms, not every frame, and stop once no
+/// placement refers to them.
+#[gpui::test]
+fn missing_images_poll_slowly_until_dropped(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics
+                .store
+                .refer_for_test(Some("00000000000000ff00000000000000ff"));
+            view.idle_tick.nudge();
+        })
+    });
+    let wakes = wakes_over(&snapshot, cx, 63);
+    assert!((4..=6).contains(&wakes), "{wakes} wakes in 1 s");
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.graphics.store.refer_for_test(None);
+            view.idle_tick.nudge();
+        })
+    });
+    settle(&snapshot, cx);
+}
