@@ -342,9 +342,8 @@ fn dragging_the_scrollbar_builds_the_rows_it_shows(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     draw(cx);
-    let thumb = cx
-        .debug_bounds("tmux-home-page-thumb")
-        .expect("the page's scrollbar thumb");
+    // The page's scrollbar thumb.
+    let thumb = cx.debug_bounds("tmux-home-page-thumb").unwrap();
     let notified = Rc::new(Cell::new(0));
     let count = notified.clone();
     cx.update(|_, cx| {
@@ -384,9 +383,7 @@ fn dragging_the_scrollbar_builds_the_rows_it_shows(cx: &mut TestAppContext) {
     );
     // The one frame the drag asked for, and no other wakeup.
     draw(cx);
-    let first = (0..100)
-        .find(|row| built(cx, *row))
-        .expect("rows are built");
+    let first = (0..100).find(|row| built(cx, *row)).unwrap();
     let top = cx
         .debug_bounds(Box::leak(
             format!("fleet-session-0-{first}").into_boxed_str(),
