@@ -479,11 +479,29 @@ describe("tmux-ide plugin consent", () => {
   });
 });
 
+// The real io's daemon bridge is stubbed for the whole file: if the name check
+// ever regresses, a failing run must stay local and never look for a daemon.
+const bridge = vi.hoisted(() => ({
+  tryDispatchAction: vi.fn(async () => {
+    throw new Error("test reached the daemon bridge");
+  }),
+}));
+vi.mock("../lib/cli-action-bridge.ts", () => ({
+  tryDispatchAction: bridge.tryDispatchAction,
+  resolveCanonicalDaemonEndpoint: () => {
+    throw new Error("test reached the daemon bridge");
+  },
+  cliBridgeFetch: () => () => {
+    throw new Error("test reached the daemon bridge");
+  },
+}));
+
 describe("the real io's built-in dispatch", () => {
   it("refuses a name that is no built-in action before it reaches the daemon", async () => {
     const io = await defaultPluginCliIo();
     await expect(io.dispatchBuiltin("no.such-action", {})).rejects.toThrow(
       "No command named 'no.such-action'.",
     );
+    expect(bridge.tryDispatchAction).not.toHaveBeenCalled();
   });
 });
