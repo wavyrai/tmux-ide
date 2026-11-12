@@ -63,7 +63,7 @@
     "typecheck:workspace": "turbo run typecheck",
     "docs:build": "turbo run build --filter=@tmux-ide/docs",
     "pack:check": "pnpm test:installer && pnpm test:workflow-contracts && node scripts/pack-tui-check.mjs",
-    "test:workflow-contracts": "node --test scripts/lib/npm-release-tag.test.mjs scripts/lib/tap-bump-gate.test.mjs scripts/lib/macos-ssh-account.test.mjs",
+    "test:workflow-contracts": "node --test scripts/lib/npm-release-tag.test.mjs scripts/lib/tap-bump-gate.test.mjs scripts/lib/macos-ssh-account.test.mjs scripts/lib/apt-dns-fallback.test.mjs",
     "test:pack-installed": "node scripts/pack-check-run.mjs",
     "release:opentui:check": "node scripts/opentui-release-check.mjs",
     "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
