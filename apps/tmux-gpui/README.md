@@ -1091,20 +1091,30 @@ These entries require an existing compatible daemon; they do not install or star
 one. SSH uses noninteractive OpenSSH authentication and existing host trust.
 The SSH entry shares one owned forward between independent foreground and layout
 HTTP lanes and verifies the peer on each terminal socket before redemption.
-Interrupted terminals now use bounded automatic rediscovery, preserving the
-preferred pane. Recovery reopens the same server generation and session, or,
+Interrupted terminals reconnect by themselves, preserving the preferred pane,
+in an active or inactive window, for as long as the window is open. Recovery
+reopens the same server generation and session, or,
 after a local daemon restart, the session with the identical live session id
 on the same tmux server, when the catalog came from the same private daemon
 record. A restart gives the daemon a new generation, but the live session id
 hashes the tmux server pid, the session id and its creation time, so an
-identical id is the same tmux session incarnation. SSH recovery and any other
-mismatch fall back to "select a session". While the daemon is unreachable
-(connection refused, or its record missing), recovery retries with backoff
-from 250 ms doubling to a 4 s cap, for up to 30 s, under "Connection lost.
-Reconnecting…", then shows "Couldn't reconnect. Refresh sessions to try
-again.". Identity failures and a too-old daemon stop at once. Recovery
-defers while backgrounded; navigation cancels it, and mutations are never
-automatically replayed. Saved-profile selection and return-to-Local retain a separate local registry
+identical id is the same tmux session incarnation. Over SSH the same holds for
+the same saved machine and remote environment; a daemon that cannot be
+recognised falls back to "select a session". The first try is at once; each
+failed try reads the daemon record again and waits 250 ms doubling to 5 s
+(30 s over SSH), under "Connection lost. Reconnecting…". A rewritten daemon
+record, or activating the window, is tried at once. No number of failures ends
+recovery. It ends only when the stream is ready; when the session ended (its
+server is online without it, or stayed offline or unlisted for a minute),
+which loads Home again with a notice naming the session; when the daemon
+speaks a protocol the app does not; or over SSH when another machine answers.
+A too-old daemon stops at once. A stream that shows frames but is given no
+input for 10 s is replaced, twice at most. Keys typed while reconnecting are
+refused and said so, never replayed; typing works again without a click once
+the stream is back. Navigation cancels recovery, and mutations are never
+automatically replayed. A Home that could not load its sessions (no daemon
+yet, or no tmux server online) keeps looking for a local daemon every 5 s at
+most and loads when one answers. Saved-profile selection and return-to-Local retain a separate local registry
 worker. The local entry provides that worker automatically; the SSH entry
 requires the explicit `--local-daemon` record for registry operations.
 Recovery and manual refresh revalidate saved-profile authority before replacement
