@@ -11,7 +11,10 @@
 //   SOAK_FAULTS=a,b,c         only these faults (names below), in this order
 //   SOAK_SETTLE_MS=12000      wait between faults
 //   SOAK_RECOVER_LIMIT_S=60   after this long without recovery it is "stuck"
-//   SOAK_CLI=/abs/bin/cli.js  a prebuilt daemon instead of this checkout's
+//   SOAK_CLI=/abs/bin/cli.js  a prebuilt daemon instead of this checkout's. Set
+//                             it for runs in parallel: each run without it
+//                             rebuilds bin/cli.js, and two builds collide
+//   SOAK_MODE=late-daemon     only: start the app before the daemon
 //   SOAK_CPU=1                also allow the cpu-starve fault (off by default:
 //                             it loads every core of the machine for 8 s)
 //   SOAK_REPORT=/abs/file.json  the full report; SOAK_TRANSCRIPT, SOAK_DAEMON_LOG

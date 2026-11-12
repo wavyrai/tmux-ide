@@ -174,3 +174,27 @@ fn a_disabled_hold_never_holds_a_frame() {
     let shown = hold.publication(&reconnecting(7, 1));
     assert!(shown.frame.is_none(), "a disabled hold published a frame");
 }
+
+/// The session ended while it was held: the catalog loads Home again under the
+/// same request, with a notice. The held frame must not cover that Home.
+#[test]
+fn an_ended_session_ends_the_hold() {
+    let mut hold = Hold::default();
+    hold.begin(&live(7), false);
+    // Home loading for the same request: still held.
+    let loading = State {
+        request: 7,
+        ..State::default()
+    };
+    assert!(hold.publication(&loading).frame.is_some());
+    let ended = State {
+        request: 7,
+        home_notice: Some("“work” ended: its tmux session is no longer running.".into()),
+        ..State::default()
+    };
+    let shown = hold.publication(&ended);
+    assert!(shown.frame.is_none());
+    assert_eq!(shown.surface, Surface::Home);
+    assert!(shown.home_notice.is_some());
+    assert!(!hold.active());
+}
