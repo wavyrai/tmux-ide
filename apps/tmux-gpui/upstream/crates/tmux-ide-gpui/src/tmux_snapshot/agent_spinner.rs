@@ -19,6 +19,9 @@ pub(super) const TICK: Duration = Duration::from_millis(80);
 
 #[derive(Clone)]
 struct Slot {
+    /// The view whose paint reserved it: a cached child view replays its
+    /// paint without reserving again, so its slots outlive the parent's render.
+    owner: EntityId,
     origin: Point<Pixels>,
     mask: ContentMask<Pixels>,
     font: Font,
@@ -43,9 +46,10 @@ struct Shared {
 pub(super) struct Slots(Rc<Shared>);
 
 impl Slots {
-    /// A new `SnapshotView` render repaints every indicator, so its slots restart.
-    pub(super) fn begin_render(&self) {
-        self.0.slots.borrow_mut().clear();
+    /// A new render of `owner` repaints every indicator it shows, so its
+    /// slots restart; slots of views that keep their cached paint stay.
+    pub(super) fn begin_render(&self, owner: EntityId) {
+        self.0.slots.borrow_mut().retain(|slot| slot.owner != owner);
     }
     /// Whether an overlay will paint this view's frames.
     pub(super) fn attached(&self) -> bool {
@@ -75,6 +79,7 @@ impl Slots {
         let style = window.text_style();
         let rem = window.rem_size();
         self.0.slots.borrow_mut().push(Slot {
+            owner: window.current_view(),
             origin: bounds.origin,
             mask,
             font: style.font(),

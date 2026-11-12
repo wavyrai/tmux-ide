@@ -10,7 +10,7 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     pub(in crate::tmux_snapshot::browser_ui) scroll: ScrollHandle,
     pub(super) controls: Option<[FocusHandle; control_focus::CONTROLS]>,
     reveal: reveal::Reveal,
-    pub(super) request: u64,
+    pub(in crate::tmux_snapshot::browser_ui) request: u64,
     displayed: Vec<Option<Target>>,
 }
 pub(in crate::tmux_snapshot::browser_ui) fn focus_shortcut(key: &Keystroke) -> bool {
@@ -56,7 +56,7 @@ impl SnapshotView {
         true
     }
 
-    pub(super) fn sidebar_keyboard_allowed(&self) -> bool {
+    pub(in crate::tmux_snapshot) fn sidebar_keyboard_allowed(&self) -> bool {
         self.browser_state.surface == browser::Surface::Workspace
             && !self.sidebar_hidden
             && self.browser_commands.is_some()
