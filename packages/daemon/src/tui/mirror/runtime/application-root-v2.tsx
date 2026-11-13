@@ -362,6 +362,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         const paneInteractions = createMachinePaneActivity(machines, generationMachineId, shell);
         machineAgentNavigator = createApplicationMachineAgentNavigator({
           isCurrentTarget: (machineId, row) => machines.agents.isCurrentTarget(machineId, row),
+          waitForCurrentTarget: (machineId, row, signal) =>
+            machines.agents.whenCurrentTarget(machineId, row as never, signal),
           selectedMachineId: machines.selectedMachineId,
           generationMachineId,
           generation,

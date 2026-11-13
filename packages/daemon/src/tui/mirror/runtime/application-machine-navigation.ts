@@ -364,7 +364,8 @@ export function createApplicationMachineNavigation(options: {
       const row = agentGroups()
         .find((group) => group.machineId === id)
         ?.agents.find((agent) => agent.sessionName === sessionName && agent.paneId === paneId);
-      if (!row || !agents.isCurrentTarget(id, row)) {
+      // A row is not current while its roster re-reads; the opener waits for that.
+      if (!row || (!agents.isCurrentTarget(id, row) && !agents.isRefreshing(id))) {
         options.setNote(
           "That agent is unavailable or has changed. Wait for its machine to reconnect.",
         );
@@ -417,7 +418,11 @@ export function createApplicationMachineNavigation(options: {
     agents,
     selectedMachineId: () => manager.snapshot().selectedMachineId,
     openHomeAgent: (row: ApplicationMachineAgent, source: "keyboard" | "mouse") => {
-      if (!agents.isCurrentTarget(row.machineId, row) || row.disabled) return;
+      if (
+        (!agents.isCurrentTarget(row.machineId, row) || row.disabled) &&
+        !agents.isRefreshing(row.machineId)
+      )
+        return;
       const session = snapshot()
         .groups.find((group) => group.id === row.machineId)
         ?.sessions.find(

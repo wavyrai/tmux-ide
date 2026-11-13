@@ -1,3 +1,4 @@
+import { waitForRosterTarget } from "./roster-target-wait.ts";
 import { isDeepStrictEqual } from "node:util";
 import { machineResourceKey } from "@tmux-ide/core";
 import {
@@ -184,6 +185,26 @@ export function createMachineAgents(options: {
         entry.binding === bindingFor(entry.handle) &&
         !!entry.observer?.isCurrentTarget(row)
       );
+    },
+    /** The machine's roster is re-reading a session right now. */
+    isRefreshing(machineId: string): boolean {
+      const observed = entries.get(machineId)?.observer?.getSnapshot();
+      return (
+        !!observed && (observed.refreshingSessionKeys.length > 0 || observed.loadingSessions > 0)
+      );
+    },
+    /**
+     * `isCurrentTarget` once the machine's roster has finished re-reading:
+     * a row is not current during the read, and a click should wait for it.
+     */
+    whenCurrentTarget(machineId: string, row: HomeAgentRow, signal: AbortSignal): Promise<boolean> {
+      return waitForRosterTarget({
+        isCurrent: () => this.isCurrentTarget(machineId, row),
+        refreshing: () => this.isRefreshing(machineId),
+        subscribe: (listener) =>
+          entries.get(machineId)?.observer?.subscribe(() => listener()) ?? (() => undefined),
+        signal,
+      });
     },
     retry() {
       for (const entry of entries.values()) entry.observer?.retry();

@@ -18,6 +18,12 @@ type HomeNavigatorOptions = Parameters<typeof createApplicationHomeAgentNavigato
 /** Machine identity fences the existing exact-agent admission owner. No independent input path. */
 export function createApplicationMachineAgentNavigator(options: {
   readonly isCurrentTarget: (machineId: string, target: HomeAgentNavigationTarget) => boolean;
+  /** `isCurrentTarget` once the machine's roster has finished a re-read in progress. */
+  readonly waitForCurrentTarget?: (
+    machineId: string,
+    target: HomeAgentNavigationTarget,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   readonly selectedMachineId: () => string | null;
   /** Identity of the attached generation, never inferred from the selected machine. */
   readonly generationMachineId: () => string | null;
@@ -85,6 +91,14 @@ export function createApplicationMachineAgentNavigator(options: {
             agents: semantic.sidebar.agents,
           };
         },
+        ...(options.waitForCurrentTarget
+          ? {
+              waitForCurrentTarget: (row: HomeAgentNavigationTarget, signal: AbortSignal) =>
+                selected()
+                  ? options.waitForCurrentTarget!(machineId, row, signal)
+                  : Promise.resolve(false),
+            }
+          : {}),
         waitForGeneration: (key, signal) => waitForHomeAgentSemantic(generation, key, signal),
         waitForAgent: (key, listed, signal) =>
           waitForHomeAgentListed(generation, key, listed, signal),
