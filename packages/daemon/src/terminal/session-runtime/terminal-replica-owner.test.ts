@@ -337,6 +337,32 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
       }
     });
 
+    it("reseeds once when a recorded difference goes away", async () => {
+      const r = await rig("A\tB");
+      try {
+        await r.outputAndCheck();
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("leaves a seed without tabs alone while its history matches", async () => {
+      const r = await rig("AB");
+      try {
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        await r.outputAndCheck();
+        expect(r.reseed).not.toHaveBeenCalled();
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
     it("still reseeds every time for a seed without tabs", async () => {
       const r = await rig("AB");
       try {
