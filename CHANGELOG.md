@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.24
+
+- Fix a tmux server that could not exit after a daemon was killed. A daemon that dies without a clean stop leaves its control clients attached to the tmux server. `tmux kill-server` then never finished, no new server could start on the socket, and the next daemon answered 503 to every read of that server (16 minutes in the run that found it, until the daemon was stopped). A daemon now ends tmux-ide control clients whose daemon is gone: when it takes over a tmux server, and again when the server lists no sessions or does not answer. Its own clients, another running daemon's and other programs' control clients (`-CC`) are left alone. In the reproduction, with such a client present before the next daemon starts, `kill-server` never finished before and the server exits in 100 ms now; with one appearing while the daemon runs, the server exits in 600 ms and a new server is served 6 s later.
+- Fix a daemon that exited at startup with "Trusted semantic pane discovery failed" when another tmux client changed panes while the daemon read its first inventory. The read is repeated, up to four times.
+- Fix opening a session answering 503 when another tmux client split or closed a pane during the open. The daemon checks again, up to three times, before it refuses.
+- Fix a click on an agent in the TUI right after its pane appeared. It did nothing, or said "That agent changed or disappeared", and a second click worked. The TUI now waits up to 3 s for the agent list to settle, showing "Waiting for agent…", and sends a selection again when the daemon was not ready for the new pane. When the pane cannot be selected, it says so.
+- The daemon's hook check no longer reads a failed check as replaced hooks. A `show-hooks` call that timed out or could not start was logged as `hooks-replaced`, and the daemon removed and installed its hooks again. Only hooks a successful check shows to be missing are repaired now.
+- The hook check slows down while a tmux server keeps failing it. On a server that was shutting down but could not exit, the repairs cost about 400 tmux calls a minute.
+- A window that tmux renames after its running command no longer counts as a change to the terminal inventory.
+- New daemon log lines: why a read of a tmux server answered 503 `server-unavailable`, a warning once a minute while a tmux server lists no sessions or does not answer, the control clients the daemon ended, and each refused client request with its reason.
+
 ## 2.9.23
 
 - Fix the daemon closing every terminal stream while it stayed up. Listing the tmux servers asked each one a question with a 500 ms limit, and a slow answer or a tmux that could not be started counted as "server gone": the daemon dropped its connection to that server, closed its streams and built a new connection on the next list. The Mac app lists servers on every catalog read, session open and session create, so it lost its terminals most often. In the reproduction (tmux answering in 0.7 s, one list request, one open stream) 2.9.22 closed the stream and took 5.7 s to answer; 2.9.23 closes nothing and answers in 0.5 s. A tmux that cannot be started because the process limit is reached gave the same drop before and gives none now.
