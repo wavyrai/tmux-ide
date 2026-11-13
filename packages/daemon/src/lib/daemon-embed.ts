@@ -139,7 +139,7 @@ import { FleetLifecycleAuthority } from "./fleet-lifecycle-authority.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
-import { evictOrphanedControlClientsOnOwnership } from "./orphaned-control-clients.ts";
+import { createOrphanedControlClientWatch } from "./orphaned-control-clients.ts";
 import {
   createTmuxInteractionObservationHandler,
   externalTmuxInteractionDraft,
@@ -1234,7 +1234,11 @@ async function startEmbeddedDaemonGeneration(
       : createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
     // The daemon's own server: a predecessor killed without a stop may have
     // left control clients attached to it.
-    void evictOrphanedControlClientsOnOwnership(fleetFactsTmuxRunner, null);
+    const defaultServerOrphanWatch = createOrphanedControlClientWatch({
+      selector: tmuxAuthority.socketSelector,
+      serverId: null,
+    });
+    void defaultServerOrphanWatch.onOwnership();
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner,
@@ -2006,7 +2010,12 @@ async function startEmbeddedDaemonGeneration(
           resolveNativeSurfaceContext: createNativeSurfaceContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             run: (args, signal) => fleetFactsTmuxRunner(args, signal),
             assertOpen: () => {
@@ -2022,7 +2031,12 @@ async function startEmbeddedDaemonGeneration(
           resolvePaneEditorContext: createPaneEditorContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -2038,7 +2052,12 @@ async function startEmbeddedDaemonGeneration(
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -2054,7 +2073,12 @@ async function startEmbeddedDaemonGeneration(
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -2066,12 +2090,19 @@ async function startEmbeddedDaemonGeneration(
                 throw new Error("Default reader owner is unavailable");
             },
           }),
-          catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+          catalog: createNativeTmuxServerCatalog(
+            workspaceRegistry,
+            fleetFactsTmuxRunner,
+            undefined,
+            defaultServerOrphanWatch.onTrouble,
+          ),
           readWindowSplitLayout: async (workspaceName, input) => {
             const target = WindowLinkTargetSchemaZ.parse(input);
             const sessions = await createNativeTmuxServerCatalog(
               workspaceRegistry,
               fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
             )();
             const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
             if (
@@ -2087,7 +2118,12 @@ async function startEmbeddedDaemonGeneration(
           },
           openAgent: async (liveSessionId, observed) => {
             const target = observedAgentSchema.parse(observed);
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            )();
             try {
               return await defaultSessionOpener.openAgent(liveSessionId, target);
             } finally {
@@ -2095,7 +2131,12 @@ async function startEmbeddedDaemonGeneration(
             }
           },
           openSession: async (liveSessionId) => {
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            )();
             const result = await defaultSessionOpener.openSession(liveSessionId);
             terminalInventoryRuntime!.invalidate();
             return result;

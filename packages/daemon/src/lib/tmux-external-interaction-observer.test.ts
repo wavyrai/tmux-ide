@@ -803,6 +803,75 @@ describe("tmux external interaction observer", () => {
     expect(delay).toBe(300_000);
   });
 
+  // Soak, 12 Nov: on a tmux server that was shutting down but could not exit,
+  // every repair "succeeded" and was gone a second later: about 400 tmux calls
+  // a minute for 16 minutes.
+  it("backs off when one unhealthy check follows another", () => {
+    const schedule = { baseMs: 1_000, maxMs: 30_000 };
+    expect(nextHookHealthcheckDelay(8_000, "repaired", schedule, 1)).toBe(1_000);
+    expect(nextHookHealthcheckDelay(1_000, "repaired", schedule, 2)).toBe(2_000);
+    expect(nextHookHealthcheckDelay(2_000, "failed", schedule, 3)).toBe(4_000);
+    expect(nextHookHealthcheckDelay(4_000, "repaired", schedule, 9)).toBe(30_000);
+    expect(nextHookHealthcheckDelay(4_000, "repaired", schedule, 1_000)).toBe(30_000);
+    // A healthy check ends the streak; the caller passes 0 or 1 again.
+    expect(nextHookHealthcheckDelay(30_000, "repaired", schedule)).toBe(1_000);
+    expect(nextHookHealthcheckDelay(30_000, "repaired", schedule, Number.NaN)).toBe(1_000);
+  });
+
+  it("repairs hooks that keep vanishing at a falling rate, and promptly again after a healthy check", async () => {
+    vi.useFakeTimers();
+    const hooks = new Map<string, string>();
+    let vanish = true;
+    let installs = 0;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      healthcheck: { baseMs: 1_000, maxMs: 60_000 },
+      onObserved: () => false,
+      onGap: () => undefined,
+      io: {
+        runTmux: async (args) => {
+          if (args.includes("if-shell")) return "tmux-ide-drain-consumed";
+          if (args[0] === "show-hooks") return vanish ? "" : showHooks(args, hooks);
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            if (args[2] === "after-send-keys") installs += 1;
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          return "";
+        },
+        waitForSignal: async (_channel, signal) =>
+          new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          }),
+        delay: async () => undefined,
+      },
+    });
+    try {
+      await observer.start();
+      const afterStart = installs;
+      // Repairs at 1 s, 2 s, 4 s, 8 s and 16 s: five in 16 s, not sixteen.
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(installs - afterStart).toBe(5);
+      expect(observer.healthcheckDelayMs).toBe(16_000);
+      // The hooks hold again: the next check is healthy and the streak ends.
+      vanish = false;
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(installs - afterStart).toBe(5);
+      vanish = true;
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(observer.healthcheckDelayMs).toBe(1_000);
+    } finally {
+      await observer.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("verifies each hook array by its own lines in combined show-hooks output", () => {
     const owned = `tmux-ide-interaction-v3-${DAEMON}`;
     const combined = [

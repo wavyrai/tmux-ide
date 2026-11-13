@@ -54,7 +54,7 @@ import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-sessio
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
-import { evictOrphanedControlClientsOnOwnership } from "./orphaned-control-clients.ts";
+import { createOrphanedControlClientWatch } from "./orphaned-control-clients.ts";
 import { InteractionReceiptJournal } from "./interaction-receipt-journal.ts";
 import { InteractionObservationStatusStore } from "./interaction-observation-status.ts";
 import { InteractionEvidenceAuthority } from "./interaction-evidence-authority.ts";
@@ -119,9 +119,18 @@ export function createNativeTmuxServerCatalog(
   workspaceRegistry: WorkspaceRegistry,
   run: (args: readonly string[], signal?: AbortSignal) => Promise<string>,
   assertOpen: () => void = () => undefined,
+  /** Told when the server has no sessions or does not answer; never awaited. */
+  onTrouble?: (kind: "no-sessions" | "unanswered") => unknown,
 ): () => Promise<NativeLiveSessionSummary[]> {
   return async (): Promise<NativeLiveSessionSummary[]> => {
     assertOpen();
+    const tell = (kind: "no-sessions" | "unanswered"): void => {
+      try {
+        void Promise.resolve(onTrouble?.(kind)).catch(() => undefined);
+      } catch {
+        /* A watcher never decides the catalog. */
+      }
+    };
     const raw = await run(
       [
         "-N",
@@ -140,7 +149,10 @@ export function createNativeTmuxServerCatalog(
           .join(" "),
       ],
       AbortSignal.timeout(2_000),
-    );
+    ).catch((error: unknown) => {
+      tell("unanswered");
+      throw error;
+    });
     assertOpen();
     const rows = new Map<
       string,
@@ -154,7 +166,9 @@ export function createNativeTmuxServerCatalog(
     >();
     // Only the successful server-side zero-session branch proves emptiness.
     // Command errors, unsupported formats and unwitnessed blank output stay failures.
-    const lines = raw.trim() === "tmux-ide-empty-catalog-v1" ? [] : raw.trim().split("\n");
+    const empty = raw.trim() === "tmux-ide-empty-catalog-v1";
+    if (empty) tell("no-sessions");
+    const lines = empty ? [] : raw.trim().split("\n");
     for (const line of lines) {
       const [pid, id, created, name, pane, window, activity, ...pathParts] = line.split("\t");
       const dir = pathParts.join("\t");
@@ -242,7 +256,11 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     authority,
     nativeServerIdentity,
   );
-  void evictOrphanedControlClientsOnOwnership(generationRunAsync, options.serverId);
+  const orphanWatch = createOrphanedControlClientWatch({
+    selector: authority.socketSelector,
+    serverId: options.serverId,
+  });
+  void orphanWatch.onOwnership();
   const multiplexer = new WorkspaceMultiplexerAuthority({
     daemonInstanceId: generation,
     registry: workspaceRegistry,
@@ -542,7 +560,12 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     registry: sessionRuntimeRegistry,
     resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null,
   });
-  const catalog = createNativeTmuxServerCatalog(workspaceRegistry, generationRunAsync, assertOpen);
+  const catalog = createNativeTmuxServerCatalog(
+    workspaceRegistry,
+    generationRunAsync,
+    assertOpen,
+    orphanWatch.onTrouble,
+  );
   const sessionCreator = createNativeTmuxSessionCreator({
     generation,
     registry: workspaceRegistry,
