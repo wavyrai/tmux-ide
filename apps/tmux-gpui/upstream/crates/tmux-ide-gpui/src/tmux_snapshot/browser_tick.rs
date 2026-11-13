@@ -203,3 +203,7 @@ mod tests;
 #[cfg(test)]
 #[path = "browser_tick_idle_tests.rs"]
 mod idle_tests;
+
+#[cfg(test)]
+#[path = "browser_tick_reconnect_tests.rs"]
+mod reconnect_tests;
