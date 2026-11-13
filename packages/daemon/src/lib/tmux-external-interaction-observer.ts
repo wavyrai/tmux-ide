@@ -647,9 +647,18 @@ export class TmuxExternalInteractionObserver {
     const work = this.#serializeTmux(async () => {
       const finish = this.#beginDiagnostic("healthcheck");
       try {
-        if (await this.#ownedHooksPresent(this.#abort.signal)) {
+        const hooks = await this.#ownedHooksPresent(this.#abort.signal);
+        if (hooks === "present") {
           this.#lastHealthcheckOutcome = "healthy";
           finish(true);
+          return;
+        }
+        if (hooks === "unknown") {
+          // The check could not be made (tmux timed out or could not be
+          // started). That says nothing about the hooks: leave them, report
+          // no gap, and ask again at the base cadence.
+          this.#lastHealthcheckOutcome = "failed";
+          finish(false);
           return;
         }
         // Hooks that were installed and are now gone dropped every interaction
@@ -917,7 +926,7 @@ export class TmuxExternalInteractionObserver {
     this.#setInstalled(false);
   }
 
-  async #ownedHooksPresent(signal?: AbortSignal): Promise<boolean> {
+  async #ownedHooksPresent(signal?: AbortSignal): Promise<"present" | "missing" | "unknown"> {
     // One client verifies both hook arrays: tmux runs the `;`-separated list in
     // a single command queue and prints each array's lines in order.
     let output: string;
@@ -927,12 +936,12 @@ export class TmuxExternalInteractionObserver {
         signal,
       );
     } catch {
-      return false;
+      return "unknown";
     }
-    return (
-      ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
+    return ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
       ownedHookInstalled(output, "after-capture-pane", this.#bufferName)
-    );
+      ? "present"
+      : "missing";
   }
 
   get available(): boolean {

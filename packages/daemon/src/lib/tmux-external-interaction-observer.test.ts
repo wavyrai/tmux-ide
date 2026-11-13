@@ -902,6 +902,93 @@ describe("tmux external interaction observer", () => {
     }
   });
 
+  // A check that could not be made says nothing about the hooks. Before, a
+  // timed-out or failed `show-hooks` (a loaded machine, a failed fork) was
+  // logged as "hooks-replaced" and the hooks were removed and installed again.
+  it("does not call the hooks replaced when the check itself fails", async () => {
+    vi.useFakeTimers();
+    const hooks = new Map<string, string>();
+    const calls: string[] = [];
+    const gaps = vi.fn();
+    let failChecks = 0;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      healthcheck: { baseMs: 1_000, maxMs: 4_000 },
+      onObserved: () => false,
+      onGap: gaps,
+      io: {
+        runTmux: async (args) => {
+          calls.push(args[0] === "set-hook" ? `set-hook ${String(args[1])}` : String(args[0]));
+          if (args.includes("if-shell")) return "tmux-ide-drain-consumed";
+          if (args[0] === "show-hooks") {
+            if (failChecks > 0) {
+              failChecks -= 1;
+              throw new Error("tmux timed out");
+            }
+            return showHooks(args, hooks);
+          }
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          if (args[0] === "set-hook" && args[1] === "-gu") {
+            hooks.delete(args[2]!.replace(/\[[0-9]+\]$/u, ""));
+          }
+          return "";
+        },
+        waitForSignal: async (_channel, signal) =>
+          new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          }),
+        delay: async () => undefined,
+      },
+    });
+    const count = (operation: string) => calls.filter((call) => call === operation).length;
+    try {
+      await observer.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(observer.healthcheckDelayMs).toBe(2_000);
+      const installs = count("set-hook -ag");
+      const removals = count("set-hook -gu");
+      const checks = count("show-hooks");
+
+      // The next check cannot be made.
+      failChecks = 1;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(count("show-hooks")).toBe(checks + 1);
+      expect(gaps).not.toHaveBeenCalled();
+      expect(observer.available).toBe(true);
+      // The hooks are left as they are: nothing removed, nothing installed again.
+      expect(count("set-hook -ag")).toBe(installs);
+      expect(count("set-hook -gu")).toBe(removals);
+      // It is asked again soon, and that answer is believed.
+      expect(observer.healthcheckDelayMs).toBe(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(count("show-hooks")).toBe(checks + 2);
+      expect(gaps).not.toHaveBeenCalled();
+      expect(observer.healthcheckDelayMs).toBe(2_000);
+
+      // Hooks that a check shows to be gone are still reported and repaired.
+      hooks.clear();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(gaps).toHaveBeenCalledTimes(1);
+      expect(gaps).toHaveBeenCalledWith({
+        reason: "hooks-replaced",
+        recovery: "future-observations-only",
+      });
+      expect(hooks.get("after-send-keys")).toContain(`tmux-ide-interaction-v3-${DAEMON}`);
+    } finally {
+      await observer.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("returns to the base health-check cadence when the signal waiter fails", async () => {
     vi.useFakeTimers();
     const hooks = new Map<string, string>();
