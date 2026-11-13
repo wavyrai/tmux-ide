@@ -293,6 +293,19 @@ fn home_publishes_the_service_version_only_while_its_catalog_is_live() {
     local.state.surface = Surface::Home;
     local.publish().unwrap();
     assert!(published(&events).unwrap().service_version.is_some());
+    // A fault that keeps the list on screen (the service needs an update)
+    // still means the list is not live: no version beside it.
+    local
+        .home_catalog_failed(DaemonError::Incompatible(3))
+        .unwrap();
+    let faulted = published(&events).unwrap();
+    assert!(faulted.home_fault && faulted.home_phase == HomePhase::Live);
+    assert_eq!(faulted.service_version, None);
+    local.home_recovered();
+    let mut snapshot = catalog("instance-a");
+    snapshot.service_version = Some("2.9.22".into());
+    local.receive_catalog(snapshot, false).unwrap();
+    assert!(published(&events).unwrap().service_version.is_some());
     // The list is lost: the version goes with it.
     local.unavailable("No online tmux servers").unwrap();
     assert_eq!(published(&events).unwrap().service_version, None);
