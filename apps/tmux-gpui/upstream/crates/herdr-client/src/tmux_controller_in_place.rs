@@ -20,8 +20,8 @@
 //!   change, which the app answers with a new lease.
 //! - A pane whose source the daemon closed must be removed by a frame within
 //!   [`REMOVAL_MS`] too, with the same answer.
-//! - The delivery of a pane that is being closed often breaks off a moment
-//!   before its frame, and the pane has no cells then. The window as it was
+//! - The daemon often takes a closing pane's cells back (a tombstone) a
+//!   moment before the frame that removes the pane. The window as it was
 //!   stays up for at most [`REMOVAL_MS`], without input; with no frame and
 //!   no new cells by then it goes, as on a stream without the capability.
 use super::*;
