@@ -120,7 +120,8 @@ fn a_stream_that_did_not_agree_to_it_refuses_the_frame() {
 /// holds. Anything else ends the stream, and the caller leases a new one.
 #[test]
 fn a_frame_that_disagrees_with_this_sides_set_ends_the_stream() {
-    let many: Vec<String> = (0..25).map(|n| format!("pane.n{n}")).collect();
+    // Two panes are held: 23 more make 25, one over the bound.
+    let many: Vec<String> = (0..23).map(|n| format!("pane.n{n}")).collect();
     let many_refs: Vec<&str> = many.iter().map(String::as_str).collect();
     let mut over = many_refs.clone();
     over.push("pane.a");
@@ -151,7 +152,7 @@ fn a_frame_that_disagrees_with_this_sides_set_ends_the_stream() {
             topology(1, &["pane.a", "pane.b"], &[], &["pane.c"]),
         ),
         ("no pane left", topology(1, &[], &["pane.a", "pane.b"], &[])),
-        ("more than 24 panes", topology(1, &over, &[], &many_refs)),
+        ("25 panes", topology(1, &over, &[], &many_refs)),
         (
             "a pane named twice",
             topology(
@@ -171,6 +172,19 @@ fn a_frame_that_disagrees_with_this_sides_set_ends_the_stream() {
             ),
         ),
         (
+            "a pane added twice and named twice",
+            topology(
+                1,
+                &["pane.a", "pane.b", "pane.c", "pane.c"],
+                &[],
+                &["pane.c", "pane.c"],
+            ),
+        ),
+        (
+            "a pane removed twice",
+            topology(1, &["pane.a"], &["pane.b", "pane.b"], &[]),
+        ),
+        (
             "an invalid pane id",
             topology(1, &["pane.a", "pane.b", "../x"], &[], &["../x"]),
         ),
@@ -188,6 +202,12 @@ fn a_frame_that_disagrees_with_this_sides_set_ends_the_stream() {
         assert!(wire::parse_live(&delivery_ready("pane.b"), &options, &mut live, true).is_ok());
         assert!(wire::parse_live(&delivery_ready("pane.c"), &options, &mut live, true).is_err());
     }
+    // 24 panes are the most a stream carries, and they are taken.
+    let (options, mut live) = opened(Some(true));
+    assert_eq!(over.len(), 25);
+    let full = topology(1, &over[1..], &[], &many_refs[1..]);
+    assert!(wire::parse_live(&full.to_string(), &options, &mut live, true).is_ok());
+    assert!(wire::parse_live(&delivery_ready("pane.n22"), &options, &mut live, true).is_ok());
     // An unknown field or a missing one is not this frame.
     let (options, mut live) = opened(Some(true));
     let mut extra = topology(1, &["pane.a"], &["pane.b"], &[]);

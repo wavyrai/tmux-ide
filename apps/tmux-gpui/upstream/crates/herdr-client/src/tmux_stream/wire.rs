@@ -204,7 +204,6 @@ impl Live {
             || !frame.panes.iter().all(|pane| valid_pane(pane))
             || !unique(&frame.panes)
             || !unique(&frame.removed)
-            || !unique(&frame.added)
             || !frame.removed.iter().all(known)
             || frame.added.iter().any(known)
             || expected != named
