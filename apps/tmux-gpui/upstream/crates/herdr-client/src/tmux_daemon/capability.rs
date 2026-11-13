@@ -56,6 +56,7 @@ fn offered_versions(
     local_images: bool,
     native_surfaces: bool,
     interactive: bool,
+    bundle: bool,
 ) -> Vec<u32> {
     let graphics_bundle = if local_images { 114 } else { 113 };
     let mut versions = if graphics {
@@ -73,18 +74,50 @@ fn offered_versions(
     // tmux client splits or closes a pane. A daemon that predates it ignores
     // the number and closes with 1012 as before. Every daemon refuses an
     // offer of more than nine numbers, and an interactive stream with native
-    // surfaces already offers nine: there 119 is left out until the daemon
-    // gives it a bundle number, and a pane change re-leases as before.
+    // surfaces already offers nine. There 120, which is 118 and 119 as one
+    // number, takes the place of 118, but only for a daemon that knows 120:
+    // any other would give neither. For those a pane change re-leases as
+    // before.
     if versions.len() < MAX_OFFERED_VERSIONS {
         versions.push(TOPOLOGY_IN_PLACE);
+    } else if bundle {
+        for version in &mut versions {
+            if *version == 118 {
+                *version = READER_TOPOLOGY_BUNDLE;
+            }
+        }
     }
     versions
+}
+/// Whether a daemon of this product version knows capability 120. Only a
+/// plain release number counts: for anything else 118 stays in the offer.
+fn knows_topology_bundle(product_version: Option<&str>) -> bool {
+    let Some(version) = product_version else {
+        return false;
+    };
+    let mut parts = version.split('.').map(|part| {
+        (!part.is_empty() && part.len() <= 9 && part.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
+    });
+    let (Some(Some(major)), Some(Some(minor)), Some(Some(patch)), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    [major, minor, patch] >= TOPOLOGY_BUNDLE_SINCE
 }
 /// The daemon's bound on `terminalDelivery.protocolVersions` (contracts
 /// terminal-delivery.ts): one number more and the issue request is refused.
 const MAX_OFFERED_VERSIONS: usize = 9;
 /// Capability 119: the stream follows pane changes in place.
 const TOPOLOGY_IN_PLACE: u32 = 119;
+/// Capability 120: 118 and 119 as one number, for an offer that is full.
+const READER_TOPOLOGY_BUNDLE: u32 = 120;
+/// The first daemon release that knows capability 120. An earlier daemon
+/// that is offered 120 gives neither 118 nor 119, so this must not be lower
+/// than the release the daemon side of #723 ships in.
+const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 24];
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;
@@ -169,6 +202,7 @@ impl ServerClient {
             local_images.is_some(),
             native_surfaces,
             selection.mode == ViewerMode::Interactive,
+            knows_topology_bundle(daemon_version.as_deref()),
         );
         let body=serde_json::json!({"requestId":request_id,"expectedDaemonInstanceId":scope.generation,
             "stream":{"protocolVersion":2,"workspaceName":selection.workspace_name,"panes":selection.visible_panes,"viewerMode":selection.mode,
