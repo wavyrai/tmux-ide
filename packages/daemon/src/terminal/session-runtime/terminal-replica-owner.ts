@@ -128,6 +128,7 @@ export class SessionRuntimeTerminalReplicaOwner {
   #historyTimer: SessionRuntimeTimer | null = null;
   #historyChecking = false;
   #historyDirty = false;
+  #reconstructedHistoryGap: { readonly seed: number; readonly gap: number } | null = null;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -515,7 +516,20 @@ export class SessionRuntimeTerminalReplicaOwner {
       )
         return;
       const seed = this.#interpreter.currentSeed();
-      if (seed && seed.snapshot.history.length !== size) upstream.reseed();
+      if (!seed || seed.snapshot.history.length === size) return;
+      // A seed with reconstructed tabs can differ from tmux in row count, and
+      // a new capture would paint the same rows again. Accept the difference
+      // that seed has; reseed only when the difference changes.
+      const reconstructed = this.#interpreter.reconstructedSeed();
+      if (reconstructed !== null) {
+        const gap = size - seed.snapshot.history.length;
+        if (this.#reconstructedHistoryGap?.seed !== reconstructed) {
+          this.#reconstructedHistoryGap = { seed: reconstructed, gap };
+          return;
+        }
+        if (this.#reconstructedHistoryGap.gap === gap) return;
+      }
+      upstream.reseed();
     } catch {
       // Unavailable metadata is not evidence that history disappeared.
     } finally {
