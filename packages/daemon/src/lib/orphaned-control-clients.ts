@@ -71,7 +71,9 @@ export function commandTargetsServer(command: string, selector: TmuxServerSelect
 /** init, or a service manager that adopts orphans in its place. */
 function adoptsOrphans(pid: number, command: string | null): boolean {
   if (pid === 1) return true;
-  return command !== null && /(?:^|\/)(?:systemd|launchd|init)(?:\s|$)/u.test(command);
+  // The command's own name (its first word, with or without a path), never a
+  // word further on: a daemon run as `… --supervised launchd-user` is no manager.
+  return command !== null && /^(?:\S*\/)?(?:systemd|launchd|init)(?:\s|$)/u.test(command);
 }
 
 /**
