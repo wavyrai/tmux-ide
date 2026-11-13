@@ -512,3 +512,47 @@ fn tab_reaches_each_sessions_open_button(cx: &mut TestAppContext) {
         "Return on Open sends the open"
     );
 }
+
+/// A focused Open button whose row goes away (its session ended, or the
+/// list was lost) does not keep the keyboard on nothing: the welcome's
+/// start button takes it, and Tab and Return work again.
+#[gpui::test]
+fn a_focused_open_button_that_disappears_hands_the_keyboard_on(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    draw(cx);
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                v.welcome.focus.iter().position(|f| f.is_focused(window))
+            })
+        })
+    };
+    // The second row goes, then the first: each time its Open had the keyboard.
+    for gone in [1usize, 0] {
+        for _ in 0..8 {
+            if focused(cx) == Some(3 + gone) {
+                break;
+            }
+            press(cx, "tab", false);
+        }
+        assert_eq!(focused(cx), Some(3 + gone), "fixture: on row {gone}'s Open");
+        cx.update(|_, cx| {
+            view.update(cx, |v, cx| {
+                v.browser_state.sessions.truncate(gone);
+                cx.notify();
+            })
+        });
+        draw(cx);
+        assert!(shown(cx), "the welcome stays open");
+        let at = focused(cx);
+        assert!(
+            at.is_some_and(|stop| stop < 3 + gone),
+            "the keyboard is on a button that is on screen: {at:?}"
+        );
+        press(cx, "tab", false);
+        assert_ne!(focused(cx), at, "Tab moves again");
+    }
+    let _ = rx;
+}

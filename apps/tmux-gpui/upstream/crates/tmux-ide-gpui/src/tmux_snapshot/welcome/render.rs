@@ -58,13 +58,21 @@ impl SnapshotView {
             acts.push((1, primary.act.clone()));
         }
         acts.push((2, Act::Close));
-        if self.welcome_may_take_focus(window, cx)
-            && !focus.iter().any(|f| f.contains_focused(window, cx))
+        let start = acts
+            .iter()
+            .find(|(i, _)| *i == 1)
+            .map_or(acts[0].0, |(i, _)| *i);
+        // A session row that is gone (the session ended, or the list was
+        // lost) takes its Open button with it. If that button had the
+        // keyboard, nothing on screen has it now: hand it to the start stop.
+        let stranded = focus
+            .iter()
+            .enumerate()
+            .any(|(stop, handle)| stop >= 3 + opens.len() && handle.is_focused(window));
+        if stranded
+            || (self.welcome_may_take_focus(window, cx)
+                && !focus.iter().any(|f| f.contains_focused(window, cx)))
         {
-            let start = acts
-                .iter()
-                .find(|(i, _)| *i == 1)
-                .map_or(acts[0].0, |(i, _)| *i);
             focus[start].focus(window, cx);
         }
         let acts: Vec<(usize, Act)> = opens.into_iter().chain(acts).collect();

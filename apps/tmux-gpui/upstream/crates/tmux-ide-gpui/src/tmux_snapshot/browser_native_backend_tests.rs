@@ -225,8 +225,18 @@ fn browser_controls_are_read_while_input_is_not_ready() {
             revision: 1,
         })
         .unwrap();
-    std::thread::sleep(Duration::from_millis(100));
-    while output.try_recv().is_ok() {}
+    // The worker passes the change on once it has taken it: only what
+    // follows that was sent from the background.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match output.recv_timeout(Duration::from_millis(50)) {
+            Ok(Command::Presence { active: false, .. }) => break,
+            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                assert!(Instant::now() < deadline, "the worker never went back");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the worker stopped"),
+        }
+    }
     std::thread::sleep(Duration::from_millis(1600));
     assert!(
         !output
