@@ -559,7 +559,7 @@ has no equivalent trace and remains inconclusive. Diagnostic evidence is in
 `evidence/pane-selection-2026-10-09/authority-physical-trace.log` and
 `activation-actions.json`. No authority override or production sessions were used.
 
-The bridge now says “Window inactive — activate tmux-ide to type” for this
+The bridge now says “Window inactive — activate Tmux IDE to type” for this
 background state. The same isolated browser journey failed before and passed
 after the status-only patch; input admission is unchanged. Independent review
 approved. Typecheck and deterministic bridge checks passed (56 passed, 2

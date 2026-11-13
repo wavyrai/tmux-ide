@@ -90,7 +90,7 @@ fn a_resize_that_is_never_answered_says_the_connection_is_lost(cx: &mut TestAppC
             assert!(!view.browser_state.input_ready);
             assert_eq!(
                 view.browser_state.status,
-                "Connection lost. Reopen tmux-ide to reconnect."
+                "Connection lost. Reopen Tmux IDE to reconnect."
             );
         })
     });

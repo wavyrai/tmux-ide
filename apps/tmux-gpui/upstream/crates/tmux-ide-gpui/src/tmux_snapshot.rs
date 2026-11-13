@@ -602,7 +602,7 @@ impl SnapshotView {
             } else {
                 (
                     "Waiting for a pane",
-                    "If the connection was lost, reopen tmux-ide to reconnect.",
+                    "If the connection was lost, reopen Tmux IDE to reconnect.",
                 )
             };
             return shell::empty_pane(&bezel, title, hint).into_any_element();

@@ -124,7 +124,7 @@ fn mailbox_old_request_before_and_after_new_ready_cannot_restore_retired_pane(
             assert!(view.divider.is_none());
             assert_eq!(
                 view.browser_state.status,
-                "Connection lost. Reopen tmux-ide to reconnect."
+                "Connection lost. Reopen Tmux IDE to reconnect."
             );
             assert!(!view.terminal_input_ready());
             assert!(receiver.try_recv().is_err());
