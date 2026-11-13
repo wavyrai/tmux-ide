@@ -3825,7 +3825,8 @@ export class SessionChannel {
         !leftLayout ||
         !rightLayout ||
         leftWindow.semanticId !== rightWindow.semanticId ||
-        leftWindow.name !== rightWindow.name ||
+        // Not the name: tmux derives it from the running command, and the
+        // pane rows' own check ignores it too (sameSessionPaneInventory, #730).
         leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus ||
         leftWindow.modeKeys !== rightWindow.modeKeys ||
         !layoutIdentitiesEqual(leftLayout, rightLayout)

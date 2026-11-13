@@ -167,3 +167,81 @@ fn a_full_pending_queue_refuses_commands_and_keeps_the_loop() {
     assert!(delivered, "the loop stopped forwarding after the refusal");
     assert!(!matches!(bridge.mailbox.lock().unwrap().take(), Some(None)));
 }
+
+/// #646: a browser pane's header (its address, title and history) is read
+/// while the window is in front, whether or not the terminal takes input
+/// yet. Input readiness gates what is sent to a page, not what is read.
+#[test]
+fn browser_controls_are_read_while_input_is_not_ready() {
+    let (events, receiver) = mpsc::sync_channel(8);
+    let (commands, output) = mpsc::sync_channel(64);
+    let bridge = start_events(Default::default(), receiver, true, move || {
+        move |command| {
+            commands
+                .try_send(command)
+                .map_err(|_| Error::Invalid("owner closed"))
+        }
+    });
+    let pane = |id: &str, icon: Option<&str>| Choice {
+        pane_count: None,
+        id: id.into(),
+        label: id.into(),
+        window_id: Some("window".into()),
+        window_label: None,
+        browser_icon: icon.map(str::to_owned),
+        display_name_source: None,
+    };
+    events
+        .send(Incoming::Catalog(Box::new(State {
+            request: 6,
+            panes: vec![pane("shell", None), pane("browser", Some("globe"))],
+            selected_pane: Some("shell".into()),
+            input_ready: false,
+            ..State::default()
+        })))
+        .unwrap();
+    let state = next_state(&bridge.mailbox).unwrap();
+    assert!(!state.input_ready);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let read = loop {
+        match output.recv_timeout(Duration::from_millis(50)) {
+            Ok(Command::BrowserControls {
+                request,
+                id,
+                command: None,
+            }) => break (request, id),
+            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                assert!(Instant::now() < deadline, "the header was never read");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the worker stopped"),
+        }
+    };
+    assert_eq!(read, (6, "browser".to_owned()));
+    // Behind another window nothing is read.
+    bridge
+        .commands
+        .send(Command::Presence {
+            active: false,
+            revision: 1,
+        })
+        .unwrap();
+    // The worker passes the change on once it has taken it: only what
+    // follows that was sent from the background.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match output.recv_timeout(Duration::from_millis(50)) {
+            Ok(Command::Presence { active: false, .. }) => break,
+            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {
+                assert!(Instant::now() < deadline, "the worker never went back");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the worker stopped"),
+        }
+    }
+    std::thread::sleep(Duration::from_millis(1600));
+    assert!(
+        !output
+            .try_iter()
+            .any(|command| matches!(command, Command::BrowserControls { .. })),
+        "a window in the background reads no header"
+    );
+}

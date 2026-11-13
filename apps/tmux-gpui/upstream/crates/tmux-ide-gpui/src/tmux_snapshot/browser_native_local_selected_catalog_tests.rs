@@ -62,8 +62,15 @@ fn a_dropped_lane_waits_for_the_retry_then_resumes() {
     assert!(gate.release());
     assert!(gate.recovering && !gate.held);
     assert!(!gate.release(), "one release per drop");
-    gate.poll(&source, true, true).unwrap();
-    assert!(gate.watch.is_some(), "the retry connects again");
+    // The retry starts a watch. This fixture's path has no daemon, so the
+    // watch's thread fails, and it may have failed by the time the same poll
+    // asks it: then the poll reports that failure and drops the watch. Either
+    // is a watch that was started; which one the test sees is only timing.
+    let notice = gate.poll(&source, true, true).unwrap();
+    assert!(
+        gate.watch.is_some() || matches!(notice, Some(Notice::Failed(_))),
+        "the retry connects again"
+    );
 }
 /// With no kept catalog there is nothing to resume: Home reads from scratch.
 #[test]

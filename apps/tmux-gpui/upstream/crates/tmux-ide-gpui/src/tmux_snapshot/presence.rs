@@ -26,6 +26,10 @@ impl Presence {
     pub(super) fn active(&self) -> bool {
         self.active
     }
+    /// A transition [`Self::flush`] has yet to queue.
+    pub(super) fn unflushed(&self) -> bool {
+        self.pending_background || self.last_queued != Some(self.active)
+    }
     /// Identifies the active transition already queued to the native worker, not its ACK.
     pub(super) fn queued_active_revision(&self) -> Option<u64> {
         (self.active && !self.pending_background && self.last_queued == Some(true))
