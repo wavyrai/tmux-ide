@@ -117,7 +117,7 @@ const READER_TOPOLOGY_BUNDLE: u32 = 120;
 /// The first daemon release that knows capability 120. An earlier daemon
 /// that is offered 120 gives neither 118 nor 119, so this must not be lower
 /// than the release the daemon side of #723 ships in.
-const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 24];
+const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 25];
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;
