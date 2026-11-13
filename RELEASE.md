@@ -130,6 +130,10 @@ production services or login lingering.
 2. Run `tmux-ide doctor --json` and `tmux-ide app`.
 3. Verify the npm page, GitHub assets, docs site, and retry path:
    `tmux-ide update --tui-binary`.
+4. For a stable release, check that the "Bump Homebrew tap" job is green. It
+   fails when `TAP_PUSH_TOKEN` is missing or expired; the npm release is
+   already out by then. Fix the secret (`packaging/homebrew/README.md`) and
+   re-run that job.
 
 ## Separate native alpha distribution
 

@@ -410,6 +410,8 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
         }
     };
     let next = build(bezel_theme::Appearance::Dark);
+    #[cfg(test)]
+    appearance_hold::hold(next.appearance);
     if cx
         .try_global::<Bridged>()
         .is_some_and(|Bridged(current, glass)| current == theme && *glass == next.glass)
@@ -422,6 +424,64 @@ pub(super) fn prepare(theme: &Theme, native_glass: bool, cx: &mut App) {
     bezel_theme::AppExt::set_palette(cx, build);
     cx.set_global(Bridged(theme.clone(), next.glass));
     cx.set_global(next);
+}
+
+/// Bezel's paint helpers read one appearance for the whole process, and tests
+/// run in parallel. A test that draws a light theme would otherwise change the
+/// ink under another test's dark window, mid-draw or between its draws.
+///
+/// So a test's thread holds the appearance it draws in, from that draw until
+/// the thread ends or it draws in the other one. Tests that hold the same
+/// appearance run together; a test that needs the other one waits until no
+/// test holds the first.
+#[cfg(test)]
+mod appearance_hold {
+    use bezel_theme::Appearance;
+    use std::{
+        cell::Cell,
+        sync::{Condvar, Mutex, PoisonError},
+    };
+
+    /// The appearance held, and by how many threads.
+    static HOLDERS: Mutex<(Appearance, usize)> = Mutex::new((Appearance::Dark, 0));
+    static RELEASED: Condvar = Condvar::new();
+
+    struct Held(Cell<Option<Appearance>>);
+    impl Held {
+        fn release(&self) {
+            if self.0.take().is_some() {
+                HOLDERS.lock().unwrap_or_else(PoisonError::into_inner).1 -= 1;
+                RELEASED.notify_all();
+            }
+        }
+    }
+    impl Drop for Held {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+    thread_local! {
+        static HELD: Held = const { Held(Cell::new(None)) };
+    }
+
+    pub(super) fn hold(appearance: Appearance) {
+        HELD.with(|held| {
+            if held.0.get() == Some(appearance) {
+                return;
+            }
+            // Never wait while holding: two tests that each change appearance
+            // would wait on each other.
+            held.release();
+            let mut holders = HOLDERS.lock().unwrap_or_else(PoisonError::into_inner);
+            while holders.1 > 0 && holders.0 != appearance {
+                holders = RELEASED
+                    .wait(holders)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+            *holders = (appearance, holders.1 + 1);
+            held.0.set(Some(appearance));
+        });
+    }
 }
 
 #[cfg(test)]
@@ -759,6 +819,50 @@ mod tests {
                 gpui::WindowBackgroundAppearance::Opaque
             );
         });
+    }
+
+    /// #762: each thread here stands for one test of the suite.
+    #[test]
+    fn a_test_that_draws_keeps_its_appearance_until_it_ends() -> anyhow::Result<()> {
+        use bezel_theme::{Appearance, current_appearance};
+        use std::sync::mpsc;
+        let draws = |theme: Theme| {
+            let cx = TestAppContext::single();
+            cx.update(|cx| prepare(&theme, false, cx));
+            current_appearance()
+        };
+        let panicked = |_| anyhow::anyhow!("a test thread panicked");
+        let (drew_light, light_is_up) = mpsc::channel();
+        let (end, ended) = mpsc::channel::<()>();
+        let first = std::thread::spawn(move || {
+            let drawn = draws(light());
+            let _ = drew_light.send(drawn);
+            let _ = ended.recv();
+            current_appearance()
+        });
+        assert_eq!(light_is_up.recv()?, Appearance::Light);
+        let (drew_dark, dark_is_up) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            let _ = drew_dark.send(draws(Theme::default()));
+        });
+        assert!(
+            dark_is_up
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "a dark test drew while a light one was still running"
+        );
+        // A test in the same appearance does not wait.
+        let third = std::thread::spawn(move || draws(light()));
+        assert_eq!(third.join().map_err(panicked)?, Appearance::Light);
+        end.send(())?;
+        assert_eq!(
+            first.join().map_err(panicked)?,
+            Appearance::Light,
+            "the first test's appearance changed under it"
+        );
+        assert_eq!(dark_is_up.recv()?, Appearance::Dark);
+        second.join().map_err(panicked)?;
+        Ok(())
     }
 
     #[gpui::test]

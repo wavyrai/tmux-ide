@@ -46,7 +46,7 @@ impl SnapshotView {
         renderer_probe::runtime::tick();
         if !self.terminal_input_ready() || self.selection.is_some() || self.divider.is_some() {
             self.fit_settle.clear();
-        } else if self.fit_settle.due(std::time::Instant::now()) {
+        } else if self.fit_settle.due(super::geometry::fit_now()) {
             cx.notify();
         }
         self.flush_attention();

@@ -61,8 +61,19 @@ fn a_dropped_lane_waits_for_the_retry_then_resumes() {
     assert!(gate.release());
     assert!(gate.recovering && !gate.held);
     assert!(!gate.release(), "one release per drop");
-    gate.poll(&source, true, true).unwrap();
-    assert!(gate.watch.is_some(), "the retry connects again");
+    // The fixture's daemon does not exist, so the new connection fails as soon
+    // as its thread runs. On a loaded machine that was within this same poll,
+    // which then reports the failure and drops the watch.
+    let failed_already = matches!(
+        gate.poll(&source, true, true).unwrap(),
+        Some(Notice::Failed(
+            herdr_client::tmux_daemon::Error::CatalogWatch(_)
+        ))
+    );
+    assert!(
+        gate.watch.is_some() || failed_already,
+        "the retry connects again"
+    );
 }
 /// With no kept catalog there is nothing to resume: Home reads from scratch.
 #[test]

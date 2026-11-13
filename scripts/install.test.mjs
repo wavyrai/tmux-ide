@@ -8,6 +8,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const installer = path.resolve("docs/public/install.sh");
+// Linux runs the installer under dash and macOS under bash; either can be chosen here.
+const shell = process.env.TMUX_IDE_INSTALLER_TEST_SHELL || "/bin/sh";
 const quote = (s) => "'" + s.replaceAll("'", "'\\''") + "'";
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tmux-installer-"));
@@ -23,14 +25,25 @@ function fixture(t) {
   }
   script(
     "uname",
-    `case "$1" in -s) echo "\${MOCK_OS:-${platform === "darwin" ? "Darwin" : "Linux"}}" ;; -m) echo "\${MOCK_ARCH:-${arch === "arm64" ? "arm64" : "x86_64"}}" ;; esac\n`,
+    `case "$1" in -s) echo "\${MOCK_OS:-${platform === "darwin" ? "Darwin" : "Linux"}}" ;; -m) echo "\${MOCK_ARCH:-${arch === "arm64" ? "arm64" : "x86_64"}}" ;; -n) echo "\${MOCK_HOST:-this-host}" ;; esac\n`,
   );
   script("getconf", '[ -z "${MOCK_MUSL:-}" ] || exit 1; exec /usr/bin/getconf "$@"\n');
   script("tmux-ide", "echo stale-PATH-version; exit 99\n");
+  // Stands in for another installer that takes the dead owner's lock between
+  // this run's first look at it and its turn under the takeover guard.
+  script(
+    "find",
+    'case "${MOCK_TAKEOVER_RACE:-}:$1" in ?*:*.takeover) printf "%s" "$MOCK_TAKEOVER_RACE" > "${1%.takeover}/owner" ;; esac; exec /usr/bin/find "$@"\n',
+  );
+  script(
+    "rm",
+    'case "${MOCK_RM_FAIL:-}:$*" in 1:*/.install.*) exit 1 ;; esac; exec /bin/rm "$@"\n',
+  );
   const sha = createHash("sha256").update("archive").digest("hex");
   script(
     "curl",
     `[ -z "\${MOCK_NETWORK_FAIL:-}" ] || exit 7
+if [ -n "\${MOCK_CURL_HOLD:-}" ]; then : > "$MOCK_CURL_HOLD"; while :; do sleep 1; done; fi
 url=''; out=''; while [ "$#" -gt 0 ]; do case "$1" in https:*) url=$1 ;; -o) shift; out=$1 ;; esac; shift; done
 case "$url" in *SHASUMS256.txt) printf '%s  node-v24.1.0-${target}.tar.gz\\n' '${sha}' > "$out" ;; *) printf '%s' "\${MOCK_ARCHIVE:-archive}" > "$out" ;; esac\n`,
   );
@@ -61,6 +74,7 @@ if(process.env.MOCK_NATIVE_CORRUPT) fs.appendFileSync(native,'corrupt');
     `[ -z "\${MOCK_TAR_FAIL:-}" ] || exit 2
 while [ "$1" != '-C' ]; do shift; done; shift
 mkdir -p "$1/bin"
+if [ -n "\${MOCK_READ_ONLY_STAGE:-}" ]; then mkdir "$1/sealed"; : > "$1/sealed/file"; chmod 555 "$1/sealed"; fi
 ln -s ${quote(node)} "$1/bin/node"
 printf '%s\\n' '#!/bin/sh' ${quote(npmCommand)} > "$1/bin/npm"
 chmod +x "$1/bin/npm"\n`,
@@ -76,7 +90,7 @@ chmod +x "$1/bin/npm"\n`,
     TMUX_IDE_NO_CLAUDE_AGENT_TEAMS: "",
   };
   const run = (extra = {}, args = []) =>
-    spawnSync("/bin/sh", [installer, "--prefix", prefix, ...args], {
+    spawnSync(shell, [installer, "--prefix", prefix, ...args], {
       env: { ...env, ...extra },
       encoding: "utf8",
     });
@@ -219,6 +233,272 @@ test("an active installation lock prevents all mutations", (t) => {
   }
 });
 
+// A lock names its owner, so only a live installation blocks the next one (#751).
+const startedAt = (pid) =>
+  spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+  })
+    .stdout.trim()
+    .replace(/\s+/g, " ");
+function heldLock(prefix, owner, { ageMinutes = 0 } = {}) {
+  const lock = path.join(prefix, "share/tmux-ide/install.lock");
+  fs.mkdirSync(lock, { recursive: true });
+  if (owner) fs.writeFileSync(path.join(lock, "owner"), owner);
+  const then = new Date(Date.now() - ageMinutes * 60000);
+  fs.utimesSync(lock, then, then);
+  return lock;
+}
+const deadPid = () => {
+  const exited = spawnSync(process.execPath, ["-e", ""]);
+  assert.equal(exited.status, 0);
+  return exited.pid;
+};
+
+test("a lock whose owner is running blocks the installation and names the owner", (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, `${process.pid}\n${startedAt(process.pid)}\n`);
+  const blocked = run();
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, new RegExp(`Another installation is running \\(pid ${process.pid}`));
+  assert.equal(
+    fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
+    String(process.pid),
+    "the live owner keeps its lock",
+  );
+});
+
+for (const [label, owner] of [
+  ["whose owner has exited", () => `${deadPid()}\nMon Jan  1 00:00:00 2024\n`],
+  ["whose pid now belongs to another process", () => `${process.pid}\nMon Jan 1 00:00:00 2024\n`],
+])
+  test(`a lock ${label} is taken over`, (t) => {
+    const { prefix, run } = fixture(t);
+    const lock = heldLock(prefix, owner());
+    const installed = run();
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.match(installed.stdout, /lock of an installation that is no longer running/);
+    assert.equal(fs.existsSync(lock), false);
+    assert.equal(fs.existsSync(`${lock}.takeover`), false);
+  });
+
+test("a lock without an owner record blocks while fresh and is taken over once old", (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, null, { ageMinutes: 5 });
+  const blocked = run();
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /If no installation is running, remove that directory/);
+  assert.ok(fs.existsSync(lock));
+  heldLock(prefix, null, { ageMinutes: 30 });
+  const installed = run();
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("an owner on another machine is judged by the lock's age, never by its pid", (t) => {
+  const { prefix, run } = fixture(t);
+  // A shared home: this pid is alive here, and says nothing about that host.
+  const owner = `${deadPid()}\nMon Jan  1 00:00:00 2024\nother-host\n`;
+  const lock = heldLock(prefix, owner, { ageMinutes: 5 });
+  const blocked = run();
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /Another installation is running on other-host/);
+  assert.ok(fs.existsSync(path.join(lock, "owner")));
+  heldLock(prefix, owner, { ageMinutes: 30 });
+  assert.equal(run().status, 0);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("a run records its own host", async (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, `${process.pid}\n${startedAt(process.pid)}\nthis-host\n`);
+  const blocked = run();
+  assert.match(
+    blocked.stderr,
+    new RegExp(`Another installation is running \\(pid ${process.pid};`),
+  );
+  assert.ok(fs.existsSync(lock));
+});
+
+// A closed pipe ends the run like any other signal. (The postinstall stand-in
+// is Node, which ignores SIGPIPE, so this one is sent during the download.)
+test("SIGPIPE during the download releases the lock", async (t) => {
+  const { root, prefix, run, env } = fixture(t);
+  const ready = path.join(root, "curl-ready");
+  const child = spawn(shell, [installer, "--prefix", prefix], {
+    env: { ...env, MOCK_CURL_HOLD: ready },
+    detached: true,
+    stdio: "ignore",
+  });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  t.after(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+  const deadline = Date.now() + 10000;
+  while (!fs.existsSync(ready)) {
+    assert.ok(Date.now() < deadline, "fixture reached the download");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  process.kill(-child.pid, "SIGPIPE");
+  await closed;
+  const managed = path.join(prefix, "share/tmux-ide");
+  assert.equal(fs.existsSync(path.join(managed, "install.lock")), false);
+  assert.deepEqual(fs.readdirSync(path.join(managed, "releases")), []);
+  assert.equal(run().status, 0, "a subsequent installation succeeds");
+});
+
+// The guard directory lets one run at a time remove a dead owner's lock.
+test("a takeover in progress blocks another; one that died stops blocking after a minute", (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
+  const guard = `${lock}.takeover`;
+  fs.mkdirSync(guard);
+  const blocked = run();
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /Another installation may be running/);
+  assert.doesNotMatch(blocked.stderr, /pid \d/, "the dead owner is not named as running");
+  assert.ok(fs.existsSync(lock) && fs.existsSync(guard), "nothing was taken");
+  const then = new Date(Date.now() - 5 * 60000);
+  fs.utimesSync(guard, then, then);
+  const installed = run();
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.equal(fs.existsSync(lock), false);
+  assert.equal(fs.existsSync(guard), false);
+});
+
+test("a run that loses the takeover to another leaves the winner's lock alone", (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
+  const winner = `${process.pid}\n${startedAt(process.pid)}\nthis-host\n`;
+  const lost = run({ MOCK_TAKEOVER_RACE: winner });
+  assert.notEqual(lost.status, 0);
+  assert.match(lost.stderr, new RegExp(`Another installation is running \\(pid ${process.pid};`));
+  assert.equal(
+    fs.readFileSync(path.join(lock, "owner"), "utf8"),
+    winner,
+    "the winner keeps its lock",
+  );
+  assert.equal(fs.existsSync(`${lock}.takeover`), false, "the guard is released");
+});
+
+test("of many installers that find a dead owner's lock, one takes it and the rest refuse", async (t) => {
+  const { root, prefix, env } = fixture(t);
+  const lock = path.join(prefix, "share/tmux-ide/install.lock");
+  const children = [];
+  t.after(() => {
+    for (const { child } of children)
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+  });
+  for (let round = 0; round < 4; round++) {
+    heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
+    const ready = path.join(root, `curl-ready-${round}`);
+    const started = Array.from({ length: 8 }, () => {
+      const child = spawn(shell, [installer, "--prefix", prefix], {
+        env: { ...env, MOCK_CURL_HOLD: ready },
+        detached: true,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      const entry = { child, stderr: "", code: undefined };
+      child.stderr.on("data", (chunk) => (entry.stderr += chunk));
+      entry.closed = new Promise((resolve) =>
+        child.once("close", (code) => resolve((entry.code = code))),
+      );
+      children.push(entry);
+      return entry;
+    });
+    const deadline = Date.now() + 20000;
+    while (
+      started.filter((entry) => entry.code === undefined).length > 1 ||
+      !fs.existsSync(ready)
+    ) {
+      assert.ok(Date.now() < deadline, "seven refused and one reached its download");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const holders = started.filter((entry) => entry.code === undefined);
+    assert.equal(holders.length, 1, "exactly one installer holds the lock");
+    for (const entry of started.filter((entry) => entry !== holders[0])) {
+      assert.notEqual(entry.code, 0);
+      assert.match(entry.stderr, /Another installation (is|may be) running/);
+    }
+    // The refused runs have exited: none of them may have released the holder's lock.
+    assert.equal(
+      fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
+      String(holders[0].child.pid),
+    );
+    assert.equal(fs.existsSync(`${lock}.takeover`), false);
+    process.kill(-holders[0].child.pid, "SIGTERM");
+    await holders[0].closed;
+    assert.equal(fs.existsSync(lock), false, "the holder released its lock");
+    assert.equal(fs.existsSync(`${lock}.takeover`), false);
+  }
+});
+
+test("a failure whose staging files cannot be removed at first still releases the lock", (t) => {
+  const { prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  const failed = run({ MOCK_READ_ONLY_STAGE: "1", MOCK_NPM_FAIL: "1" });
+  assert.notEqual(failed.status, 0);
+  assert.equal(fs.existsSync(path.join(root, "install.lock")), false);
+  assert.deepEqual(fs.readdirSync(path.join(root, "releases")), []);
+  assert.equal(run().status, 0, "the retry installs");
+});
+
+test("a failure whose staging files cannot be removed at all still releases the lock", (t) => {
+  const { prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  const failed = run({ MOCK_RM_FAIL: "1", MOCK_NPM_FAIL: "1" });
+  assert.notEqual(failed.status, 0);
+  assert.equal(fs.existsSync(path.join(root, "install.lock")), false);
+  assert.equal(fs.readdirSync(path.join(root, "releases")).length, 1, "the stage stayed");
+  assert.equal(run().status, 0, "the retry installs");
+});
+
+test("an installation killed during its download does not block the retry", async (t) => {
+  const { root, prefix, run, env } = fixture(t);
+  const ready = path.join(root, "curl-ready");
+  const child = spawn(shell, [installer, "--prefix", prefix], {
+    env: { ...env, MOCK_CURL_HOLD: ready },
+    detached: true,
+    stdio: "ignore",
+  });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  t.after(() => {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  });
+  const deadline = Date.now() + 10000;
+  while (!fs.existsSync(ready)) {
+    assert.ok(Date.now() < deadline, "fixture reached the download");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const lock = path.join(prefix, "share/tmux-ide/install.lock");
+  assert.equal(fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0], String(child.pid));
+  assert.notEqual(run().status, 0, "the running installation keeps its lock");
+  process.kill(-child.pid, "SIGKILL");
+  await closed;
+  assert.ok(fs.existsSync(lock), "SIGKILL leaves the lock behind");
+  const retried = run();
+  assert.equal(retried.status, 0, retried.stderr);
+  assert.equal(fs.existsSync(lock), false);
+  assert.ok(
+    fs
+      .readdirSync(path.join(prefix, "share/tmux-ide/releases"))
+      .some((x) => x.startsWith(".install.")),
+    "the killed run's staging directory is left for it, not guessed at",
+  );
+});
+
 test("explicit pruning retains current and rollback, skips unknown files, and works offline", (t) => {
   const { prefix, run } = fixture(t);
   assert.equal(run().status, 0);
@@ -286,7 +566,7 @@ test("pre-staging failure preserves every retained runtime", (t) => {
   );
 });
 
-for (const signal of ["SIGTERM", "SIGINT"])
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP", "SIGQUIT"])
   test(`${signal} during relocated setup removes the candidate and preserves the old release`, async (t) => {
     const { root, prefix, run, env } = fixture(t);
     assert.equal(run().status, 0);
@@ -294,7 +574,7 @@ for (const signal of ["SIGTERM", "SIGINT"])
     const current = fs.readlinkSync(path.join(managed, "current"));
     const releases = fs.readdirSync(path.join(managed, "releases"));
     const ready = path.join(root, "postinstall-ready");
-    const child = spawn("/bin/sh", [installer, "--prefix", prefix], {
+    const child = spawn(shell, [installer, "--prefix", prefix], {
       env: { ...env, MOCK_POSTINSTALL_HOLD: ready },
       detached: true,
       stdio: "ignore",

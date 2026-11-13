@@ -452,8 +452,13 @@ fn older_queued_image_cannot_replace_newer_raw_image() -> anyhow::Result<()> {
     line["kittyImageChunk"]["image"] = "%1#1".into();
     line["kittyImageChunk"]["width"] = 2048.into();
     line["kittyImageChunk"]["height"] = 2048.into();
+    // Without this the older image is only "still queued" for as long as its
+    // decode outlasts the next line; on a loaded machine it finished first,
+    // was cached as the newest image it then was, and the test failed (#733).
+    let decoding = store.hold_decodes();
     store.accept_line(&serde_json::to_vec(&line)?)?;
     store.accept_line(&keyed_chunk(new, "%1#1", &[9; 16]))?;
+    drop(decoding);
     store.settle();
     let inner = store.lock();
     assert_eq!(
@@ -516,8 +521,11 @@ fn cached_revisit_retires_an_older_inflight_redraw() -> anyhow::Result<()> {
     line["kittyImageChunk"]["image"] = "%1#1".into();
     line["kittyImageChunk"]["width"] = 2048.into();
     line["kittyImageChunk"]["height"] = 2048.into();
+    // Keep the redraw in flight until the revisit has arrived.
+    let decoding = store.hold_decodes();
     store.accept_line(&serde_json::to_vec(&line)?)?;
     store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    drop(decoding);
     store.settle();
     assert_eq!(
         store.lock().latest.get("%1#1").map(String::as_str),

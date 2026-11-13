@@ -115,3 +115,20 @@ instance within this worktree.
 - Keep `CHANGELOG.md` changes under `Unreleased` until the release is actually cut.
 - Prefer focused PRs over large mixed changes.
 - Run `pnpm check` before opening or updating a PR.
+
+### CI on a branch older than a local action
+
+Two jobs test the exact commit at the head of your branch, not the merge with
+`main`: "OpenTUI package qualification (Linux)" and "Scoped Linux installed
+package and SSH contracts". The workflow file still comes from the merge, so
+when `main` gains a step that uses a new action under `.github/actions/`, a
+branch made before that action existed fails in those jobs with:
+
+```text
+Can't find 'action.yml', 'action.yaml' or 'Dockerfile' under '…/.github/actions/<name>'.
+Did you forget to run actions/checkout before running your local action?
+```
+
+The cure is to merge `main` into the branch (do not rebase a branch that is in
+review) and push. `.github/actions/apt-dns-fallback` was added on 11 Nov 2026,
+so every branch older than that needs this once.
