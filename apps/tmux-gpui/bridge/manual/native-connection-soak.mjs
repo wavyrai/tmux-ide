@@ -532,8 +532,13 @@ try {
   const exited = once(child, "close");
   const deadline = Date.now() + 90_000;
   while (!events.some((event) => event.event === "ready")) {
-    assert(child.exitCode === null, "the app test exited before it connected");
-    assert(Date.now() < deadline, "the app never connected");
+    const said = () =>
+      `${Buffer.concat(transcript).toString().slice(-3000)}\n--- daemon ---\n${daemon
+        .output()
+        .replaceAll(daemon.record.authToken, "[redacted]")
+        .slice(-3000)}`;
+    assert(child.exitCode === null, `the app test exited before it connected:\n${said()}`);
+    assert(Date.now() < deadline, `the app never connected:\n${said()}`);
     await sleep(200);
   }
   if (inactive)

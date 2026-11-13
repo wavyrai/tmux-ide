@@ -4,10 +4,14 @@
 const percentile = (sorted, p) =>
   sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
 
+const LAYOUT = "Updating the terminal layout…";
+
 /**
  * @param {{events: any[], injected: any[], inactive: boolean, seconds: number, exit: any}} run
  * A disconnect belongs to the fault whose tag the app read when it began
- * ("name#n"), or to "idle" when none was being injected.
+ * ("name#n"), or to "idle" when none was being injected. A pane change the
+ * stream followed in place (capability 119) is no disconnect: the window
+ * stayed up and only said that its layout was being updated.
  */
 export function summarise({ events, injected, inactive, seconds, exit }) {
   const name = (tag) => (tag ?? "").split("#")[0] || "idle";
@@ -28,6 +32,8 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
         keyLostTold: 0,
         silentKeyLoss: 0,
         frozen: 0,
+        inPlace: 0,
+        inPlaceMs: [],
       });
     return rows.get(fault);
   };
@@ -37,6 +43,15 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
     if (event.event === "down") {
       entry.disconnects += 1;
       if (event.frozen) entry.frozen += 1;
+    } else if (
+      event.event === "up" &&
+      (event.manual ?? []).length === 0 &&
+      (event.trail ?? []).length > 0 &&
+      event.trail.every((status) => status === LAYOUT)
+    ) {
+      entry.disconnects -= 1;
+      entry.inPlace += 1;
+      entry.inPlaceMs.push(event.ms);
     } else if (event.event === "up") {
       // A recovery that needed the user is counted as stuck, not as recovered.
       if ((event.manual ?? []).length === 0) {
@@ -63,6 +78,8 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
       ...entry,
       needs: [...entry.needs],
       ms: undefined,
+      inPlaceMs: undefined,
+      inPlaceMax: entry.inPlaceMs.length ? Math.max(...entry.inPlaceMs) : null,
       p50: percentile(sorted, 0.5),
       p95: percentile(sorted, 0.95),
       max: sorted.at(-1) ?? null,
@@ -84,6 +101,7 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
       unexpectedEnds: sum("unexpectedEnds"),
       silentKeyLoss: sum("silentKeyLoss"),
       frozen: sum("frozen"),
+      inPlace: sum("inPlace"),
       downAtStop: stopped?.down ?? null,
     },
   };
@@ -91,11 +109,11 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
 
 export function table(report) {
   const head =
-    "| fault | injected | disconnects | recovered by itself | p50 ms after the fault | p95 ms | max ms | stuck (needs) | ended | keys lost silently |";
-  const rule = "|---|---|---|---|---|---|---|---|---|---|";
+    "| fault | injected | disconnects | recovered by itself | p50 ms after the fault | p95 ms | max ms | stuck (needs) | ended | keys lost silently | followed in place (max) |";
+  const rule = "|---|---|---|---|---|---|---|---|---|---|---|";
   const lines = report.faults.map(
     (f) =>
-      `| ${f.fault} | ${f.injected} | ${f.disconnects} | ${f.recovered} | ${f.p50 ?? "-"} | ${f.p95 ?? "-"} | ${f.max ?? "-"} | ${f.stuck}${f.needs.length ? ` (${f.needs.join(", ")})` : ""} | ${f.ended}${f.unexpectedEnds ? ` (${f.unexpectedEnds} unexpected)` : ""} | ${f.silentKeyLoss} |`,
+      `| ${f.fault} | ${f.injected} | ${f.disconnects} | ${f.recovered} | ${f.p50 ?? "-"} | ${f.p95 ?? "-"} | ${f.max ?? "-"} | ${f.stuck}${f.needs.length ? ` (${f.needs.join(", ")})` : ""} | ${f.ended}${f.unexpectedEnds ? ` (${f.unexpectedEnds} unexpected)` : ""} | ${f.silentKeyLoss} | ${f.inPlace}${f.inPlace ? ` (${f.inPlaceMax} ms)` : ""} |`,
   );
   return [
     `window: ${report.inactive ? "inactive" : "active"}; faults for ${report.seconds} s`,
