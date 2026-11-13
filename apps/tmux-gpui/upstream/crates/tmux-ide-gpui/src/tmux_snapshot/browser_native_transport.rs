@@ -925,7 +925,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     changed = true;
                 }
             }
-            if presence.0 && state.input_ready && now >= browser_read_at {
+            if presence.0 && now >= browser_read_at {
                 for pane in state
                     .panes
                     .iter()

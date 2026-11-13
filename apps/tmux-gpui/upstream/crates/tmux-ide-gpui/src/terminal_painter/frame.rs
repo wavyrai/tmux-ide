@@ -79,6 +79,16 @@ impl<'a> FrameView<'a> {
             Self::Rows(frame) => frame.rows.get(y).map(|row| &row[..row.len().min(width)]),
         }
     }
+    /// A native frame's row `y`, whole: the immutable row painters may retain.
+    pub fn shared_row(self, y: usize) -> Option<&'a Arc<[CellData]>> {
+        match self {
+            Self::Flat(_) => None,
+            Self::Rows(frame) => frame
+                .rows
+                .get(y)
+                .filter(|row| row.len() == usize::from(frame.width)),
+        }
+    }
     pub fn cell(self, x: usize, y: usize) -> Option<&'a CellData> {
         self.row(y)?.get(x)
     }

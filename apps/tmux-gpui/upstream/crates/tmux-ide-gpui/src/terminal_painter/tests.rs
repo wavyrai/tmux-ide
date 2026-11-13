@@ -7,6 +7,7 @@ mod cells;
 mod composition;
 mod diagnostics;
 mod glyph_cache;
+mod glyph_color;
 mod grid_edges;
 mod row_frames;
 // Paint counts are recorded only with the integration-test feature.

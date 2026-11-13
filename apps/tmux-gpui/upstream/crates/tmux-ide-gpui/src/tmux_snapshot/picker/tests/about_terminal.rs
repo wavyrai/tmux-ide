@@ -137,9 +137,11 @@ fn about_does_not_open_over_the_pane_actions_menu(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_text_commit_before_abouts_first_frame_stays_out_of_tmux(cx: &mut TestAppContext) {
     let (view, cx, receiver) = workspace(cx);
-    cx.dispatch_action(AboutApp);
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    // About opens, the terminal is focused and the text arrives in one
+    // update: no frame of About is drawn in between.
     let focused = cx.update(|window, cx| {
+        view.update(cx, |v, cx| v.open_about(window, cx));
+        assert!(view.read(cx).about.is_some());
         let terminal = view.read(cx).terminal_focus.clone();
         terminal.focus(window, cx);
         view.update(cx, |v, cx| {

@@ -753,6 +753,26 @@ describe("identity join", () => {
     await channel.dispose();
   });
 
+  it("settles the trusted inventory while tmux renames a window on every read (#730)", async () => {
+    const { channel, state } = await startedRig();
+    state.descriptorRows[2] = state.descriptorRows[2]!.replace(
+      "%3\t\t",
+      "%3\tpane.mirror.gen1\t",
+    ).replace("\t\tzz-sim", "\twindow.test.two\tzz-sim");
+    const windows = [...state.windowRows];
+    let reads = 0;
+    Object.defineProperty(state, "windowRows", {
+      get: () => {
+        reads += 1;
+        return windows.map((row) => row.replace(/\t(main|aux)\t/u, `\tseq-${reads}\t`));
+      },
+    });
+    const trusted = await channel.describeTrustedInventory("$1");
+    expect(trusted).toMatchObject({ sessionName: FIXTURE.session, runtimeSessionId: "$1" });
+    expect(reads).toBeGreaterThanOrEqual(2);
+    await channel.dispose();
+  });
+
   it.each(["resize", "membership-aba", "zoom-aba", "malformed"])(
     "distinguishes %s notifications from identity stability during inventory reads",
     async (change) => {

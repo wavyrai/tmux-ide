@@ -35,8 +35,18 @@ impl SnapshotView {
         let known = known_sessions(&self.browser_state);
         let (secondary, primary) = buttons(stage, known.first());
         let closing = matches!(stage, Stage::Ready { .. });
-        // Up to three keyboard stops: secondary, primary, then skip.
-        while self.welcome.focus.len() < 3 {
+        // The keyboard stops: each listed session's Open (stops 3 to 5),
+        // then secondary, primary and skip (stops 0 to 2), as on screen.
+        let opens: Vec<(usize, Act)> = match stage {
+            Stage::Ready { sessions } if sessions > 0 => known
+                .iter()
+                .take(3)
+                .enumerate()
+                .map(|(index, session)| (3 + index, Act::Open(session.open.clone())))
+                .collect(),
+            _ => Vec::new(),
+        };
+        while self.welcome.focus.len() < 3 + opens.len() {
             self.welcome.focus.push(cx.focus_handle());
         }
         let focus = self.welcome.focus.clone();
@@ -48,15 +58,24 @@ impl SnapshotView {
             acts.push((1, primary.act.clone()));
         }
         acts.push((2, Act::Close));
-        if self.welcome_may_take_focus(window, cx)
-            && !focus.iter().any(|f| f.contains_focused(window, cx))
+        let start = acts
+            .iter()
+            .find(|(i, _)| *i == 1)
+            .map_or(acts[0].0, |(i, _)| *i);
+        // A session row that is gone (the session ended, or the list was
+        // lost) takes its Open button with it. If that button had the
+        // keyboard, nothing on screen has it now: hand it to the start stop.
+        let stranded = focus
+            .iter()
+            .enumerate()
+            .any(|(stop, handle)| stop >= 3 + opens.len() && handle.is_focused(window));
+        if stranded
+            || (self.welcome_may_take_focus(window, cx)
+                && !focus.iter().any(|f| f.contains_focused(window, cx)))
         {
-            let start = acts
-                .iter()
-                .find(|(i, _)| *i == 1)
-                .map_or(acts[0].0, |(i, _)| *i);
             focus[start].focus(window, cx);
         }
+        let acts: Vec<(usize, Act)> = opens.into_iter().chain(acts).collect();
         // What the user must act on stays in front of the welcome: an act
         // card other than setup's own (which the welcome is), and the
         // pane-limit notice.
@@ -168,6 +187,7 @@ impl SnapshotView {
                 .map(|(index, session)| {
                     let open = session.open.clone();
                     let muted = bezel.text_muted;
+                    let open_ring = bezel.ring;
                     div()
                         .id(("welcome-session", index))
                         .debug_selector(move || format!("welcome-session-{index}"))
@@ -201,6 +221,12 @@ impl SnapshotView {
                                 .id(("welcome-open", index))
                                 .role(Role::Button)
                                 .aria_label(format!("Open {}", session.label))
+                                .track_focus(&focus[3 + index].clone().tab_stop(true))
+                                // The ring's border, without moving the button.
+                                .border_1()
+                                .m(px(-1.))
+                                .border_color(transparent_black())
+                                .focus_visible(move |s| s.border_color(open_ring))
                                 .cursor_pointer()
                                 .on_click(cx.listener(move |view, _, window, cx| {
                                     cx.stop_propagation();

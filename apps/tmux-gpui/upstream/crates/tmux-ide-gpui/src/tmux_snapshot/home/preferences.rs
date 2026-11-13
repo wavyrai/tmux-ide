@@ -64,17 +64,47 @@ impl SnapshotView {
         icon: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (tip, button, enabled) =
+            self.fleet_preference_parts(id, action, enabled_value, label, icon, cx);
+        tip.child(
+            div()
+                .debug_selector(move || {
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    format!("{}-{}-{state}", id.0, id.1)
+                })
+                .child(button),
+        )
+        .into_any_element()
+    }
+    /// [`Self::fleet_preference_button`] with the button straight in its
+    /// tooltip box: one box fewer for each of Home's session rows, where the
+    /// caller styles that box itself (step 1b).
+    pub(in crate::tmux_snapshot) fn fleet_preference_tip(
+        &self,
+        id: (&'static str, usize),
+        action: Option<&str>,
+        enabled_value: bool,
+        label: &'static str,
+        icon: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (tip, button, _) =
+            self.fleet_preference_parts(id, action, enabled_value, label, icon, cx);
+        tip.child(button)
+    }
+    fn fleet_preference_parts(
+        &self,
+        id: (&'static str, usize),
+        action: Option<&str>,
+        enabled_value: bool,
+        label: &'static str,
+        icon: &'static str,
+        cx: &mut Context<Self>,
+    ) -> (Stateful<Div>, bezel_ui::widgets::Button, bool) {
         let request = self.browser_request;
-        let revision = self
-            .browser_state
-            .fleet
-            .as_ref()
-            .and_then(|f| f.preferences.as_ref())
-            .map_or(0, |p| p.revision);
+        let revision = self.preference_revision();
+        let enabled = self.preference_button_enabled(action, enabled_value);
         let action = action.map(str::to_owned);
-        let enabled = action
-            .as_ref()
-            .is_some_and(|a| self.preference_ready(request, revision, a, enabled_value));
         let palette = self.home_palette();
         // Bezel's button owns the disabled state: no tab stop, no activation,
         // its faded paint. The glyph keeps Home's inked muted.
@@ -89,23 +119,31 @@ impl SnapshotView {
                     view.change_fleet_preference(request, revision, action, enabled_value, cx);
                 }
             }));
-        div()
+        let tip = div()
             .id(SharedString::from(format!("{}-{}-tip", id.0, id.1)))
             .accessibility_id(format!("{}-{}", id.0, id.1))
             .debug_selector(move || format!("{}-{}", id.0, id.1))
             .flex_shrink_0()
-            .child(
-                div()
-                    .debug_selector(move || {
-                        let state = if enabled { "enabled" } else { "disabled" };
-                        format!("{}-{}-{state}", id.0, id.1)
-                    })
-                    .child(button),
-            )
             .when(enabled, |tip| {
                 tip.tooltip(move |_, cx| crate::tmux_snapshot::glass_ink::tooltip(label, None, cx))
-            })
-            .into_any_element()
+            });
+        (tip, button, enabled)
+    }
+    pub(in crate::tmux_snapshot) fn preference_revision(&self) -> u64 {
+        self.browser_state
+            .fleet
+            .as_ref()
+            .and_then(|f| f.preferences.as_ref())
+            .map_or(0, |p| p.revision)
+    }
+    /// Whether a preference button for `action` takes a press now.
+    pub(in crate::tmux_snapshot) fn preference_button_enabled(
+        &self,
+        action: Option<&str>,
+        enabled_value: bool,
+    ) -> bool {
+        let (request, revision) = (self.browser_request, self.preference_revision());
+        action.is_some_and(|a| self.preference_ready(request, revision, a, enabled_value))
     }
     /// Saving progress, or why a preference did not apply.
     pub(in crate::tmux_snapshot) fn fleet_preference_status(&self) -> Option<Status<'_>> {

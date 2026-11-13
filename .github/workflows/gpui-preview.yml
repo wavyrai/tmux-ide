@@ -123,6 +123,15 @@ jobs:
         run: |
           cargo fmt --all -- --check
           bash scripts/check-file-size.sh
+      # Neither fmt, clippy nor the size gate reaches the vendored crates:
+      # this is the check that they are the crates.io packages plus only the
+      # changes their provenance files list.
+      - name: Vendored crates match their packages
+        working-directory: .
+        run: |
+          node --test apps/tmux-gpui/scripts/verify-vendored-crate.test.mjs
+          node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-provenance.json
+          node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-apple-provenance.json
       - name: Lint both feature configurations
         run: |
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings

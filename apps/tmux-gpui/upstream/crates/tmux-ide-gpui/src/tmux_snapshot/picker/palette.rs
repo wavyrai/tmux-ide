@@ -13,6 +13,29 @@ pub(in crate::tmux_snapshot) struct Owner {
     query: Option<String>,
     due: Option<Instant>,
 }
+impl Owner {
+    /// A close is waiting for room in the command queue.
+    pub(in crate::tmux_snapshot) fn closing(&self) -> bool {
+        self.pending_close.is_some()
+    }
+    /// When a debounced query is due to be sent; none while a rejection or
+    /// a close holds it back (a publication or the close's poll moves it on).
+    pub(in crate::tmux_snapshot) fn due_at(&self) -> Option<Instant> {
+        self.due
+            .filter(|_| self.pending.is_none() && self.pending_close.is_none())
+    }
+    /// A query debounced until `due`, for tests outside the palette.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn debounce_for_test(&mut self, due: Instant) {
+        self.query = Some("q".into());
+        self.due = Some(due);
+    }
+    /// A close waiting for room, for tests outside the palette.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn close_for_test(&mut self) {
+        self.pending_close = Some((7, 1, 0));
+    }
+}
 impl SnapshotView {
     pub(in crate::tmux_snapshot) fn cancel_palette(&mut self) {
         self.palette.active = None;

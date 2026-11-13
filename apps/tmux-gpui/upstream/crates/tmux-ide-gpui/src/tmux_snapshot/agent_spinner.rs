@@ -19,6 +19,9 @@ pub(super) const TICK: Duration = Duration::from_millis(80);
 
 #[derive(Clone)]
 struct Slot {
+    /// The view whose paint reserved it: a cached child view replays its
+    /// paint without reserving again, so its slots outlive the parent's render.
+    owner: EntityId,
     origin: Point<Pixels>,
     mask: ContentMask<Pixels>,
     font: Font,
@@ -43,9 +46,10 @@ struct Shared {
 pub(super) struct Slots(Rc<Shared>);
 
 impl Slots {
-    /// A new `SnapshotView` render repaints every indicator, so its slots restart.
-    pub(super) fn begin_render(&self) {
-        self.0.slots.borrow_mut().clear();
+    /// A new render of `owner` repaints every indicator it shows, so its
+    /// slots restart; slots of views that keep their cached paint stay.
+    pub(super) fn begin_render(&self, owner: EntityId) {
+        self.0.slots.borrow_mut().retain(|slot| slot.owner != owner);
     }
     /// Whether an overlay will paint this view's frames.
     pub(super) fn attached(&self) -> bool {
@@ -75,6 +79,7 @@ impl Slots {
         let style = window.text_style();
         let rem = window.rem_size();
         self.0.slots.borrow_mut().push(Slot {
+            owner: window.current_view(),
             origin: bounds.origin,
             mask,
             font: style.font(),
@@ -82,6 +87,11 @@ impl Slots {
             line_height: style.line_height_in_pixels(rem),
             color: style.color,
         });
+    }
+    /// Moves to `frame` as a tick would, for tests of what reads it.
+    #[cfg(test)]
+    pub(super) fn set_frame(&self, frame: usize) {
+        self.0.frame.set(frame);
     }
     #[cfg(test)]
     pub(super) fn colors(&self) -> Vec<Hsla> {
@@ -245,17 +255,68 @@ pub(super) struct Root {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // GPUI builds the accessibility tree from the elements a frame
+        // prepaints, and a replayed view prepaints none: a spinner tick would
+        // send an assistive client a tree with nothing under the window. So
+        // while a client is connected every frame draws the view.
+        let snapshot = if window.is_a11y_active() {
+            AnyView::from(self.snapshot.clone()).into_any_element()
+        } else {
+            self.snapshot
+                .clone()
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element()
+        };
+        let nudge = |snapshot: &Entity<SnapshotView>| {
+            let snapshot = snapshot.clone();
+            move |cx: &App| snapshot.read(cx).idle_tick.nudge()
+        };
+        let (down, up, modifiers, mouse) = (
+            nudge(&self.snapshot),
+            nudge(&self.snapshot),
+            nudge(&self.snapshot),
+            self.snapshot.clone(),
+        );
+        // Every input event nudges the browser UI task, so an idle window's
+        // tick restarts for whatever the event queues (#714). Input that
+        // renders would nudge anyway; this covers input that only queues work.
+        // Keys dispatch along the focus path, which always runs through here.
         div()
             .relative()
             .size_full()
-            .child(
-                self.snapshot
-                    .clone()
-                    .cached(StyleRefinement::default().size_full()),
-            )
+            .capture_key_down(move |_, _, cx| down(cx))
+            .capture_key_up(move |_, _, cx| up(cx))
+            .on_modifiers_changed(move |_, _, cx| modifiers(cx))
+            .child(snapshot)
             .child(self.spinner.clone())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), window, _| mouse_nudges(&mouse, window),
+                )
+                .absolute()
+                .size_0(),
+            )
     }
+}
+
+/// Mouse events reach window-level listeners wherever the pointer is.
+fn mouse_nudges(snapshot: &Entity<SnapshotView>, window: &mut Window) {
+    macro_rules! on_mouse {
+        ($($event:ty),*) => {$({
+            let snapshot = snapshot.clone();
+            window.on_mouse_event(move |_: &$event, _, _, cx| {
+                snapshot.read(cx).idle_tick.nudge();
+            });
+        })*};
+    }
+    on_mouse!(
+        MouseDownEvent,
+        MouseUpEvent,
+        MouseMoveEvent,
+        ScrollWheelEvent
+    );
 }
 
 /// Mounts `snapshot` as the window content with its spinner overlay.

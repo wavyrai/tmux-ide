@@ -220,4 +220,10 @@ fn an_unavailable_list_shows_one_strip_not_two(cx: &mut TestAppContext) {
     // The normal case: nothing above says it, so the list's strip does.
     draw(&view, cx, |v| v.browser_state.status.clear());
     assert_eq!(strips(cx), ["home-guidance-warning"]);
+    // A lost connection is not this case: its own red strip stays.
+    draw(&view, cx, |v| {
+        v.browser_commands = None;
+        v.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
+    });
+    assert!(strips(cx).contains(&"home-guidance-error"));
 }
