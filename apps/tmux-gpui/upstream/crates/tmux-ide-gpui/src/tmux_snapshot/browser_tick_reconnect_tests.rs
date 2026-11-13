@@ -151,7 +151,8 @@ fn held_keys_poll_only_until_the_hold_ends(cx: &mut TestAppContext) {
     );
     let polling = wakes_over(&snapshot, cx, Duration::from_millis(320));
     assert!((15..=25).contains(&polling), "{polling} wakes in 320 ms");
-    // The hold's limit passes (it reads the real clock).
+    // The hold's limit (3 s, about 190 polls) reads the real clock, which
+    // this test's clock does not move: age the hold past it instead.
     cx.update(|_, cx| {
         snapshot.update(cx, |view, _| {
             view.age_pending_input_by(Duration::from_millis(3100));
