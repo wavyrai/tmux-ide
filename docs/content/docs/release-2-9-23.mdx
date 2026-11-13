@@ -1,11 +1,13 @@
 ---
 title: tmux-ide 2.9.23
 metaTitle: "What's new in 2.9.23"
-description: "The daemon no longer drops every terminal stream when one tmux probe is slow, and a stop after SIGTERM is bounded."
+description: "The daemon no longer drops every terminal stream when one tmux probe is slow, costs less under heavy output and at rest, and works with more tmux servers that are not its own."
 ---
 
-`2.9.23` is a CLI/daemon release that fixes dropped terminal connections. It
-adds no commands and needs no Mac app update.
+`2.9.23` is a CLI/daemon release. It fixes dropped terminal connections, makes
+the daemon cheaper under heavy output and at rest, and fixes five problems on
+tmux servers that are not tmux-ide's own. It adds no commands and needs no Mac
+app update.
 
 ## Terminals no longer drop while the daemon stays up
 
@@ -55,11 +57,87 @@ online until one of those changes.
 After SIGTERM or SIGINT the daemon now stops within a limit. If its teardown
 makes no progress for 10 s, or takes 25 s in all, it logs the steps still open,
 removes `daemon.json` and exits with status 1. Two waits on the stop path that
-had no limit now have one.
+had no limit now have one. A restart in place whose stop hangs exits the same
+way.
 
 We have not found why a daemon sometimes did not stop after its tmux server was
 replaced. It did not happen in 74 local runs. The limit and the new log line are
 there to end the hang and to name the step if it happens again.
+
+## More connection fixes
+
+- Two daemons on one tmux server no longer remove each other's hooks. A
+  daemon's hook install removed every tmux-ide daemon's hooks, and each gap lost
+  `send-keys` and `capture-pane` observations and made clients re-read the
+  terminal inventory. A daemon now removes only its own hooks and those no
+  living daemon owns. A daemon older than 2.9.23 on the same server still
+  removes everyone's.
+- Terminal streams and the events socket have a heartbeat. The daemon pings
+  every 10 s and drops a connection after 3 unanswered pings, so a half-open
+  stream no longer looks like a frozen terminal.
+- Every synchronous tmux call has a 5 s limit. One hung tmux call could freeze
+  the whole daemon, including its signal handling.
+- An absent or stale tmux server costs a file check or a connect, not a tmux
+  process. A refused connection never retires a server connection, and on macOS
+  touching the socket file no longer does either.
+- A daemon restart in place keeps its port.
+- A terminal inventory read that was overtaken twice by changes answered 503.
+  It now keeps reading. This was one cause of a click on an agent that had just
+  appeared doing nothing.
+- With `--json`, all log records go to stderr, so stdout stays one JSON
+  document.
+- `tmux-ide doctor` adds a "tmux server" row with the socket the daemon uses.
+  It warns when this shell's tmux (`TMUX_TMPDIR`, or a tmux started with `-S`
+  or `-L`) means another server. See
+  [Troubleshooting](/docs/troubleshooting).
+
+## A cheaper daemon
+
+Measured on a separate daemon, with runs of the old and the new build
+alternated.
+
+Heavy output in a viewed pane no longer slows tmux itself. The daemon committed
+after every write, which made it the bottleneck for tmux. It now skips a commit
+while more output is queued. With a 2 MB flood and one viewer:
+
+|                                   | 2.9.22  | 2.9.23 |
+| --------------------------------- | ------- | ------ |
+| Daemon CPU time                   | 2.16 s  | 1.05 s |
+| tmux's time to produce the output | 1557 ms | 616 ms |
+| Frames delivered to the viewer    | 11      | 14     |
+
+A pane nobody has watched for 10 s is parked. tmux pauses its output to the
+daemon, and the daemon keeps the last frame. Agent status is not affected. The
+cost: when you return to a parked pane, the last frame appears as fast as
+before, and the current content follows after about 250 to 290 ms instead of
+100 to 130 ms. On a heavily loaded machine it takes longer.
+
+The daemon uses less memory at rest. Its process footprint fell from
+327–333 MiB to 283–288 MiB.
+
+The daemon starts fewer tmux processes while idle. The check of its healthy
+hooks runs every 5 minutes instead of every 30 s: with three tmux servers, 5.8
+tmux processes a minute become 0.6. The fleet poll slows from every 500 ms to
+every 1 s after ten unchanged reads, which halves its tmux processes while
+idle. A CPU saving from the fleet poll was not measured.
+
+## tmux servers that are not tmux-ide's own
+
+Five fixes for a server started by Homebrew's or another stock tmux (3.7c and
+3.8 were tested):
+
+- On tmux 3.8, a window with `pane-border-status` set to `top-floating` or
+  `bottom-floating` can be opened. Before, its session had no pane to attach
+  to.
+- Opening a session on an agent works. Before, it answered 503.
+- Browser panes and the Markdown reader work. Before, both answered 503. The
+  Mac app was not run against a stock server for this fix.
+- When the tmux socket cannot be read, the workspace catalog answers 503
+  `tmux-unavailable` instead of an empty session list.
+- The daemon starts on a tmux socket whose path is too long once `/tmp` is
+  written as `/private/tmp`. Before, it exited at startup.
+
+Panes whose content holds tab characters still do not load on a stock server.
 
 ## Also in 2.9.23
 
@@ -72,6 +150,8 @@ there to end the hang and to name the step if it happens again.
 - A terminal stream closes with code 1012 and reason `tmux-server-retired` when
   its tmux server is gone or replaced, and 1012 `daemon-restarting` when the
   daemon restarts in place. 1001 `daemon-shutdown` now means the daemon stops.
+- The daemon announces on the events socket when a tmux server comes online or
+  is retired.
 
 ## New log lines
 
