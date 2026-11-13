@@ -2606,9 +2606,21 @@ export class PaneStreamLiveConnection {
       return this.#topologyFailed("not a semantic stream, or its window links changed");
     // A zoomed window lists one pane, so the layout alone cannot tell which
     // panes exist: the trusted inventory does.
+    // The inventory is read by session NAME. Only an inventory that states
+    // the runtime session this stream was issued for may extend the grant: a
+    // session replaced under the same name is another session.
     let described: MirrorSessionDescription;
+    let inventoryIsThisSession = false;
     try {
-      described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+      if (this.#mirror.describeSessionAuthority) {
+        const authority = await this.#mirror.describeSessionAuthority(this.#descriptor.sessionName);
+        if (authority.runtimeSessionId !== this.#semanticRuntimeSessionId)
+          return this.#topologyFailed("inventory is of another runtime session");
+        described = authority.description;
+        inventoryIsThisSession = true;
+      } else {
+        described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+      }
     } catch (error) {
       return this.#topologyFailed("session inventory unavailable", error);
     }
@@ -2632,6 +2644,8 @@ export class PaneStreamLiveConnection {
     // panes keeps exactly those.
     const liveIds = new Set(live.map((channel) => channel.semanticPaneId));
     const added = this.#leasesWholeSession ? next.filter((pane) => !liveIds.has(pane)) : [];
+    if (added.length > 0 && !inventoryIsThisSession)
+      return this.#topologyFailed("inventory cannot prove the runtime session");
     const remaining = live.length - removed.length + added.length;
     if (remaining === 0 || remaining > PANE_STREAM_MAX_PANES)
       return this.#topologyFailed("pane count outside the stream limit");

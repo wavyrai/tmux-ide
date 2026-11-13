@@ -2840,6 +2840,99 @@ describe("PaneStreamAdmissionCoordinator", () => {
       expect(socket.closed).toBeNull();
     });
 
+    // What may enter a transport's pane grant (security review of #723):
+    // only panes that the daemon's own inventory lists for the runtime session
+    // the stream was issued for, and that the session's own layout shows.
+    describe("what can enter the pane grant", () => {
+      it("nothing from a session that replaced this one under the same name", async () => {
+        const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        // The name now belongs to another runtime session, whose inventory has a new pane.
+        h.mirror.runtimeSessionId = "$2";
+        change(h, ["pane.one", "pane.two", "pane.foreign"]);
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+        );
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one", "pane.two"]);
+        expect(socket.framesOfType("topology")).toEqual([]);
+      });
+
+      it("nothing from a layout that claims another runtime session", async () => {
+        const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        const describes = vi.spyOn(h.mirror, "describeSession");
+        h.mirror.panes = ["pane.one", "pane.two", "pane.foreign"];
+        h.mirror.layoutRuntimeSessionId = "$9";
+        h.mirror.layoutHandlers[0]?.(authoritativeLayout(h.mirror.panes));
+        expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+        expect(describes).not.toHaveBeenCalled();
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one", "pane.two"]);
+      });
+
+      it("no pane that a layout shows but the session's inventory does not list", async () => {
+        vi.useFakeTimers();
+        try {
+          const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+          const socket = await open(h, ["pane.one", "pane.two"]);
+          // The inventory still has two panes; only the layout names a third.
+          h.mirror.layoutHandlers[0]?.(
+            authoritativeLayout(["pane.one", "pane.two", "pane.foreign"]),
+          );
+          await vi.advanceTimersByTimeAsync(PANE_STREAM_TOPOLOGY_SETTLE_MS + 1);
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+          expect(h.grantAmendments).toEqual([]);
+          expect(opened).toEqual(["pane.one", "pane.two"]);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("no pane that the inventory lists but the session's layout does not show", async () => {
+        vi.useFakeTimers();
+        try {
+          const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+          const socket = await open(h, ["pane.one", "pane.two"]);
+          h.mirror.panes = ["pane.one", "pane.two", "pane.unseen"];
+          h.mirror.layoutHandlers[0]?.(authoritativeLayout(["pane.one"]));
+          await vi.advanceTimersByTimeAsync(PANE_STREAM_TOPOLOGY_SETTLE_MS + 1);
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+          expect(h.grantAmendments).toEqual([]);
+          expect(opened).toEqual(["pane.one", "pane.two"]);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("no new pane when the inventory cannot state its runtime session", async () => {
+        const { h, opened, closed } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        (h.mirror as { describeSessionAuthority?: unknown }).describeSessionAuthority = undefined;
+        // Giving a pane up needs no proof of that kind.
+        change(h, ["pane.one"]);
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        expect(closed).toEqual(["pane.two"]);
+        expect(socket.closed).toBeNull();
+        // Taking one in does.
+        change(h, ["pane.one", "pane.three"]);
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+        );
+        expect(h.grantAmendments).toEqual([{ added: [], removed: ["pane.two"] }]);
+        expect(opened).toEqual(["pane.one", "pane.two"]);
+      });
+
+      it("nothing for a stream that was issued for only some panes of its session", async () => {
+        const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one"]);
+        change(h, ["pane.one", "pane.two", "pane.three"]);
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one"]);
+      });
+    });
+
     it("still closes for another session's layout, whatever the client offered", async () => {
       const { h } = topologyHarness(["pane.one", "pane.two"]);
       const socket = await open(h, ["pane.one", "pane.two"]);
