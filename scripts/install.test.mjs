@@ -517,27 +517,35 @@ test("of many installers that find a dead owner's lock, one takes it and the res
       children.push(entry);
       return entry;
     });
-    // What the round came to, for the message of whichever assertion fails.
-    const state = () =>
-      [
+    // What the round came to, added to the message of whichever check fails.
+    const state = () => {
+      let owner = null;
+      try {
+        owner = fs.readFileSync(path.join(lock, "owner"), "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      return [
         `round ${round}: download ${fs.existsSync(ready) ? "reached" : "not reached"}`,
-        `owner record: ${JSON.stringify(fs.existsSync(path.join(lock, "owner")) ? fs.readFileSync(path.join(lock, "owner"), "utf8") : null)}`,
+        `owner record: ${JSON.stringify(owner)}`,
         `takeover guard: ${fs.existsSync(`${lock}.takeover`)}`,
         ...started.map(
           (entry) =>
             `pid ${entry.child.pid}: ${entry.code === undefined ? "running" : `ended ${entry.code}`} ${JSON.stringify(entry.stderr.trim())}`,
         ),
       ].join("\n");
+    };
     // The round is decided by events, not by a clock: every run but one ends,
     // and the one left reaches its download. The limit below only stops a
-    // round that can no longer be decided, and then says what each run did.
+    // round that can no longer be decided.
     let limit;
     const undecided = new Promise((_, reject) => {
       limit = setTimeout(
-        () => reject(new Error(`the installers did not settle on one holder\n${state()}`)),
+        () => reject(new Error("the installers did not settle on one holder")),
         120000,
       );
     });
+    let holder;
     try {
       await Promise.race([
         undecided,
@@ -546,36 +554,39 @@ test("of many installers that find a dead owner's lock, one takes it and the res
           for (const entry of started)
             entry.closed.then(() => {
               ended += 1;
-              // Eight ended: nobody holds, and no download will be reached.
               if (ended >= started.length - 1) resolve();
             });
         }),
       ]);
       while (!fs.existsSync(ready)) {
+        // Eight ended: nobody holds, and no download will be reached.
         assert.ok(
           started.some((entry) => entry.code === undefined),
-          `every installer ended, none holds the lock\n${state()}`,
+          "every installer ended, none holds the lock",
         );
         await Promise.race([undecided, new Promise((resolve) => setTimeout(resolve, 20))]);
       }
+      const holders = started.filter((entry) => entry.code === undefined);
+      assert.equal(holders.length, 1, "exactly one installer holds the lock");
+      [holder] = holders;
+      for (const entry of started.filter((entry) => entry !== holder)) {
+        assert.notEqual(entry.code, 0);
+        assert.match(entry.stderr, /Another installation (is|may be) running/);
+      }
+      // The refused runs have exited: none of them may have released the holder's lock.
+      assert.equal(
+        fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
+        String(holder.child.pid),
+      );
+      assert.equal(fs.existsSync(`${lock}.takeover`), false);
+    } catch (error) {
+      error.message = `${error.message}\n${state()}`;
+      throw error;
     } finally {
       clearTimeout(limit);
     }
-    const holders = started.filter((entry) => entry.code === undefined);
-    assert.equal(holders.length, 1, `exactly one installer holds the lock\n${state()}`);
-    for (const entry of started.filter((entry) => entry !== holders[0])) {
-      assert.notEqual(entry.code, 0, state());
-      assert.match(entry.stderr, /Another installation (is|may be) running/, state());
-    }
-    // The refused runs have exited: none of them may have released the holder's lock.
-    assert.equal(
-      fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
-      String(holders[0].child.pid),
-      state(),
-    );
-    assert.equal(fs.existsSync(`${lock}.takeover`), false);
-    process.kill(-holders[0].child.pid, "SIGTERM");
-    await holders[0].closed;
+    process.kill(-holder.child.pid, "SIGTERM");
+    await holder.closed;
     assert.equal(fs.existsSync(lock), false, "the holder released its lock");
     assert.equal(fs.existsSync(`${lock}.takeover`), false);
   }
