@@ -257,6 +257,14 @@ export const PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = 117;
  * Offered in place of 117 because the offer array has nine slots.
  */
 export const PANE_STREAM_READER_CAPABILITY_VERSION = 118;
+/**
+ * The client keeps its stream when the session gains or loses a pane (#723):
+ * the daemon sends a `topology` frame where it would otherwise close the
+ * stream with 1012 "topology-changed". Offered beside the other versions, not
+ * in place of one. The daemon confirms it with `topologyInPlace: true` in the
+ * ready frame; without both, nothing changes for either side.
+ */
+export const PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION = 119;
 export const PaneStreamInputLifetimeSchemaZ = z
   .object({
     generation: z.string().min(1).max(256),
@@ -477,6 +485,8 @@ export const PaneStreamReadyFrameSchemaZ = z
     type: z.literal("ready"),
     inputLifetime: z.literal(true).optional(),
     inputBytes: z.literal(true).optional(),
+    /** Only to a client that offered capability 119: `topology` frames may follow. */
+    topologyInPlace: z.literal(true).optional(),
     protocolVersion: z.literal(PANE_STREAM_PROTOCOL_VERSION),
     daemonInstanceId: BoundedIdentitySchemaZ,
     requestId: z.uuid(),
@@ -701,6 +711,41 @@ export const PaneStreamFlowFrameSchemaZ = z
   })
   .strict();
 
+/**
+ * Capability 119. The session's pane set changed and the stream stays open.
+ * `panes` is the stream's whole pane set from now on, with the meaning it has
+ * in the ready frame; `removed` and `added` are its difference from the set
+ * before. Sent before the `layout-snapshot` of the same epoch, so a layout
+ * never names a pane the client has not been told about. A removed pane's
+ * delivery has ended; an added pane's `terminal-delivery-ready` and seed
+ * follow the snapshot.
+ */
+export const PaneStreamTopologyFrameSchemaZ = z
+  .object({
+    type: z.literal("topology"),
+    topologyEpoch: z.number().int().nonnegative(),
+    panes: PaneSetSchemaZ,
+    removed: z.array(PaneStreamSemanticPaneIdSchemaZ).max(PANE_STREAM_MAX_PANES),
+    added: z.array(PaneStreamSemanticPaneIdSchemaZ).max(PANE_STREAM_MAX_PANES),
+  })
+  .strict()
+  .superRefine((frame, context) => {
+    const panes = new Set(frame.panes);
+    const removed = new Set(frame.removed);
+    const added = new Set(frame.added);
+    if (
+      removed.size !== frame.removed.length ||
+      added.size !== frame.added.length ||
+      frame.added.some((pane) => !panes.has(pane) || removed.has(pane)) ||
+      frame.removed.some((pane) => panes.has(pane))
+    )
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "added panes must be in the set, removed panes must not, and neither may repeat",
+      });
+  });
+export type PaneStreamTopologyFrame = z.infer<typeof PaneStreamTopologyFrameSchemaZ>;
+
 export const PaneStreamClosedFrameSchemaZ = z
   .object({
     type: z.literal("closed"),
@@ -903,6 +948,7 @@ export const PaneStreamServerFrameSchemaZ = z.discriminatedUnion("type", [
   PaneStreamCursorFrameSchemaZ,
   PaneStreamLayoutFrameSchemaZ,
   PaneStreamLayoutSnapshotFrameSchemaZ,
+  PaneStreamTopologyFrameSchemaZ,
   PaneStreamFlowFrameSchemaZ,
   PaneStreamClosedFrameSchemaZ,
   PaneStreamInputAckFrameSchemaZ,

@@ -6,6 +6,11 @@ import { SessionRuntimeRegistry } from "./registry.ts";
 import { SessionRuntimeTransportBinder } from "./transport-binding.ts";
 
 const GENERATION = "11111111-1111-4111-8111-111111111111";
+const OFFER = {
+  protocolVersions: [1],
+  encodings: ["semantic-v1" as const],
+  richPlacements: false,
+};
 const LEASE = {
   generation: GENERATION,
   session: "alpha",
@@ -520,6 +525,71 @@ describe("SessionRuntimeTransportBinder", () => {
     });
     second.assertController("pane.tests");
     await second.close();
+    await registry.dispose();
+  });
+
+  // #723: the daemon follows its session's pane set on a live stream. The
+  // amendment comes from the daemon's own inventory, never from a client.
+  it("amends a live binding's exact pane grant, for input and for delivery", async () => {
+    const registry = new SessionRuntimeRegistry({
+      generation: GENERATION,
+      createControllerToken: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    const binder = new SessionRuntimeTransportBinder(registry);
+    const binding = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000001",
+      session: "alpha",
+      hostClientId: "electron:renderer-a",
+      allowedSourcePaneIds: ["pane.editor", "pane.old"],
+      interactive: true,
+    });
+    const outside = expect.objectContaining({ code: "invalid-source-pane-binding" });
+    binding.assertController("pane.editor");
+    expect(() => binding.assertController("pane.new")).toThrowError(outside);
+    expect(() => binding.openTerminalDelivery("pane.new", OFFER, () => undefined)).toThrowError(
+      outside,
+    );
+
+    binding.amendPaneGrant({ added: ["pane.new"], removed: ["pane.old"] });
+    // The new pane is inside the grant now: input authority covers it, and a
+    // delivery for it gets past the grant (the session itself is not attached here).
+    binding.assertController("pane.new");
+    binding.assertController("pane.editor");
+    expect(() => binding.assertController("pane.old")).toThrowError(outside);
+    expect(() => binding.openTerminalDelivery("pane.old", OFFER, () => undefined)).toThrowError(
+      outside,
+    );
+    let refusal: unknown = null;
+    try {
+      await binding.openTerminalDelivery("pane.new", OFFER, () => undefined);
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).not.toEqual(outside);
+
+    // Amending twice changes nothing, and an invalid pane id changes nothing at all.
+    binding.amendPaneGrant({ added: ["pane.new"], removed: ["pane.old"] });
+    expect(() => binding.amendPaneGrant({ added: ["%7"], removed: ["pane.editor"] })).toThrow();
+    binding.assertController("pane.editor");
+
+    // A sibling stream of the same host keeps its own grant: the amendment is per binding.
+    const sibling = binder.bind({
+      transport: "pane-stream",
+      transportLeaseId: "00000000-0000-4000-8000-000000000002",
+      session: "alpha",
+      hostClientId: "electron:renderer-a",
+      allowedSourcePaneIds: ["pane.old"],
+      interactive: true,
+    });
+    sibling.assertController("pane.old");
+    expect(() => sibling.assertController("pane.new")).toThrowError(outside);
+    await sibling.close();
+    // After the sibling is gone nobody of this host holds pane.old.
+    expect(() => binding.assertController("pane.old")).toThrowError(outside);
+
+    await binding.close();
+    expect(() => binding.amendPaneGrant({ added: ["pane.x"], removed: [] })).toThrow();
     await registry.dispose();
   });
 

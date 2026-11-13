@@ -14,6 +14,7 @@ import {
   decodeTerminalGraphicsCompressed,
   decodeTerminalDeliveryBinaryChunk,
   PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamServerFrameSchemaZ,
@@ -54,6 +55,7 @@ import { logger } from "../../lib/log.ts";
 import { createPaneStreamRuntime } from "./runtime.ts";
 import {
   PANE_STREAM_OWNER_RETIRED_CLOSE,
+  PANE_STREAM_TOPOLOGY_SETTLE_MS,
   PaneStreamAdmissionCoordinator,
   paneStreamCloseForRetirement,
   type PaneStreamMirror,
@@ -462,6 +464,7 @@ function harness(
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    withoutGrantAmendment?: boolean;
     graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
@@ -478,6 +481,7 @@ function harness(
   });
   const scheduler = testScheduler();
   const deliveryListeners = new Map<string, (message: never) => void>();
+  const grantAmendments: { added: string[]; removed: string[] }[] = [];
   const deliveryAcks = vi.fn();
   const deliveryNacks = vi.fn();
   const deliveryVisibility = vi.fn();
@@ -571,6 +575,16 @@ function harness(
           return authoritySnapshot();
         },
         assertController: () => undefined,
+        ...(options.withoutGrantAmendment
+          ? {}
+          : {
+              amendPaneGrant: (change: {
+                added: readonly string[];
+                removed: readonly string[];
+              }) => {
+                grantAmendments.push({ added: [...change.added], removed: [...change.removed] });
+              },
+            }),
         openTerminalDelivery:
           options.openTerminalDelivery ??
           (async (pane, _offer, onMessage, deliveryWorkspaceName) => {
@@ -613,6 +627,7 @@ function harness(
     coordinator,
     scheduler,
     deliveryListeners,
+    grantAmendments,
     deliveryAcks,
     deliveryNacks,
     deliveryVisibility,
@@ -2453,6 +2468,338 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.framesOfType("layout-snapshot")).toHaveLength(1);
     expect(socket.framesOfType("error").at(-1)?.code).toBe("topology-changed");
     expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+  });
+
+  // #723: a pane split or closed by another tmux client used to end every
+  // stream of that session. With capability 119 the stream stays.
+  describe("a pane set that changes under a live stream (#723)", () => {
+    const IN_PLACE = [1, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION];
+    /** A harness whose deliveries record their close. */
+    function topologyHarness(
+      panes: string[],
+      openFailsFor: string[] = [],
+      withoutGrantAmendment = false,
+    ) {
+      const closed: string[] = [];
+      const opened: string[] = [];
+      const h = harness({
+        panes,
+        withoutGrantAmendment,
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          if (openFailsFor.includes(pane)) throw new Error("delivery unavailable");
+          opened.push(pane);
+          h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation: {
+              accepted: true as const,
+              negotiated: {
+                protocolVersion: 1 as const,
+                encoding: "semantic-v1" as const,
+                richPlacements: false,
+                generation: INSTANCE,
+                deliveryNonce: "00000000-0000-4000-8000-000000000098",
+              },
+            },
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close: async () => {
+              closed.push(pane);
+            },
+          };
+        },
+      });
+      return { h, closed, opened };
+    }
+    async function open(
+      h: ReturnType<typeof harness>,
+      panes: string[],
+      protocolVersions: number[] = IN_PLACE,
+    ) {
+      const { socket } = await connect(h, { panes, semanticDelivery: true, protocolVersions });
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(panes.length),
+      );
+      return socket;
+    }
+    /** The session now has exactly these panes, and its layout says so. */
+    const change = (h: ReturnType<typeof harness>, panes: string[]) => {
+      h.mirror.panes = panes;
+      h.mirror.layoutHandlers[0]?.(authoritativeLayout(panes));
+    };
+    const types = (socket: FakeSocket, from: number) =>
+      socket.frames.slice(from).map((frame) => (frame as { type: string }).type);
+
+    it("says so in the ready frame only to a client that offered the capability", async () => {
+      const { h } = topologyHarness(["pane.one", "pane.two"]);
+      const withIt = await open(h, ["pane.one", "pane.two"]);
+      expect(withIt.framesOfType("ready")[0]).toMatchObject({ topologyInPlace: true });
+      const without = await open(h, ["pane.one", "pane.two"], [1]);
+      expect(Object.keys(without.framesOfType("ready")[0]!)).not.toContain("topologyInPlace");
+    });
+
+    it("gives a client without the capability today's answer, byte for byte", async () => {
+      for (const next of [["pane.one"], ["pane.one", "pane.two", "pane.three"]]) {
+        const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"], [1]);
+        const wire: string[] = [];
+        socket.onTransmit = (text) => wire.push(text);
+        const describes = vi.spyOn(h.mirror, "describeSession");
+        change(h, next);
+        expect(wire).toEqual([
+          '{"type":"error","protocolVersion":2,"code":"topology-changed","retryable":true}',
+        ]);
+        expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+        // Nothing of the new path ran: no inventory read, no further delivery.
+        expect(describes).not.toHaveBeenCalled();
+        expect(opened).toEqual(["pane.one", "pane.two"]);
+      }
+    });
+
+    it("keeps the stream when a pane is closed elsewhere: its delivery ends, the rest goes on", async () => {
+      const { h, closed } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      const before = socket.frames.length;
+      change(h, ["pane.one"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      expect(socket.framesOfType("topology")[0]).toEqual({
+        type: "topology",
+        topologyEpoch: 1,
+        panes: ["pane.one"],
+        removed: ["pane.two"],
+        added: [],
+      });
+      // The pane set first, then the layout that uses it.
+      expect(types(socket, before)).toEqual(["topology", "layout-snapshot"]);
+      expect(socket.framesOfType("layout-snapshot").at(-1)).toMatchObject({ topologyEpoch: 1 });
+      expect(closed).toEqual(["pane.two"]);
+      expect(h.grantAmendments).toEqual([{ added: [], removed: ["pane.two"] }]);
+      expect(socket.closed).toBeNull();
+      expect(socket.framesOfType("error")).toEqual([]);
+      // The surviving pane still delivers.
+      await h.deliveryListeners.get("pane.one")?.({
+        type: "terminal.delivery.fault",
+        reason: "source-closed",
+        message: "x",
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+      } as never);
+      expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
+    });
+
+    it("keeps the stream when a pane is added: the new pane is announced, then negotiated", async () => {
+      const { h, opened, closed } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      const before = socket.frames.length;
+      change(h, ["pane.one", "pane.two", "pane.three"]);
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3),
+      );
+      expect(socket.framesOfType("topology")[0]).toEqual({
+        type: "topology",
+        topologyEpoch: 1,
+        panes: ["pane.one", "pane.two", "pane.three"],
+        removed: [],
+        added: ["pane.three"],
+      });
+      expect(types(socket, before)).toEqual([
+        "topology",
+        "layout-snapshot",
+        "terminal-delivery-ready",
+      ]);
+      expect(socket.framesOfType("terminal-delivery-ready").at(-1)).toMatchObject({
+        pane: "pane.three",
+      });
+      expect(opened).toEqual(["pane.one", "pane.two", "pane.three"]);
+      expect(closed).toEqual([]);
+      // The transport's grant was extended by the daemon before the delivery opened.
+      expect(h.grantAmendments).toEqual([{ added: ["pane.three"], removed: [] }]);
+      expect(socket.closed).toBeNull();
+    });
+
+    it("closes as before when the transport cannot extend its grant", async () => {
+      const { h, opened } = topologyHarness(["pane.one", "pane.two"], [], true);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      change(h, ["pane.one", "pane.two", "pane.three"]);
+      await vi.waitFor(() =>
+        expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+      );
+      expect(opened).toEqual(["pane.one", "pane.two"]);
+      expect(socket.framesOfType("topology")).toEqual([]);
+    });
+
+    it("replaces a pane in one step when one closes and another opens", async () => {
+      const { h, closed } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      change(h, ["pane.one", "pane.new"]);
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3),
+      );
+      expect(socket.framesOfType("topology")[0]).toMatchObject({
+        panes: ["pane.one", "pane.new"],
+        removed: ["pane.two"],
+        added: ["pane.new"],
+      });
+      expect(closed).toEqual(["pane.two"]);
+      expect(socket.closed).toBeNull();
+    });
+
+    it("follows a second change after the first", async () => {
+      const { h } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      change(h, ["pane.one", "pane.two", "pane.three"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      change(h, ["pane.one", "pane.three"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(2));
+      expect(socket.framesOfType("topology")[1]).toMatchObject({
+        topologyEpoch: 2,
+        panes: ["pane.one", "pane.three"],
+        removed: ["pane.two"],
+        added: [],
+      });
+      expect(socket.closed).toBeNull();
+    });
+
+    it("takes back a pane that left and returned", async () => {
+      const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      change(h, ["pane.one"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      change(h, ["pane.one", "pane.two"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(2));
+      expect(socket.framesOfType("topology")[1]).toMatchObject({
+        panes: ["pane.one", "pane.two"],
+        removed: [],
+        added: ["pane.two"],
+      });
+      expect(opened).toEqual(["pane.one", "pane.two", "pane.two"]);
+      expect(socket.closed).toBeNull();
+    });
+
+    it("announces only the newest state when changes arrive while one is being applied", async () => {
+      const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      let release!: () => void;
+      h.mirror.describeGate = new Promise<void>((resolve) => (release = resolve));
+      // A pane appears and vanishes again, then another appears, before the first read returns.
+      change(h, ["pane.one", "pane.two", "pane.gone"]);
+      change(h, ["pane.one", "pane.two"]);
+      change(h, ["pane.one", "pane.two", "pane.kept"]);
+      h.mirror.describeGate = null;
+      release();
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3),
+      );
+      expect(socket.framesOfType("topology")).toEqual([
+        {
+          type: "topology",
+          topologyEpoch: 3,
+          panes: ["pane.one", "pane.two", "pane.kept"],
+          removed: [],
+          added: ["pane.kept"],
+        },
+      ]);
+      expect(opened).not.toContain("pane.gone");
+      expect(socket.closed).toBeNull();
+    });
+
+    it("leaves a stream that leased only some panes with those panes", async () => {
+      const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one"]);
+      change(h, ["pane.one", "pane.two", "pane.three"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      expect(socket.framesOfType("topology")[0]).toMatchObject({
+        panes: ["pane.one"],
+        removed: [],
+        added: [],
+      });
+      expect(opened).toEqual(["pane.one"]);
+      expect(socket.closed).toBeNull();
+    });
+
+    it.each([
+      ["the new pane's delivery cannot be opened", ["pane.one", "pane.two", "pane.bad"]],
+      [
+        "the stream would hold more panes than allowed",
+        ["pane.one", "pane.two", ...Array.from({ length: 23 }, (_, index) => `pane.x${index}`)],
+      ],
+    ])("closes as before when %s", async (_name, next) => {
+      const { h, closed } = topologyHarness(["pane.one", "pane.two"], ["pane.bad"]);
+      const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      change(h, next);
+      await vi.waitFor(() =>
+        expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+      );
+      expect(socket.framesOfType("topology")).toEqual([]);
+      expect(socket.framesOfType("error").at(-1)).toMatchObject({ code: "topology-changed" });
+      // Whatever was opened for the change is closed again with the stream,
+      // and a grant extended for a pane that could not open is taken back.
+      expect(closed).toEqual(expect.arrayContaining(["pane.one", "pane.two"]));
+      const grantedThenRevoked = h.grantAmendments.flatMap((entry) => entry.added);
+      expect(h.grantAmendments.flatMap((entry) => entry.removed)).toEqual(grantedThenRevoked);
+      // The close says why the change could not be followed in place.
+      expect(logged).toHaveBeenCalledWith(
+        "pane-stream",
+        "stream closed",
+        expect.objectContaining({
+          code: 1012,
+          cause: expect.stringMatching(/^topology-in-place: /u),
+        }),
+      );
+      logged.mockRestore();
+    });
+
+    it("closes as before when the inventory cannot be read or its layout never comes", async () => {
+      const failing = topologyHarness(["pane.one", "pane.two"]);
+      const first = await open(failing.h, ["pane.one", "pane.two"]);
+      failing.h.mirror.describeFailure = true;
+      failing.h.mirror.layoutHandlers[0]?.(authoritativeLayout(["pane.one"]));
+      await vi.waitFor(() =>
+        expect(first.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+      );
+
+      vi.useFakeTimers();
+      try {
+        const lagging = topologyHarness(["pane.one", "pane.two"]);
+        const second = await open(lagging.h, ["pane.one", "pane.two"]);
+        // The inventory already has three panes; the layout in hand shows one.
+        lagging.h.mirror.panes = ["pane.one", "pane.two", "pane.three"];
+        lagging.h.mirror.layoutHandlers[0]?.(authoritativeLayout(["pane.one"]));
+        await vi.advanceTimersByTimeAsync(PANE_STREAM_TOPOLOGY_SETTLE_MS - 1);
+        expect(second.closed).toBeNull();
+        await vi.advanceTimersByTimeAsync(2);
+        expect(second.closed).toEqual({ code: 1012, reason: "topology-changed" });
+        expect(second.framesOfType("topology")).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waits for the layout that matches the inventory instead of closing", async () => {
+      const { h } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      h.mirror.panes = ["pane.one", "pane.two", "pane.three"];
+      h.mirror.layoutHandlers[0]?.(authoritativeLayout(["pane.one"]));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(socket.closed).toBeNull();
+      h.mirror.layoutHandlers[0]?.(authoritativeLayout(["pane.one", "pane.two", "pane.three"]));
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      expect(socket.framesOfType("topology")[0]).toMatchObject({
+        topologyEpoch: 2,
+        added: ["pane.three"],
+      });
+      expect(socket.closed).toBeNull();
+    });
+
+    it("still closes for another session's layout, whatever the client offered", async () => {
+      const { h } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      h.mirror.layoutHandlers[0]?.(
+        authoritativeLayout(["pane.one", "pane.two"], { session: "other" }),
+      );
+      expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+      expect(socket.framesOfType("topology")).toEqual([]);
+    });
   });
 
   it("publishes same-backing link selection without reopening delivery and rejects unfenced changes", async () => {

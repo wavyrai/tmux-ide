@@ -24,6 +24,7 @@ import {
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
   PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION,
   PANE_STREAM_READER_CAPABILITY_VERSION,
+  PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   type PaneStreamInputLifetime,
 } from "@tmux-ide/contracts";
 import { inflateSync } from "node:zlib";
@@ -356,6 +357,15 @@ export interface SessionRuntimePaneStreamTransportBinding {
   readonly explicitAuthority?: boolean;
   readonly deliveryLaneId?: string;
   readonly deliveryRequestId?: string;
+  /**
+   * Amend the transport's exact pane grant when the session's pane set changes
+   * under a live stream (#723). Called by the daemon with panes from its own
+   * inventory; a binding without it cannot take a new pane in place.
+   */
+  amendPaneGrant?(change: {
+    readonly added: readonly string[];
+    readonly removed: readonly string[];
+  }): void;
   /** Optional only for the bounded v1 transport adapter. New clients require these methods. */
   authoritySnapshot?(): SessionRuntimeAuthoritySnapshot;
   activateLegacyAuthority?(geometry: boolean): SessionRuntimeAuthoritySnapshot;
@@ -1146,6 +1156,23 @@ interface SeedBatch {
   guardArmed: boolean;
 }
 
+/**
+ * How long an in-place topology change waits for the layout that matches the
+ * session's inventory, when the inventory read was newer than the layout in
+ * hand (a split and a close in quick succession). After it the stream closes
+ * as it would without capability 119.
+ */
+export const PANE_STREAM_TOPOLOGY_SETTLE_MS = 500;
+
+/** One pane's delivery, opened and negotiated but not yet announced to the client. */
+interface OpenedPaneDelivery {
+  readonly channel: PaneChannel;
+  readonly delivery: SessionRuntimeTerminalDeliveryConnection;
+  readonly pending: TerminalDeliveryServerMessage[];
+  readonly markNegotiated: () => void;
+  readonly markReady: () => void;
+}
+
 interface PaneChannel {
   readonly semanticPaneId: string;
   sub: MirrorSubscription | null;
@@ -1241,6 +1268,13 @@ export class PaneStreamLiveConnection {
   readonly #panes = new Map<string, PaneChannel>();
   readonly #semanticLayouts = new Map<string, MirrorLayoutEvent>();
   #semanticExpectedPaneIds: readonly string[] | null = null;
+  /** Capability 119 (#723): a changed pane set is announced, not a reason to close. */
+  readonly #topologyInPlace: boolean;
+  /** The stream was issued for every pane of its session: new panes join it. */
+  #leasesWholeSession = false;
+  #topologyReconciling = false;
+  #topologyPending: MirrorLayoutAuthoritySnapshot | null = null;
+  #topologyWaiter: (() => void) | null = null;
   #semanticRuntimeSessionId: string | null = null;
   #semanticWindowLinks: WindowLinkTopology | null = null;
   #semanticTopologyEpoch = -1;
@@ -1378,26 +1412,11 @@ export class PaneStreamLiveConnection {
       : undefined;
     this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
     this.#onRetire = options.onRetire;
-    for (const pane of options.descriptor.panes) {
-      this.#panes.set(pane, {
-        semanticPaneId: pane,
-        sub: null,
-        delivery: null,
-        deliveryAddress: null,
-        serverSeq: 0,
-        sentPaneFrames: 0,
-        consumedSeq: 0,
-        nextInputSeq: 1,
-        frozenByWire: false,
-        closed: false,
-        batch: null,
-        graphicsAnnounced: false,
-        graphicsQueue: [],
-        graphicsSending: false,
-        graphicsServed: new Map(),
-        graphicsState: null,
-      });
-    }
+    this.#topologyInPlace =
+      options.descriptor.terminalDelivery?.protocolVersions.includes(
+        PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
+      ) === true;
+    for (const pane of options.descriptor.panes) this.#panes.set(pane, newPaneChannel(pane));
   }
 
   get clientId(): string {
@@ -1427,6 +1446,7 @@ export class PaneStreamLiveConnection {
         )
           ? { inputBytes: true as const }
           : {}),
+        ...(this.#topologyInPlace ? { topologyInPlace: true as const } : {}),
         protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
         daemonInstanceId: this.#binding.daemonInstanceId,
         requestId: this.#binding.requestId,
@@ -1696,32 +1716,7 @@ export class PaneStreamLiveConnection {
     // removes N x attachment latency without allowing a fast pane to make the
     // session look ready while a sibling is still missing. allSettled is
     // deliberate: partial success is always closed before the socket retires.
-    const openings = channels.map(async (channel) => {
-      const pending: TerminalDeliveryServerMessage[] = [];
-      let ready = false;
-      let negotiated = false;
-      const delivery = await binding.openTerminalDelivery(
-        channel.semanticPaneId,
-        offer,
-        (message) => {
-          if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
-            pending.push(message);
-          else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-        },
-        this.#descriptor.workspaceName,
-      );
-      return {
-        channel,
-        delivery,
-        pending,
-        markNegotiated: () => {
-          negotiated = true;
-        },
-        markReady: () => {
-          ready = true;
-        },
-      };
-    });
+    const openings = channels.map((channel) => this.#openPaneDelivery(binding, offer, channel));
     const settled = await Promise.allSettled(openings);
     const opened = settled.flatMap((result) =>
       result.status === "fulfilled" ? [result.value] : [],
@@ -1743,27 +1738,7 @@ export class PaneStreamLiveConnection {
       return;
     }
 
-    const deliveryIdentityChanged = opened.some(({ channel, delivery, pending }) => {
-      if (!delivery.negotiation.accepted) return true;
-      const negotiated = delivery.negotiation.negotiated;
-      if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
-      let incarnation: string | null = null;
-      for (const message of pending) {
-        if (message.type !== "terminal.delivery" && message.type !== "terminal.projection")
-          continue;
-        if (
-          message.workspaceName !== this.#descriptor.workspaceName ||
-          message.semanticPaneId !== channel.semanticPaneId ||
-          message.generation !== negotiated.generation ||
-          message.deliveryNonce !== negotiated.deliveryNonce ||
-          (incarnation !== null && message.incarnation !== incarnation)
-        )
-          return true;
-        incarnation = message.incarnation;
-      }
-      return false;
-    });
-    if (deliveryIdentityChanged) {
+    if (opened.some((entry) => this.#deliveryIdentityChanged(entry))) {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
       this.#failTopologyChanged();
       return;
@@ -1794,6 +1769,7 @@ export class PaneStreamLiveConnection {
     }
     this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
     this.#semanticExpectedPaneIds = expectedPaneIds;
+    this.#leasesWholeSession = expectedPaneIds.every((pane) => this.#panes.has(pane));
     this.#semanticRuntimeSessionId = authority!.runtimeSessionId;
     this.#semanticWindowLinks = authority!.windowLinks;
     this.#semanticTopologyEpoch = authority!.topologyEpoch;
@@ -1822,6 +1798,64 @@ export class PaneStreamLiveConnection {
         Number(visibleAtDelivery.has(right.channel.semanticPaneId)) -
         Number(visibleAtDelivery.has(left.channel.semanticPaneId)),
     );
+    await this.#publishOpenedDeliveries(opened);
+    this.#closeIfAllPanesGone();
+  }
+
+  /** Open one pane's delivery; its messages wait until the pane is announced. */
+  async #openPaneDelivery(
+    binding: SessionRuntimePaneStreamTransportBinding,
+    offer: NonNullable<PaneStreamLeaseDescriptor["terminalDelivery"]>,
+    channel: PaneChannel,
+  ): Promise<OpenedPaneDelivery> {
+    const pending: TerminalDeliveryServerMessage[] = [];
+    let ready = false;
+    let negotiated = false;
+    const delivery = await binding.openTerminalDelivery(
+      channel.semanticPaneId,
+      offer,
+      (message) => {
+        if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
+          pending.push(message);
+        else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+      },
+      this.#descriptor.workspaceName,
+    );
+    return {
+      channel,
+      delivery,
+      pending,
+      markNegotiated: () => {
+        negotiated = true;
+      },
+      markReady: () => {
+        ready = true;
+      },
+    };
+  }
+
+  #deliveryIdentityChanged({ channel, delivery, pending }: OpenedPaneDelivery): boolean {
+    if (!delivery.negotiation.accepted) return true;
+    const negotiated = delivery.negotiation.negotiated;
+    if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
+    let incarnation: string | null = null;
+    for (const message of pending) {
+      if (message.type !== "terminal.delivery" && message.type !== "terminal.projection") continue;
+      if (
+        message.workspaceName !== this.#descriptor.workspaceName ||
+        message.semanticPaneId !== channel.semanticPaneId ||
+        message.generation !== negotiated.generation ||
+        message.deliveryNonce !== negotiated.deliveryNonce ||
+        (incarnation !== null && message.incarnation !== incarnation)
+      )
+        return true;
+      incarnation = message.incarnation;
+    }
+    return false;
+  }
+
+  /** Announce validated deliveries, then replay what each collected meanwhile. */
+  async #publishOpenedDeliveries(opened: readonly OpenedPaneDelivery[]): Promise<void> {
     for (const { channel, delivery, markNegotiated } of opened) {
       if (this.#closed || channel.closed) {
         await delivery.close();
@@ -1868,7 +1902,6 @@ export class PaneStreamLiveConnection {
       markReady();
       this.#startGraphics(channel);
     }
-    this.#closeIfAllPanesGone();
   }
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
@@ -2433,16 +2466,23 @@ export class PaneStreamLiveConnection {
 
   #onLayoutAuthority(snapshot: MirrorLayoutAuthoritySnapshot): void {
     if (this.#closed || !this.#semanticExpectedPaneIds || !this.#semanticRuntimeSessionId) return;
-    if (
-      snapshot.session !== this.#descriptor.sessionName ||
-      snapshot.runtimeSessionId !== this.#semanticRuntimeSessionId ||
-      snapshot.topologyEpoch <= this.#semanticTopologyEpoch ||
-      snapshot.layouts.length > PANE_STREAM_MAX_PANES
-    ) {
+    if (this.#topologyReconciling) {
+      // One change at a time, and only the newest state is worth announcing.
+      this.#topologyPending = snapshot;
+      this.#topologyWaiter?.();
+      return;
+    }
+    if (!this.#layoutAuthorityAdmissible(snapshot)) {
       this.#failTopologyChanged();
       return;
     }
     const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
+    if (!frames && this.#topologyInPlace) {
+      // The layout does not fit the pane set this stream knows. With
+      // capability 119 that is a change to follow, not a reason to close.
+      void this.#reconcileTopology(snapshot);
+      return;
+    }
     if (
       !frames ||
       !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
@@ -2455,17 +2495,7 @@ export class PaneStreamLiveConnection {
       this.#failTopologyChanged();
       return;
     }
-    const previousLinks = this.#semanticWindowLinks;
-    if (
-      !previousLinks ||
-      snapshot.windowLinks.liveSessionId !== previousLinks.liveSessionId ||
-      snapshot.windowLinks.linkRevision < previousLinks.linkRevision ||
-      (snapshot.windowLinks.linkRevision === previousLinks.linkRevision &&
-        JSON.stringify(
-          [...snapshot.windowLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId)),
-        ) !==
-          JSON.stringify([...previousLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))))
-    ) {
+    if (!this.#windowLinksAdmissible(snapshot)) {
       this.#failTopologyChanged();
       return;
     }
@@ -2480,6 +2510,227 @@ export class PaneStreamLiveConnection {
       layouts: frames,
       windowLinks: snapshot.windowLinks,
     });
+  }
+
+  /** The same session and runtime, a newer epoch, a layout a stream can carry. */
+  #layoutAuthorityAdmissible(snapshot: MirrorLayoutAuthoritySnapshot): boolean {
+    return (
+      snapshot.session === this.#descriptor.sessionName &&
+      snapshot.runtimeSessionId === this.#semanticRuntimeSessionId &&
+      snapshot.topologyEpoch > this.#semanticTopologyEpoch &&
+      snapshot.layouts.length <= PANE_STREAM_MAX_PANES
+    );
+  }
+
+  #windowLinksAdmissible(snapshot: MirrorLayoutAuthoritySnapshot): boolean {
+    const previousLinks = this.#semanticWindowLinks;
+    return !(
+      !previousLinks ||
+      snapshot.windowLinks.liveSessionId !== previousLinks.liveSessionId ||
+      snapshot.windowLinks.linkRevision < previousLinks.linkRevision ||
+      (snapshot.windowLinks.linkRevision === previousLinks.linkRevision &&
+        JSON.stringify(
+          [...snapshot.windowLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId)),
+        ) !==
+          JSON.stringify([...previousLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))))
+    );
+  }
+
+  /**
+   * Capability 119 (#723). Follow a changed pane set without closing: one
+   * change at a time, newest state only. Every doubt ends where a stream
+   * without the capability ends, in `#failTopologyChanged()`.
+   */
+  async #reconcileTopology(first: MirrorLayoutAuthoritySnapshot): Promise<void> {
+    this.#topologyReconciling = true;
+    let snapshot = first;
+    try {
+      for (;;) {
+        this.#topologyPending = null;
+        const outcome = await this.#applyTopology(snapshot);
+        if (this.#closed) return;
+        if (outcome === "failed") return this.#failTopologyChanged(this.#topologyFailure);
+        let next: MirrorLayoutAuthoritySnapshot | null = this.#topologyPending;
+        if (outcome === "stale" && !next) {
+          // The inventory was read after a further change: its layout follows.
+          next = await this.#nextTopologySnapshot();
+          if (this.#closed) return;
+          if (!next) return this.#failTopologyChanged();
+        }
+        if (!next) return;
+        if (!this.#layoutAuthorityAdmissible(next)) return this.#failTopologyChanged();
+        snapshot = next;
+      }
+    } finally {
+      this.#topologyReconciling = false;
+      this.#topologyPending = null;
+    }
+  }
+
+  #nextTopologySnapshot(): Promise<MirrorLayoutAuthoritySnapshot | null> {
+    if (this.#topologyPending) return Promise.resolve(this.#topologyPending);
+    return new Promise((resolve) => {
+      const finish = (): void => {
+        clearTimeout(timer);
+        this.#topologyWaiter = null;
+        resolve(this.#topologyPending);
+      };
+      const timer = setTimeout(finish, PANE_STREAM_TOPOLOGY_SETTLE_MS);
+      timer.unref?.();
+      this.#topologyWaiter = finish;
+    });
+  }
+
+  /**
+   * "applied": the client was told and the stream goes on. "stale": this
+   * layout does not fit the session's inventory as read now; a newer layout
+   * decides. "failed": close.
+   */
+  async #applyTopology(
+    snapshot: MirrorLayoutAuthoritySnapshot,
+  ): Promise<"applied" | "stale" | "failed"> {
+    const binding = this.#sessionRuntimeBinding;
+    const offer = this.#descriptor.terminalDelivery;
+    if (
+      !binding ||
+      !offer ||
+      !this.#semanticExpectedPaneIds ||
+      !this.#windowLinksAdmissible(snapshot)
+    )
+      return this.#topologyFailed("not a semantic stream, or its window links changed");
+    // A zoomed window lists one pane, so the layout alone cannot tell which
+    // panes exist: the trusted inventory does.
+    let described: MirrorSessionDescription;
+    try {
+      described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+    } catch (error) {
+      return this.#topologyFailed("session inventory unavailable", error);
+    }
+    if (this.#closed) return this.#topologyFailed("closed");
+    if (this.#topologyPending) return "stale";
+    const next = [...new Set(described.panes.map((pane) => pane.semanticPaneId))].sort();
+    if (next.length === 0) return this.#topologyFailed("session has no panes");
+    const frames = this.#validateInitialLayout(snapshot.layouts, next);
+    if (!frames) return "stale";
+    if (
+      !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+        type: "layout-snapshot",
+        topologyEpoch: snapshot.topologyEpoch,
+        layouts: frames,
+        windowLinks: snapshot.windowLinks,
+      }).success
+    )
+      return this.#topologyFailed("layout snapshot invalid");
+    const live = [...this.#panes.values()].filter((channel) => !channel.closed);
+    const removed = live.filter((channel) => !next.includes(channel.semanticPaneId));
+    // A stream issued for the whole session follows it; one issued for some
+    // panes keeps exactly those.
+    const liveIds = new Set(live.map((channel) => channel.semanticPaneId));
+    const added = this.#leasesWholeSession ? next.filter((pane) => !liveIds.has(pane)) : [];
+    const remaining = live.length - removed.length + added.length;
+    if (remaining === 0 || remaining > PANE_STREAM_MAX_PANES)
+      return this.#topologyFailed("pane count outside the stream limit");
+
+    // The transport's pane grant is exact. The daemon amends it from its own
+    // inventory of this session before a new pane's delivery can open.
+    if (added.length > 0) {
+      try {
+        if (!binding.amendPaneGrant)
+          return this.#topologyFailed("transport cannot amend its grant");
+        binding.amendPaneGrant({ added, removed: [] });
+      } catch (error) {
+        return this.#topologyFailed("pane grant refused", error);
+      }
+    }
+    const channels = added.map(newPaneChannel);
+    const settled = await Promise.allSettled(
+      channels.map((channel) => this.#openPaneDelivery(binding, offer, channel)),
+    );
+    const opened = settled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : [],
+    );
+    if (
+      this.#closed ||
+      opened.length !== channels.length ||
+      opened.some((entry) => this.#deliveryIdentityChanged(entry))
+    ) {
+      await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
+      if (added.length > 0) {
+        try {
+          binding.amendPaneGrant?.({ added: [], removed: added });
+        } catch {
+          // The stream closes; its binding and grant go with it.
+        }
+      }
+      const rejected = settled.find((result) => result.status === "rejected");
+      return this.#topologyFailed(
+        this.#closed
+          ? "closed while opening"
+          : rejected
+            ? "delivery open rejected"
+            : opened.some((entry) => !entry.delivery.negotiation.accepted)
+              ? "delivery negotiation refused"
+              : "delivery identity changed",
+        rejected?.status === "rejected" ? rejected.reason : undefined,
+      );
+    }
+
+    // Commit. From here on nothing can fail the change.
+    if (removed.length > 0) {
+      try {
+        binding.amendPaneGrant?.({
+          added: [],
+          removed: removed.map((channel) => channel.semanticPaneId),
+        });
+      } catch {
+        // A pane that is gone cannot be used through a grant that lingers.
+      }
+    }
+    for (const channel of removed) this.#retirePaneInPlace(channel);
+    for (const channel of channels) this.#panes.set(channel.semanticPaneId, channel);
+    this.#semanticExpectedPaneIds = next;
+    this.#semanticWindowLinks = snapshot.windowLinks;
+    this.#semanticTopologyEpoch = snapshot.topologyEpoch;
+    this.#semanticLayouts.clear();
+    for (const event of snapshot.layouts)
+      this.#semanticLayouts.set(event.semanticWindowId as string, event);
+    this.#sendFrame(null, {
+      type: "topology",
+      topologyEpoch: snapshot.topologyEpoch,
+      panes: [...this.#panes.values()]
+        .filter((channel) => !channel.closed)
+        .map((channel) => channel.semanticPaneId),
+      removed: removed.map((channel) => channel.semanticPaneId),
+      added,
+    });
+    this.#sendFrame(null, {
+      type: "layout-snapshot",
+      topologyEpoch: snapshot.topologyEpoch,
+      layouts: frames,
+      windowLinks: snapshot.windowLinks,
+    });
+    await this.#publishOpenedDeliveries(opened);
+    return "applied";
+  }
+
+  #topologyFailure = "";
+  #topologyFailed(why: string, error?: unknown): "failed" {
+    this.#topologyFailure = error === undefined ? why : `${why}: ${String(error).slice(0, 200)}`;
+    return "failed";
+  }
+
+  /** A pane that left the session: its delivery ends, the stream does not. */
+  #retirePaneInPlace(channel: PaneChannel): void {
+    const sub = channel.sub;
+    const delivery = channel.delivery;
+    channel.sub = null;
+    channel.delivery = null;
+    channel.closed = true;
+    this.#surfaceDemands.get(channel.semanticPaneId)?.close();
+    this.#surfaceDemands.delete(channel.semanticPaneId);
+    if (sub) void sub.close().catch(() => undefined);
+    if (delivery) void delivery.close().catch(() => undefined);
+    this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
   }
 
   #onLayout(event: MirrorLayoutEvent): void {
@@ -2583,8 +2834,10 @@ export class PaneStreamLiveConnection {
     return frames;
   }
 
-  #failTopologyChanged(): void {
+  /** `inPlaceFailure`: why a capability-119 stream could not follow the change. */
+  #failTopologyChanged(inPlaceFailure?: string): void {
     if (this.#closed) return;
+    if (inPlaceFailure) this.#closeCause = { cause: `topology-in-place: ${inPlaceFailure}` };
     this.#sendFrame(null, {
       type: "error",
       protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
@@ -3518,6 +3771,27 @@ export class PaneStreamLiveConnection {
   }
 
   readonly #onSocketClose = (): void => this.close(1000, "peer-closed");
+}
+
+function newPaneChannel(pane: string): PaneChannel {
+  return {
+    semanticPaneId: pane,
+    sub: null,
+    delivery: null,
+    deliveryAddress: null,
+    serverSeq: 0,
+    sentPaneFrames: 0,
+    consumedSeq: 0,
+    nextInputSeq: 1,
+    frozenByWire: false,
+    closed: false,
+    batch: null,
+    graphicsAnnounced: false,
+    graphicsQueue: [],
+    graphicsSending: false,
+    graphicsServed: new Map(),
+    graphicsState: null,
+  };
 }
 
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {

@@ -8,6 +8,7 @@ import {
   PANE_STREAM_MAX_PANES,
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
+  PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamClientFrameSchemaZ,
   PaneStreamConsumedFrameSchemaZ,
@@ -23,6 +24,7 @@ import {
   PaneStreamRedemptionTicketSchemaZ,
   PaneStreamSeedBatchFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
+  PaneStreamTopologyFrameSchemaZ,
 } from "../pane-stream.ts";
 
 const TICKET = `ps2_${"A".repeat(43)}`;
@@ -576,5 +578,71 @@ describe("negotiated exact byte input", () => {
         inputBytes: false,
       }).success,
     ).toBe(false);
+  });
+});
+
+// #723: a client that declares capability 119 keeps its stream when the
+// session gains or loses a pane. Everything here is additive: without the
+// capability neither side sends or accepts any of it.
+describe("topology in place (capability 119)", () => {
+  const ready = {
+    type: "ready",
+    protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+    daemonInstanceId: INSTANCE_ID,
+    requestId: REQUEST_ID,
+    panes: ["pane.one"],
+    effectiveViewerMode: "interactive",
+  };
+  const topology = {
+    type: "topology",
+    topologyEpoch: 4,
+    panes: ["pane.one", "pane.three"],
+    removed: ["pane.two"],
+    added: ["pane.three"],
+  };
+
+  it("has its own version number, next after the reader capability", () => {
+    expect(PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION).toBe(119);
+  });
+
+  it("is confirmed in the ready frame only as the literal true", () => {
+    expect(PaneStreamServerFrameSchemaZ.safeParse(ready).success).toBe(true);
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({ ...ready, topologyInPlace: true }).success,
+    ).toBe(true);
+    expect(
+      PaneStreamServerFrameSchemaZ.safeParse({ ...ready, topologyInPlace: false }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a topology frame that names the whole new pane set and its difference", () => {
+    expect(PaneStreamServerFrameSchemaZ.parse(topology)).toEqual(topology);
+    expect(PaneStreamTopologyFrameSchemaZ.parse({ ...topology, removed: [], added: [] })).toEqual({
+      ...topology,
+      removed: [],
+      added: [],
+    });
+  });
+
+  it.each([
+    ["an empty pane set", { panes: [] }],
+    ["a repeated pane", { panes: ["pane.one", "pane.one"] }],
+    ["an added pane that is not in the set", { added: ["pane.four"] }],
+    ["a removed pane that is still in the set", { removed: ["pane.one"] }],
+    ["a pane both removed and added", { removed: ["pane.three"], added: ["pane.three"] }],
+    ["a negative epoch", { topologyEpoch: -1 }],
+    ["an unknown field", { reason: "split" }],
+    [
+      "more panes than a stream may hold",
+      {
+        panes: Array.from({ length: PANE_STREAM_MAX_PANES + 1 }, (_, index) => `pane.p${index}`),
+        added: [],
+        removed: [],
+      },
+    ],
+  ])("rejects %s", (_name, change) => {
+    expect(PaneStreamTopologyFrameSchemaZ.safeParse({ ...topology, ...change }).success).toBe(
+      false,
+    );
   });
 });
