@@ -171,6 +171,37 @@ impl Topology {
         }
     }
 
+    /// The stream's pane set changed in place (capability 119): `panes` is
+    /// the whole set from now on. Layouts are not touched; the snapshot that
+    /// follows the change replaces them.
+    pub fn follow(&mut self, panes: &[String]) -> Result<(), Error> {
+        if self.retired {
+            return Err(Error::Retired);
+        }
+        let issued: BTreeSet<String> = panes.iter().cloned().collect();
+        if panes.is_empty()
+            || panes.len() > 24
+            || issued.len() != panes.len()
+            || panes.iter().any(|pane| !wire::identity(pane))
+        {
+            self.retire();
+            return Err(Error::Identity);
+        }
+        self.issued = issued;
+        Ok(())
+    }
+    /// The first pane of the one current window that this stream carries.
+    pub fn first_issued_in_current_window(&self) -> Option<String> {
+        let mut current = self.layouts.values().filter(|layout| layout.current_window);
+        let layout = current.next()?;
+        if current.next().is_some() {
+            return None;
+        }
+        (layout.panes.iter())
+            .filter_map(|pane| pane.pane.as_deref())
+            .find(|pane| self.issued.contains(*pane))
+            .map(str::to_owned)
+    }
     /// Advisory navigation only. A missing/ambiguous active pane is never invented.
     pub fn preferred_pane(&self) -> Option<&str> {
         let mut current = self.layouts.values().filter(|layout| layout.current_window);

@@ -81,6 +81,8 @@ pub struct Controller {
     opened: std::time::Instant,
     received: BTreeMap<String, u64>,
     reported: bool,
+    /// Capability 119: what following a pane change in place needs.
+    in_place: in_place::InPlace,
 }
 /// What one stream cost until its window could take input.
 pub struct InputReport {
@@ -152,6 +154,7 @@ impl Controller {
             opened: std::time::Instant::now(),
             received: BTreeMap::new(),
             reported: false,
+            in_place: Default::default(),
         })
     }
     pub fn retire(&mut self) {
@@ -402,6 +405,7 @@ impl Controller {
                     ready.input_bytes == Some(true),
                 )?;
                 self.ready = true;
+                self.in_place.enabled = ready.topology_in_place == Some(true);
                 presentation_changed = true;
                 if let Some(authority) = &ready.authority {
                     self.policy.accept_json(&serde_json::to_vec(
@@ -440,6 +444,9 @@ impl Controller {
                     self.inflight_viewport = None;
                 }
                 viewports.extend(outcome.viewport);
+            } else if kind.kind == "topology" {
+                inputs.extend(self.follow_topology(control.get())?);
+                presentation_changed = true;
             } else if self.topology.apply_control(&control)? {
                 presentation_changed = true;
             } else {
@@ -464,6 +471,10 @@ impl Controller {
                 self.current.insert(pane.clone(), committed);
             }
         }
+        // While the old window is held for a seed, look again on each poll:
+        // the hold ends by the clock too.
+        presentation_changed |= self.settle()? || self.seeding();
+        self.await_removal(&updates.unavailable, now)?;
         let expired = if self.ready {
             self.policy.expire(now)?
         } else {
@@ -485,14 +496,20 @@ impl Controller {
         let presence_revision = self
             .flush_presence(now)?
             .or(self.last_presence.map(|(_, rev)| rev));
-        if presentation_changed
+        if (presentation_changed
             || selection
                 .as_ref()
-                .is_some_and(|selection| selection.selected)
+                .is_some_and(|selection| selection.selected))
+            && !self.settling()
         {
-            self.cached_window = self
+            let presented = self
                 .presentation
                 .update(&self.topology, &self.current, true)?;
+            // An added pane paints with its seed; until then the window as
+            // it was stays up, without input.
+            if !self.hold_for_seed(presented.is_some(), now) {
+                self.cached_window = presented;
+            }
         }
         let window = self.cached_window.as_ref().map(|window| PresentedWindow {
             paint: window.paint.clone(),
@@ -506,6 +523,7 @@ impl Controller {
             ],
             &self.selected,
         ) && self.pending_selection.is_none()
+            && !self.changing()
             && window.as_ref().is_some_and(|window| window.coherent);
         self.flush_viewport(now)?;
         Ok(Update {
@@ -536,6 +554,9 @@ fn selected_live(sets: [&std::collections::BTreeSet<String>; 3], selected: &str)
 #[cfg(test)]
 #[path = "tmux_controller_tests.rs"]
 mod tests;
+
+#[path = "tmux_controller_in_place.rs"]
+mod in_place;
 
 #[path = "tmux_controller_actions.rs"]
 mod actions;

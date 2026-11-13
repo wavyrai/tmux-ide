@@ -221,6 +221,37 @@ impl Policy {
             .collect();
         Ok(self.finish_inputs(keys, InputResult::AuthorityLost))
     }
+    /// The stream's pane set changed in place (capability 119). A removed
+    /// pane is dropped as a tombstoned one is (no lifetime, its paste
+    /// cancelled, its inputs in flight finish as authority lost) and is no
+    /// longer a pane of this stream. An added pane has no lifetime until its
+    /// first commit binds one.
+    pub fn follow(&mut self, removed: &[String], added: &[String]) -> Result<Vec<InputCompletion>> {
+        self.check()?;
+        if !removed.iter().all(|gone| self.panes.contains(gone))
+            || added
+                .iter()
+                .any(|new| !pane(new) || self.panes.contains(new))
+            || self.panes.len() - removed.len() + added.len() > 24
+            || self.panes.len() + added.len() == removed.len()
+        {
+            return Err(Error::Invalid);
+        }
+        let mut finished = Vec::new();
+        for gone in removed {
+            self.cancel_paste_for(gone);
+            self.lifetimes.remove(gone);
+            self.sequences.remove(gone);
+            let keys: Vec<_> = (self.inputs.keys())
+                .filter(|(pane, _)| pane == gone)
+                .cloned()
+                .collect();
+            finished.extend(self.finish_inputs(keys, InputResult::AuthorityLost));
+            self.panes.retain(|pane| pane != gone);
+        }
+        self.panes.extend(added.iter().cloned());
+        Ok(finished)
+    }
     fn authority(
         &mut self,
         authority: Authority,
@@ -592,6 +623,8 @@ fn key(mut s: &str) -> bool {
                 | "Right"
         )
 }
+#[cfg(test)]
+mod follow_tests;
 #[cfg(test)]
 mod tests;
 
