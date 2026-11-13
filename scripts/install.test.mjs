@@ -234,13 +234,19 @@ test("an active installation lock prevents all mutations", (t) => {
 });
 
 // A lock names its owner, so only a live installation blocks the next one (#751).
+// As the installer reads it: the kernel's start tick on Linux, `ps` elsewhere.
 const startedAt = (pid) =>
-  spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-  })
-    .stdout.trim()
-    .replace(/\s+/g, " ");
+  fs.existsSync(`/proc/${pid}/stat`)
+    ? fs
+        .readFileSync(`/proc/${pid}/stat`, "utf8")
+        .replace(/^.*\) /su, "")
+        .split(" ")[19]
+    : spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        env: { ...process.env, LC_ALL: "C" },
+      })
+        .stdout.trim()
+        .replace(/\s+/g, " ");
 function heldLock(prefix, owner, { ageMinutes = 0 } = {}) {
   const lock = path.join(prefix, "share/tmux-ide/install.lock");
   fs.mkdirSync(lock, { recursive: true });
@@ -308,6 +314,25 @@ test("an owner on another machine is judged by the lock's age, never by its pid"
   assert.equal(run().status, 0);
   assert.equal(fs.existsSync(lock), false);
 });
+
+// procps computes `lstart` from the clock, and two reads of one live process
+// can differ by a second. Where the kernel's start tick can be read, a `ps`
+// that answers differently every time must not make a live owner look dead.
+test(
+  "a live owner is recognised whatever ps says about its start time",
+  { skip: !fs.existsSync("/proc/self/stat") && "needs /proc" },
+  (t) => {
+    const { root, prefix, run } = fixture(t);
+    fs.writeFileSync(
+      path.join(root, "tools/ps"),
+      '#!/bin/sh\necho "Mon Jan  1 00:00:$(date +%N | cut -c1-2) 2024"\n',
+      { mode: 0o755 },
+    );
+    const lock = heldLock(prefix, `${process.pid}\n${startedAt(process.pid)}\nthis-host\n`);
+    for (let attempt = 0; attempt < 5; attempt++) assert.notEqual(run().status, 0);
+    assert.ok(fs.existsSync(path.join(lock, "owner")));
+  },
+);
 
 test("a run records its own host", async (t) => {
   const { prefix, run } = fixture(t);

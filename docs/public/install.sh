@@ -146,7 +146,15 @@ JS
 # The lock records its owner's pid, start time and host, so a run that died
 # without releasing it (SIGKILL, power loss) is told apart from one that is
 # still working. A pid means nothing on another machine that shares this home.
-process_start() { LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; print}'; }
+# Linux: the kernel's start tick. procps derives `lstart` from the current time
+# and the uptime, so two calls for one process can differ by a second.
+process_start() {
+  if [ -r "/proc/$1/stat" ]; then
+    sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'
+  else
+    LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | awk '{$1=$1; print}'
+  fi
+}
 lock_is_stale() {
   lock_pid=''
   lock_start=''
