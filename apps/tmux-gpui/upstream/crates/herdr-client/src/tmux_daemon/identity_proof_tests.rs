@@ -6,11 +6,12 @@ use std::sync::PoisonError;
 
 /// The proof is process-wide: tests that turn its cache on take turns.
 static IDENTITY_CACHE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-fn cached(pid_check: bool, body: impl FnOnce()) {
+pub(in crate::tmux_daemon) fn cached(pid_check: bool, body: impl FnOnce()) {
     let _turn = IDENTITY_CACHE_TESTS
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
     PROOF.lock().unwrap_or_else(PoisonError::into_inner).proven = None;
+    servers::forget_for_tests();
     IDENTITY_CACHE.with(|cache| cache.set(true));
     PID_CHECK.with(|check| check.set(pid_check));
     body();
@@ -333,3 +334,6 @@ fn a_proofs_age_counts_from_the_probe_start() {
         );
     });
 }
+
+#[path = "server_list_tests.rs"]
+mod server_list;

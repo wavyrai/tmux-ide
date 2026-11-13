@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.23
+
+- Fix the daemon closing every terminal stream while it stayed up. Listing the tmux servers asked each one a question with a 500 ms limit, and a slow answer or a tmux that could not be started counted as "server gone": the daemon dropped its connection to that server, closed its streams and built a new connection on the next list. The Mac app lists servers on every catalog read, session open and session create, so it lost its terminals most often. In the reproduction (tmux answering in 0.7 s, one list request, one open stream) 2.9.22 closed the stream and took 5.7 s to answer; 2.9.23 closes nothing and answers in 0.5 s. A tmux that cannot be started because the process limit is reached gave the same drop before and gives none now.
+- Read requests (`GET /api/v1/tmux-servers`, `GET /api/v1/automation/panes`) can no longer retire or replace a tmux server connection. A background check every 2 s does that, and only on evidence that the server changed (its socket was replaced, its process is gone, or another process answers), confirmed by a second probe. A connection that fails to build is logged and retried, from 500 ms up to every 30 s.
+- A daemon stop after SIGTERM or SIGINT is bounded. After 10 s without progress, or 25 s in all, the daemon logs the teardown steps still open, removes `daemon.json` and exits 1. Two waits on the stop path that had no limit now have one. Why a daemon sometimes did not stop after its tmux server was replaced is not found: it did not happen in 74 local runs.
+- Clients keep re-reading a terminal inventory the daemon refuses: after 250 ms, 500 ms, then every 1 s for up to 15 s, then by reconnecting after 1, 2, 4 and up to 30 s. Before, the client stopped after two quick retries and kept showing a stale terminal.
+- The daemon announces when a session's terminal inventory is readable again, so an idle client re-reads it.
+- Two daemons on one tmux server no longer remove each other's hooks. A daemon's hook install removed every tmux-ide daemon's hooks, and each gap lost `send-keys` and `capture-pane` observations and made clients re-read the terminal inventory. A daemon now removes only its own hooks and those no living daemon owns. A daemon older than 2.9.23 on the same server still removes everyone's.
+- Add a heartbeat on terminal streams and the events socket. The daemon pings every 10 s and drops a connection after 3 unanswered pings, so a half-open stream no longer looks like a frozen terminal.
+- Every synchronous tmux call has a 5 s limit. One hung tmux call could freeze the whole daemon, including its signal handling.
+- An absent or stale tmux server costs a file check or a connect, not a tmux process. A refused connection never retires a server connection, and on macOS touching the socket file no longer does either.
+- A daemon restart in place keeps its port. A restart whose stop hangs exits after the stop limit.
+- With `--json`, all log records go to stderr, so stdout stays one JSON document.
+- Fix a terminal inventory read answering 503 when it was overtaken twice by changes; it now keeps reading. This was one cause of a click on an agent that had just appeared doing nothing.
+- The daemon checks its healthy hooks every 5 minutes instead of every 30 s: with three tmux servers, 5.8 idle tmux processes a minute become 0.6.
+- `tmux-ide doctor` adds a "tmux server" row with the socket the daemon uses, and warns when this shell's tmux (`TMUX_TMPDIR`, or a tmux started with `-S` or `-L`) means another server. The daemon announces on the events socket when a tmux server comes online or is retired.
+- Heavy output in a viewed pane no longer slows tmux itself. The daemon committed after every write; it now skips a commit while more output is queued. With a 2 MB flood and one viewer, daemon CPU time fell from 2.16 s to 1.05 s and tmux's own time to produce the output from 1557 ms to 616 ms.
+- A pane nobody has watched for 10 s is parked: tmux pauses its output to the daemon and the daemon keeps the last frame. On return the last frame appears as fast as before, and the current content follows after about 250 to 290 ms instead of 100 to 130 ms, longer on a heavily loaded machine. Agent status is not affected.
+- The daemon uses less memory at rest: its process footprint fell from 327–333 MiB to 283–288 MiB.
+- The fleet poll slows from every 500 ms to every 1 s after ten unchanged reads, and returns to 500 ms on any change or new subscriber. That halves its tmux processes while idle. No CPU saving was measured.
+- On tmux 3.8 servers, a window with `pane-border-status` set to `top-floating` or `bottom-floating` can be opened. Before, its session had no pane to attach to.
+- Opening a session on an agent works on a tmux server that is not tmux-ide's own. Before, it answered 503.
+- Browser panes and the Markdown reader work on a tmux server that is not tmux-ide's own. Before, both answered 503.
+- When the tmux socket cannot be read, the workspace catalog answers 503 `tmux-unavailable` instead of an empty session list.
+- The daemon starts on a tmux socket whose path is too long once `/tmp` is written as `/private/tmp`. Before, it exited at startup.
+- A terminal stream now closes with 1012 `tmux-server-retired` when its tmux server is gone or replaced, and 1012 `daemon-restarting` when the daemon restarts in place. 1001 `daemon-shutdown` means the daemon stops.
+- New daemon log lines: every tmux server connection kept after a failed probe, retired, built or failed to build, with the trigger, the probe's duration and its error; each daemon restart in place with its trigger; a slow or failed stop with its slowest steps.
+
 ## 2.9.22
 
 - Add a Markdown reader. `tmux-ide open notes.md` opens an existing `.md` or `.markdown` file in a new pane beside the current one. In the Mac app (native alpha 0.1.16) the pane shows a native, read-only reader with live reload, find (Cmd-F) and copy; in a terminal it shows `tmux-ide show`. The daemon gives the reader only the file the pane was opened on, up to 4 MiB, and images only from the file's folder or its git repository. Remote images are never fetched, and raw HTML stays text. A Markdown file that does not exist now fails with `FILE_NOT_FOUND` and creates no pane, instead of opening in the browser. See "Markdown reader" in the docs.

@@ -54,6 +54,14 @@ describe("control clients left behind by a daemon that died", () => {
       ),
     ).toBe(true);
     expect(isTmuxIdeControlClientCommand("tmux -CC attach -t work")).toBe(false);
+    // Review E1: another program's control-mode integration attaches with -CC.
+    // It is never ours, even with this product's exact flags.
+    expect(
+      isTmuxIdeControlClientCommand(
+        `tmux -S ${SOCKET} -CC attach -t work -f ignore-size,pause-after=2,active-pane`,
+      ),
+    ).toBe(false);
+    expect(isTmuxIdeControlClientCommand(attach().replace(" -C ", " -CC "))).toBe(false);
     expect(isTmuxIdeControlClientCommand("tmux -C attach -t work -f pause-after=2")).toBe(false);
     expect(isTmuxIdeControlClientCommand("tmux attach -t work")).toBe(false);
   });
@@ -116,6 +124,49 @@ describe("control clients left behind by a daemon that died", () => {
     const fake = io([
       { pid: 94332, ppid: 800, command: attach() },
       { pid: 800, ppid: 1, command: "/usr/lib/systemd/systemd --user" },
+    ]);
+    await expect(evictOrphanedControlClients(fake, 4242, SERVER)).resolves.toEqual([94332]);
+  });
+
+  // Review E1: the adopter is judged by the NAME of the parent's command, not
+  // by a word anywhere in it. The owner's own daemon runs as
+  // `cli.js --headless --supervised launchd-user` with live control clients.
+  it.each([
+    [
+      "a live daemon supervised by launchd",
+      "node /opt/tmux-ide/bin/cli.js --headless --supervised launchd-user",
+    ],
+    [
+      "a live daemon supervised by systemd",
+      "/usr/bin/node cli.js --headless --supervised systemd-user",
+    ],
+    ["git init", "git init /tmp/repo"],
+    ["initdb", "/usr/bin/initdb -D /var/db"],
+    ["systemd-run", "systemd-run --user sleep 60"],
+    ["a script named after a manager", "/bin/sh /home/u/launchd-wrapper.sh"],
+    ["a path that contains a manager's name", "/opt/systemd/bin/supervisor --watch"],
+    ["a program given a manager's path as an argument", "/bin/sh -c /sbin/init"],
+    ["a program given a manager's name as an argument", "watch systemd"],
+  ])("leaves a client alone whose live parent is %s", async (_name, parentCommand) => {
+    const fake = io([
+      { pid: 1, ppid: 0, command: "/sbin/launchd" },
+      { pid: 700, ppid: 1, command: parentCommand },
+      { pid: 94332, ppid: 700, command: attach() },
+    ]);
+    await expect(evictOrphanedControlClients(fake, 4242, SERVER)).resolves.toEqual([]);
+    expect(fake.killed).toEqual([]);
+  });
+
+  it.each([
+    ["/usr/lib/systemd/systemd --user"],
+    ["systemd"],
+    ["/sbin/launchd"],
+    ["/sbin/init splash"],
+    ["init"],
+  ])("takes %s as a manager that adopted the client", async (parentCommand) => {
+    const fake = io([
+      { pid: 800, ppid: 1, command: parentCommand },
+      { pid: 94332, ppid: 800, command: attach() },
     ]);
     await expect(evictOrphanedControlClients(fake, 4242, SERVER)).resolves.toEqual([94332]);
   });

@@ -45,6 +45,11 @@ function harness(
   extra: {
     waitForAgent?: (key: string, listed: () => boolean, signal: AbortSignal) => Promise<boolean>;
     onAdmission?: (admission: Promise<boolean>) => void;
+    /** The roster settles: resolves whether the target is current afterwards. */
+    waitForCurrentTarget?: (
+      target: HomeAgentNavigationTarget,
+      signal: AbortSignal,
+    ) => Promise<boolean>;
     /** What the runtime answers once the selection is admitted. */
     selection?: Promise<"selected" | "not-admitted" | "failed" | "superseded">;
   } = {},
@@ -74,6 +79,7 @@ function harness(
     showTerminals,
     setNote,
     ...(extra.waitForAgent ? { waitForAgent: extra.waitForAgent } : {}),
+    ...(extra.waitForCurrentTarget ? { waitForCurrentTarget: extra.waitForCurrentTarget } : {}),
   });
   return { state, startGeneration, events, selectPane, showTerminals, setNote, owner };
 }
@@ -305,6 +311,77 @@ describe("Home exact agent navigation", () => {
       await expect(result).resolves.toEqual({ opened: false, failure: "superseded" });
       expect(h.showTerminals).not.toHaveBeenCalled();
       expect(h.setNote.mock.calls.at(-1)).toEqual([null]);
+    });
+
+    // PR #383's journey: the click landed while the roster was re-reading the
+    // session (an agent had just appeared). The row was still there afterwards,
+    // but "is it current" answers no during the read, and the click was refused
+    // with "That agent changed or disappeared".
+    it("waits for a roster that is refreshing instead of refusing the click", async () => {
+      const settle = deferred<boolean>();
+      const h = harness(generation(), { waitForCurrentTarget: () => settle.promise });
+      h.state.targetCurrent = false;
+      const result = h.owner.open(target, "mouse");
+      await Promise.resolve();
+      // Not refused, not opened: waiting, and saying so.
+      expect(h.events).toEqual([]);
+      expect(h.setNote.mock.calls).toEqual([["Waiting for agent in agents…"]]);
+      h.state.targetCurrent = true;
+      settle.resolve(true);
+      await expect(result).resolves.toEqual({ opened: true });
+      expect(h.events).toEqual(["select:pane.exact:mouse", "show:mouse"]);
+      expect(h.setNote.mock.calls.at(-1)).toEqual([null]);
+    });
+
+    it("refuses once the roster has settled without the agent", async () => {
+      const h = harness(generation(), { waitForCurrentTarget: async () => false });
+      h.state.targetCurrent = false;
+      await expect(h.owner.open(target, "mouse")).resolves.toEqual({
+        opened: false,
+        failure: "stale-target",
+      });
+      expect(h.events).toEqual([]);
+      expect(h.setNote.mock.calls.at(-1)).toEqual([
+        "That agent changed or disappeared. Select it again on Home.",
+      ]);
+    });
+
+    it("lets the roster settle again after the session listed the agent", async () => {
+      const wait = deferred<boolean>();
+      const settle = deferred<boolean>();
+      const settles = vi.fn(() => settle.promise);
+      const h = harness(behind(), {
+        waitForAgent: () => wait.promise,
+        waitForCurrentTarget: settles,
+      });
+      const result = h.owner.open(target, "mouse");
+      // The session lists the agent, and that very change makes the roster re-read.
+      h.state.current = generation();
+      h.state.targetCurrent = false;
+      wait.resolve(true);
+      await vi.waitFor(() => expect(settles).toHaveBeenCalledTimes(1));
+      expect(h.showTerminals).not.toHaveBeenCalled();
+      h.state.targetCurrent = true;
+      settle.resolve(true);
+      await expect(result).resolves.toEqual({ opened: true });
+    });
+
+    it("a newer open ends the wait for the roster", async () => {
+      const signals: AbortSignal[] = [];
+      const h = harness(generation(), {
+        waitForCurrentTarget: (_target, signal) => {
+          signals.push(signal);
+          return new Promise<boolean>((resolve) =>
+            signal.addEventListener("abort", () => resolve(false), { once: true }),
+          );
+        },
+      });
+      h.state.targetCurrent = false;
+      const first = h.owner.open(target, "mouse");
+      await Promise.resolve();
+      h.owner.cancel();
+      await expect(first).resolves.toEqual({ opened: false, failure: "superseded" });
+      expect(signals[0]!.aborted).toBe(true);
     });
 
     it("is refused as before when the bound passes without it", async () => {

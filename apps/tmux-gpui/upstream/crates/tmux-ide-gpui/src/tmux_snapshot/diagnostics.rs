@@ -9,6 +9,10 @@ pub(super) fn app_version() -> Option<String> {
     versions::native_bundle().0
 }
 pub(super) use versions::Versions;
+/// A service version fit to show and export, or none.
+pub(super) fn service_version(value: Option<String>) -> Option<String> {
+    value.filter(|value| versions::safe_version(value))
+}
 
 const MAX_BYTES: usize = 4096;
 
@@ -100,10 +104,13 @@ pub(super) fn build(state: &browser::State, developer_mode: bool) -> Result<Stri
         // Upstream crate metadata is not the installed tmux-ide release identity.
         native_version,
         native_build,
+        // A terminal reports the service it runs on; Home knows the service
+        // from its session list alone (#831).
         daemon_version: state
             .diagnostics
             .as_ref()
-            .and_then(|value| value.daemon_version.clone()),
+            .and_then(|value| value.daemon_version.clone())
+            .or_else(|| service_version(state.service_version.clone())),
         tmux_version: state
             .diagnostics
             .as_ref()

@@ -396,7 +396,9 @@ impl SnapshotView {
         self.open_picker_mode(Mode::Navigation, window, cx);
     }
     pub(super) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_state.appearance.is_some() {
+        // About keeps the keyboard: the menu bar's item waits, as its other
+        // items do (`picker_key`'s About guard).
+        if self.browser_state.appearance.is_some() && self.about.is_none() {
             self.open_picker_mode(Mode::Theme, window, cx);
         }
     }
@@ -407,6 +409,9 @@ impl SnapshotView {
         let mut state = self.browser_state.clone();
         if !self.diagnostics_live() {
             state.diagnostics = None;
+        }
+        if !self.service_version_live() {
+            state.service_version = None;
         }
         let report = super::diagnostics::build(&state, self.developer_mode.enabled);
         self.present_diagnostics(report, window, cx);
@@ -421,6 +426,12 @@ impl SnapshotView {
             && self.browser_state.input_ready
             && !self.browser_state.retained_preview
             && self.browser_state.surface == browser::Surface::Workspace
+    }
+    /// Whether the service version belongs to the connection shown now.
+    pub(super) fn service_version_live(&self) -> bool {
+        self.browser_commands.is_some()
+            && self.browser_state.request == self.browser_request
+            && self.presence.ready()
     }
     /// Commands → What's new: from About's link and What's new's card
     /// (onboarding A5).

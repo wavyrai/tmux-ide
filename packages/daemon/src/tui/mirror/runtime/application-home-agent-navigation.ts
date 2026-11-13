@@ -66,6 +66,16 @@ export function createApplicationHomeAgentNavigator(options: {
     listed: () => boolean,
     signal: AbortSignal,
   ) => Promise<boolean>;
+  /**
+   * "Is it current" answers no while the roster re-reads a session, which it
+   * does whenever an agent appears or changes: exactly when a row gets clicked.
+   * Resolves once the roster has settled for this target (true: current again)
+   * or a bound passed. Without it a click during a re-read is refused at once.
+   */
+  readonly waitForCurrentTarget?: (
+    target: HomeAgentNavigationTarget,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   readonly showTerminals: (source: HomeAgentNavigationSource) => void;
   readonly setNote: (note: string | null) => void;
 }) {
@@ -92,6 +102,23 @@ export function createApplicationHomeAgentNavigator(options: {
     !!current?.agents.some(
       (agent) => agent.id === target.agentId && agent.paneId === target.paneId,
     );
+  /** Before a check that would refuse a stale target: let a re-reading roster finish. */
+  const settleTarget = async (
+    token: number,
+    target: HomeAgentNavigationTarget,
+    signal: AbortSignal,
+  ): Promise<void> => {
+    if (!options.waitForCurrentTarget || !active(token) || options.isCurrentTarget(target)) return;
+    if (waitingNote !== token) {
+      options.setNote(`Waiting for agent in ${target.sessionName}…`);
+      waitingNote = token;
+    }
+    try {
+      await options.waitForCurrentTarget(target, signal);
+    } catch {
+      // A failed wait decides nothing; the check that follows does.
+    }
+  };
   /** Every admission check; null admits. Notes are set only for a refusal. */
   const refusal = (
     token: number,
@@ -171,6 +198,8 @@ export function createApplicationHomeAgentNavigator(options: {
     } catch {
       // A failed wait is a refusal below, never an admission.
     }
+    if (options.waitForCurrentTarget && !options.isCurrentTarget(target))
+      await settleTarget(token, target, signal);
     // A refusal replaces the note; an admission clears it below.
     const refused = refusal(token, target, generationKey);
     settle(refused === null);
@@ -218,6 +247,12 @@ export function createApplicationHomeAgentNavigator(options: {
       try {
         if (!target.paneId)
           return failure(token, "unavailable", "This agent has no available terminal to open.");
+        // Only when it is needed: a warm open of a current target stays synchronous.
+        if (options.waitForCurrentTarget && !options.isCurrentTarget(target)) {
+          await settleTarget(token, target, controller.signal);
+          if (!active(token)) return { opened: false, failure: "superseded" };
+          if (waitingNote === token) waitingNote = null;
+        }
         if (!options.isCurrentTarget(target))
           return failure(
             token,
@@ -271,6 +306,11 @@ export function createApplicationHomeAgentNavigator(options: {
               "attach-failed",
               "The session opened, but agent details are not ready. Return Home and retry.",
             );
+        }
+        if (options.waitForCurrentTarget && !options.isCurrentTarget(target)) {
+          await settleTarget(token, target, controller.signal);
+          if (!active(token)) return { opened: false, failure: "superseded" };
+          if (waitingNote === token) waitingNote = null;
         }
         return admit(token, target, source, opened.generationKey);
       } catch {

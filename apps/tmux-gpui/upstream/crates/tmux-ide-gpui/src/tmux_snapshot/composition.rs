@@ -56,6 +56,9 @@ impl SnapshotView {
         self.picker.is_none()
             && self.pane_actions.is_none()
             && self.new_session.is_none()
+            // The handler of the frame before About opened is still installed
+            // until About's first frame: text it delivers is not for tmux.
+            && self.about.is_none()
             && self.selection.is_none()
             && !self.reader_owns_input()
             && self.offer_terminal_input(cx)

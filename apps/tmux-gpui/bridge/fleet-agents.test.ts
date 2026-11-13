@@ -73,6 +73,8 @@ function fixture(count = 1) {
       };
     },
     isCurrentTarget: () => live && !stopped,
+    isRefreshing: () => false,
+    whenCurrentTarget: async () => live && !stopped,
     start() {
       starts++;
     },

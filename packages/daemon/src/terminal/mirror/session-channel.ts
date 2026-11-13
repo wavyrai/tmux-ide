@@ -1,5 +1,5 @@
 import { STOCK_SPLIT_OPTIONS_FORMAT } from "../protocol/stock-split-resize.ts";
-import { layoutContentRows } from "./layout-content-rows.ts";
+import { layoutContentRows, tiledPaneBorderStatus } from "./layout-content-rows.ts";
 import {
   decodeNativeAtomicSnapshot,
   decodeNativeAtomicDualSnapshot,
@@ -69,6 +69,7 @@ import {
 } from "../protocol/layout-parse.ts";
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
+  sameSessionPaneInventory,
   SessionDescriptorDiscovery,
   decodeControlReplyUtf8,
   decodeTmuxArgument,
@@ -2953,7 +2954,7 @@ export class SessionChannel {
     }
     const windowOptionHint =
       name === "subscription-changed"
-        ? (/^tmux-ide-pane-borders\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:top|bottom|off)\s*$/u.exec(
+        ? (/^tmux-ide-pane-borders\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:top|bottom|off|top-floating|bottom-floating)\s*$/u.exec(
             rest,
           ) ??
           /^tmux-ide-copy-keys\s+\$[0-9]+\s+(@[0-9]+)\s+[0-9]+\s+-\s*:\s*(?:emacs|vi)\s*$/u.exec(
@@ -3112,13 +3113,9 @@ export class SessionChannel {
             this.pendingLayoutOutput.get(change.windowId)?.layout !== pendingLayout
           )
             return;
-          const border = reply.lines[0];
+          const border = tiledPaneBorderStatus(reply.lines[0]);
           const window = this.windowsByRuntime.get(change.windowId);
-          if (
-            !reply.ok ||
-            !window ||
-            (border !== "top" && border !== "bottom" && border !== "off")
-          ) {
+          if (!reply.ok || !window || border === null) {
             this.scheduleSync();
             return;
           }
@@ -3540,9 +3537,7 @@ export class SessionChannel {
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
     );
     const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
-    const coherent =
-      beforeLines.length === afterLines.length &&
-      beforeLines.every((line, index) => line === afterLines[index]);
+    const coherent = sameSessionPaneInventory(beforeLines, afterLines);
     if (
       windowStage.repairedIdentity ||
       confirmedWindowStage.repairedIdentity ||
@@ -3876,12 +3871,13 @@ export class SessionChannel {
         active = "",
         visible = "",
         zoomed = "",
-        borderStatus = "off",
+        borderStatusRaw = "off",
         full = visible,
         modeKeys,
         indexRaw = "",
       ] = parts;
       const index = Number(indexRaw);
+      const borderStatus = tiledPaneBorderStatus(borderStatusRaw);
       if (
         !/^@[0-9]+$/u.test(runtimeId) ||
         !/^(?:0|[1-9][0-9]*)$/u.test(indexRaw) ||
@@ -3889,7 +3885,7 @@ export class SessionChannel {
         seenIndexes.has(index) ||
         (active !== "0" && active !== "1") ||
         (zoomed !== "0" && zoomed !== "1") ||
-        (borderStatus !== "top" && borderStatus !== "bottom" && borderStatus !== "off") ||
+        borderStatus === null ||
         (modeKeys !== undefined && modeKeys !== "emacs" && modeKeys !== "vi")
       ) {
         throw new Error(`window layout truth for ${this.opts.session} is malformed`);
