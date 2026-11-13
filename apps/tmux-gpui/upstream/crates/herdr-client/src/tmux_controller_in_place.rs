@@ -11,15 +11,20 @@
 //!   until that snapshot is in; what was painted stays, without input.
 //! - If the selected pane was removed, that snapshot picks the pane tmux
 //!   made active (else the first remaining pane of the current window).
-//! - An added pane has nothing to paint before its seed. The window as it
-//!   was stays up, without input, until the seed commits or [`REMOVAL_MS`]
-//!   passed.
+//! - The window that follows a frame often cannot be painted at once: an
+//!   added pane has no cells before its seed, a pane that got a closed
+//!   pane's room has cells of the old size. The window as it was stays up,
+//!   without input, until the new one can be painted.
+//! - That is owed within [`REMOVAL_MS`] of the frame. If it does not come,
+//!   the stream no longer matches the session: it fails as a pane-set
+//!   change, which the app answers with a new lease.
 //! - A pane whose source the daemon closed must be removed by a frame within
-//!   [`REMOVAL_MS`]. If none comes, the stream no longer matches the session:
-//!   it fails as a pane-set change, which the app answers with a new lease.
+//!   [`REMOVAL_MS`] too, with the same answer. Until the frame the window as
+//!   it was stays up, without input.
 use super::*;
 
-/// How long a closed pane may wait for the frame that removes it.
+/// How long a closed pane may wait for the frame that removes it, and a
+/// frame for a window that can be painted.
 pub(super) const REMOVAL_MS: u64 = 2_000;
 
 #[derive(Default)]
@@ -30,10 +35,9 @@ pub(super) struct InPlace {
     settling: Option<u64>,
     /// The selected pane left: choose again when the snapshot is in.
     reselect: bool,
-    /// Since when an added pane's seed is awaited with the old window up.
-    seeding: Option<u64>,
-    /// A frame added panes whose first commit the window still waits for.
-    awaits_seed: bool,
+    /// Since when a frame's window is owed: set by the frame, cleared when a
+    /// window was painted after it.
+    following: Option<u64>,
     /// Panes whose source closed, and when that was first seen.
     closed: BTreeMap<String, u64>,
 }
@@ -41,7 +45,11 @@ pub(super) struct InPlace {
 impl Controller {
     /// Applies one `topology` frame. The stream reader already checked it
     /// against the stream's pane set.
-    pub(super) fn follow_topology(&mut self, frame: &str) -> Result<Vec<InputCompletion>, Error> {
+    pub(super) fn follow_topology(
+        &mut self,
+        frame: &str,
+        now: u64,
+    ) -> Result<Vec<InputCompletion>, Error> {
         let change = tmux_stream::Topology::parse(frame).map_err(Error::Transport)?;
         if !self.in_place.enabled {
             return Err(Error::Invalid);
@@ -61,10 +69,12 @@ impl Controller {
         }
         self.in_place.reselect |= gone(&self.selected);
         self.in_place.settling = Some(change.topology_epoch);
-        self.in_place.seeding = None;
-        self.in_place.awaits_seed |= !change.added.is_empty();
+        self.in_place.following.get_or_insert(now);
         self.actionable = false;
         self.presentation.reset();
+        if let Some(held) = &mut self.cached_window {
+            held.coherent = false;
+        }
         Ok(inputs)
     }
     /// The stream's whole pane set as it is now, when the stream follows
@@ -95,34 +105,39 @@ impl Controller {
         self.in_place.settling = None;
         Ok(true)
     }
-    /// The layout snapshot of the last frame is still awaited.
-    pub(super) fn settling(&self) -> bool {
-        self.in_place.settling.is_some()
+    /// The layout snapshot of the last frame is still awaited; an error
+    /// when it is overdue.
+    pub(super) fn settling(&self, now: u64) -> Result<bool, Error> {
+        if self.in_place.settling.is_none() {
+            return Ok(false);
+        }
+        if (self.in_place.following).is_some_and(|since| now.saturating_sub(since) >= REMOVAL_MS) {
+            return Err(Error::Topology(tmux_topology::Error::Unissued));
+        }
+        Ok(true)
     }
-    /// The old window is up while an added pane's seed is awaited.
-    pub(super) fn seeding(&self) -> bool {
-        self.in_place.seeding.is_some()
-    }
-    /// Nothing is actionable while a pane change is being followed.
+    /// A frame's window is owed, or a closed pane waits for its frame: the
+    /// window is looked at again on every poll, and nothing is actionable.
     pub(super) fn changing(&self) -> bool {
-        self.in_place.settling.is_some() || self.in_place.seeding.is_some()
+        self.in_place.settling.is_some()
+            || self.in_place.following.is_some()
+            || !self.in_place.closed.is_empty()
     }
-    /// Whether the window as it was stays up because the new one cannot be
-    /// presented yet (`presented` is false) and an added pane's seed is
-    /// still awaited. Bounded by [`REMOVAL_MS`].
-    pub(super) fn hold_for_seed(&mut self, presented: bool, now: u64) -> bool {
-        if presented || !self.in_place.awaits_seed {
-            self.in_place.awaits_seed = false;
-            self.in_place.seeding = None;
-            return false;
+    /// The window after the controls and commits of one poll. `None` cannot
+    /// be painted now. Whether the window as it was stays up instead; an
+    /// error when a frame's window is overdue.
+    pub(super) fn hold(&mut self, presented: bool, now: u64) -> Result<bool, Error> {
+        if presented {
+            self.in_place.following = None;
+            return Ok(false);
         }
-        let since = *self.in_place.seeding.get_or_insert(now);
-        if now.saturating_sub(since) >= REMOVAL_MS {
-            self.in_place.awaits_seed = false;
-            self.in_place.seeding = None;
-            return false;
+        if let Some(since) = self.in_place.following {
+            if now.saturating_sub(since) >= REMOVAL_MS {
+                return Err(Error::Topology(tmux_topology::Error::Unissued));
+            }
+            return Ok(true);
         }
-        true
+        Ok(!self.in_place.closed.is_empty())
     }
     /// The 2 s rule. `unavailable` is the session's set of panes whose source
     /// closed.

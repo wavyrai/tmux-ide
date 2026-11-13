@@ -445,7 +445,7 @@ impl Controller {
                 }
                 viewports.extend(outcome.viewport);
             } else if kind.kind == "topology" {
-                inputs.extend(self.follow_topology(control.get())?);
+                inputs.extend(self.follow_topology(control.get(), now)?);
                 presentation_changed = true;
             } else if self.topology.apply_control(&control)? {
                 presentation_changed = true;
@@ -471,10 +471,10 @@ impl Controller {
                 self.current.insert(pane.clone(), committed);
             }
         }
-        // While the old window is held for a seed, look again on each poll:
-        // the hold ends by the clock too.
-        presentation_changed |= self.settle()? || self.seeding();
         self.await_removal(&updates.unavailable, now)?;
+        // While a pane change is followed, look again on each poll: what is
+        // owed ends by the clock too.
+        presentation_changed |= self.settle()? || self.changing();
         let expired = if self.ready {
             self.policy.expire(now)?
         } else {
@@ -500,15 +500,17 @@ impl Controller {
             || selection
                 .as_ref()
                 .is_some_and(|selection| selection.selected))
-            && !self.settling()
+            && !self.settling(now)?
         {
             let presented = self
                 .presentation
                 .update(&self.topology, &self.current, true)?;
-            // An added pane paints with its seed; until then the window as
-            // it was stays up, without input.
-            if !self.hold_for_seed(presented.is_some(), now) {
+            // The window after a pane change may need a seed or a resize;
+            // until then the window as it was stays up, without input.
+            if !self.hold(presented.is_some(), now)? {
                 self.cached_window = presented;
+            } else if let Some(held) = &mut self.cached_window {
+                held.coherent = false;
             }
         }
         let window = self.cached_window.as_ref().map(|window| PresentedWindow {
