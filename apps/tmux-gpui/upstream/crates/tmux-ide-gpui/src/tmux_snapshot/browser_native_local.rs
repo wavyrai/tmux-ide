@@ -580,8 +580,8 @@ impl Local {
                             self.creation_failed(operation_id, error)?;
                         }
                     }
-                    Err(_) if self.home.quiet.probing() && matches!(stage, Stage::Servers) => {
-                        self.quiet_failed()
+                    Err(error) if self.home.quiet.probing() && matches!(stage, Stage::Servers) => {
+                        self.quiet_failed(&error)?
                     }
                     Err(error) if self.home.active() && matches!(stage, Stage::Servers) => {
                         self.home_catalog_failed(error)?

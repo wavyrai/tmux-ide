@@ -127,7 +127,7 @@ import {
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
 import {
-  discoverLiveSessionSummaries,
+  readLiveSessionSummaries,
   readAdoptedFleet,
   type FleetSessionFacts,
 } from "../command-center/discovery.ts";
@@ -895,11 +895,13 @@ async function startHttpServer({
   getTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime;
   peekTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime | null;
   paneStreamRuntime: PaneStreamRuntime;
-  catalogLiveSessions: () => readonly {
-    readonly liveSessionId: `live-session.${string}`;
-    readonly sessionName: string;
-    readonly paneCount: number;
-  }[];
+  catalogLiveSessions: () =>
+    | readonly {
+        readonly liveSessionId: `live-session.${string}`;
+        readonly sessionName: string;
+        readonly paneCount: number;
+      }[]
+    | null;
   catalogFleet: () =>
     | ReturnType<typeof readAdoptedFleet>
     | Promise<ReturnType<typeof readAdoptedFleet>>;
@@ -2215,7 +2217,7 @@ async function startEmbeddedDaemonGeneration(
         getTerminalAttachmentRuntime,
         peekTerminalAttachmentRuntime,
         paneStreamRuntime,
-        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
+        catalogLiveSessions: () => readLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
           const endpoint = (sessionName: string, pane: FleetSessionFacts["panes"][number]) =>
             pane.semanticPaneId

@@ -104,7 +104,7 @@ function fixture() {
       signal.throwIfAborted();
       expect(args.slice(0, 4)).toEqual(["display-message", "-p", "-t", "%1"]);
       hook("observe");
-      return `${pane.semanticPaneId}\t${pane.nativePaneBirthId}\t${JSON.stringify(endpoint)}\n`;
+      return `${pane.semanticPaneId}\t${pane.nativePaneBirthId ?? ""}\t${JSON.stringify(endpoint)}\n`;
     },
     assertOpen: () => {
       if (retired) throw new Error("retired");
@@ -148,6 +148,22 @@ it("rejects stale generation, session, semantic pane and reused pane before RPC"
     expect(rpc).not.toHaveBeenCalled();
   }
   const f = fixture();
+  f.hook((stage) => {
+    if (stage === "observe") f.update({ nativePaneBirthId: "2" });
+  });
+  await expect(f.resolve({ target, command: null }, signal())).rejects.toThrow();
+  expect(rpc).not.toHaveBeenCalled();
+});
+it("resolves a browser pane on a stock tmux server, which has no pane birth id (#738)", async () => {
+  const f = fixture();
+  f.update({ nativePaneBirthId: null });
+  expect(await f.resolve({ target, command: null }, signal())).toBeNull();
+  expect(rpc).toHaveBeenCalledTimes(1);
+  expect(rpc.mock.calls[0]?.[0]).toEqual(endpoint);
+});
+it("refuses a pane listed without a birth id that then reports one", async () => {
+  const f = fixture();
+  f.update({ nativePaneBirthId: null });
   f.hook((stage) => {
     if (stage === "observe") f.update({ nativePaneBirthId: "2" });
   });
