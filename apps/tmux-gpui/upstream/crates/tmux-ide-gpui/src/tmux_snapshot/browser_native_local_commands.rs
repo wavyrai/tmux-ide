@@ -137,6 +137,10 @@ impl Local {
                 self.local_creation_presence(active)?;
                 self.setup_presence(active)?;
                 self.presence_revision = revision;
+                if active && !self.foreground {
+                    // Back at the window: try now, whatever the backoff says.
+                    self.reconnect_now(self.state.request)?;
+                }
                 self.foreground = active;
                 if !active
                     && matches!(
@@ -154,7 +158,7 @@ impl Local {
                     self.stage = None;
                     self.publish()?;
                 }
-                if !active && matches!(self.stage, Some(Stage::Issue { .. })) {
+                if !self.lease_allowed() && matches!(self.stage, Some(Stage::Issue { .. })) {
                     self.worker.cancel();
                     self.submitted = false;
                 }
@@ -202,23 +206,30 @@ impl Local {
                 presence_revision,
                 ..
             } => {
-                if self.active.as_ref().is_some_and(|r| {
-                    r.id == id
-                        && r.request == request
-                        && r.target.scope.generation == generation
-                        && r.target.live == live_session_id
-                }) && input_ready
-                    && coherent
-                    && self.foreground
-                    && presence_revision == self.presence_revision
+                if !(coherent
+                    && self.active.as_ref().is_some_and(|r| {
+                        r.id == id
+                            && r.request == request
+                            && r.target.scope.generation == generation
+                            && r.target.live == live_session_id
+                    }))
                 {
-                    let recovered = self.recovery.take().is_some();
+                    return Ok(());
+                }
+                let current = presence_revision == self.presence_revision;
+                // An inactive window has no input to wait for: its stream is
+                // back once frames flow. A visit still needs the active window.
+                if !(current && (input_ready || !self.foreground)) {
+                    return Ok(());
+                }
+                if let Some(recovery) = self.recovery.take() {
+                    self.flap.recovered(recovery.attempts());
+                    // Drop the Reconnecting badge and Retry button.
+                    self.state.status = "Connected".into();
+                    self.publish()?;
+                }
+                if input_ready && self.foreground {
                     self.accept_visit()?;
-                    if recovered {
-                        // Drop the Reconnecting badge and Retry button.
-                        self.state.status = "Connected".into();
-                        self.publish()?;
-                    }
                 }
                 Ok(())
             }
@@ -270,12 +281,27 @@ impl Local {
                 }
                 Ok(())
             }
+            // An inactive window gets no lease for a new open, so its stream is
+            // put back by a recovery that reads the session's panes again.
+            Command::NativeTerminalRefresh {
+                id,
+                request,
+                preferred_pane,
+            } => {
+                if (self.active.as_ref())
+                    .is_some_and(|route| route.id == id && route.request == request)
+                {
+                    return self.reconnect_refresh(preferred_pane);
+                }
+                Ok(())
+            }
             Command::RetryReconnect { request } => self.reconnect_now(request),
             Command::NativeTerminalInterrupted {
                 id,
                 request,
                 generation,
                 live_session_id,
+                cause,
                 ..
             } => {
                 if self.active.as_ref().is_some_and(|route| {
@@ -284,7 +310,7 @@ impl Local {
                         && route.target.scope.generation == generation
                         && route.target.live == live_session_id
                 }) {
-                    return self.reconnect_start();
+                    return self.reconnect_after(cause);
                 }
                 Ok(())
             }
@@ -292,8 +318,7 @@ impl Local {
             | Command::Home { .. }
             | Command::Refresh { .. }
             | Command::Session { .. }
-            | Command::Pane { .. }
-            | Command::NativeTerminalRefresh { .. } => Ok(()),
+            | Command::Pane { .. } => Ok(()),
             // Unsupported development-path actions must not leave a pending
             // controller authorization waiting for a helper that does not exist.
             _ => self.unavailable(

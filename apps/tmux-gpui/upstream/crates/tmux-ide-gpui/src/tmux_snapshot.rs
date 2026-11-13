@@ -339,29 +339,7 @@ fn show_owned(
                         })
                     });
                     let activation = cx.observe_window_activation(window, |view, window, cx| {
-                        if !window.is_window_active() {
-                            view.cancel_pending_input(cx);
-                            view.sidebar_keyboard.active = false;
-                            view.cancel_session_open();
-                            view.header_controls = Default::default();
-                            view.cancel_attention();
-                            view.cancel_palette();
-                            if view.attention_picker_open() {
-                                view.picker = None;
-                            }
-                        }
-                        view.divider = None;
-                        view.pane_actions = None;
-                        view.presence.set_active(window.is_window_active());
-                        view.clear_selection(cx);
-                        view.last_resize = None;
-                        view.fit_settle.clear();
-                        view.wheel = Default::default();
-                        view.discard_composition(cx);
-                        if let Some(sender) = &view.browser_commands {
-                            view.presence.flush(sender);
-                        }
-                        cx.notify();
+                        view.activation_changed(window.is_window_active(), cx)
                     });
                     let appearance = cx.observe_window_appearance(window, |view, _, cx| {
                         view.follow_system(cx);
@@ -400,6 +378,9 @@ fn show_owned(
                         new_session: None,
                         new_session_queued: None,
                         agent_animation: Default::default(),
+                        idle_tick: Default::default(),
+                        sidebar_view: Default::default(),
+                        home_fleet: Default::default(),
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
@@ -494,6 +475,10 @@ struct SnapshotView {
     new_session: Option<new_session::Dialog>,
     new_session_queued: Option<(u64, u64)>,
     agent_animation: agent_spinner::Slots,
+    idle_tick: browser_tick::IdleTick,
+    sidebar_view: browser_ui::sidebar_view::Cache,
+    /// Home's session table as its own view, and what it last showed.
+    home_fleet: home::fleet_view::Cache,
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
@@ -535,9 +520,44 @@ impl SnapshotView {
     }
 }
 
+impl SnapshotView {
+    /// The window became active or inactive: drop transient gestures and
+    /// queue the presence change.
+    fn activation_changed(&mut self, active: bool, cx: &mut Context<Self>) {
+        if !active {
+            self.cancel_pending_input(cx);
+            self.sidebar_keyboard.active = false;
+            self.cancel_session_open();
+            self.header_controls = Default::default();
+            self.cancel_attention();
+            self.cancel_palette();
+            if self.attention_picker_open() {
+                self.picker = None;
+            }
+        }
+        self.divider = None;
+        self.pane_actions = None;
+        self.presence.set_active(active);
+        self.clear_selection(cx);
+        self.last_resize = None;
+        self.fit_settle.clear();
+        self.wheel = Default::default();
+        self.discard_composition(cx);
+        if let Some(sender) = &self.browser_commands {
+            self.presence.flush(sender);
+        }
+        // A minimized window may not draw; a full queue still
+        // needs the tick to send the background transition.
+        self.idle_tick.nudge();
+        cx.notify();
+    }
+}
+
 impl Render for SnapshotView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.browsing {
+            // A render is activity: queued work may follow it (#714).
+            self.idle_tick.render_nudge();
             self.refresh_pane_close(cx);
             return self.browser_render(window, cx);
         }
@@ -558,10 +578,9 @@ impl SnapshotView {
         let width = self.painter.borrow_mut().cell_width(&font, window, cx);
         let painter = self.painter.clone();
         let separator = controls::separator(&theme);
-        let highlights = self
-            .selection
-            .as_ref()
-            .map_or_else(Vec::new, |selection| selection.highlights.clone());
+        // A reference to the selection's highlights, never a copy (none
+        // without a selection).
+        let highlights = self.selection.as_ref().map(|s| s.highlights.clone());
         let entity = cx.entity();
         // Browse publications carry placements per frame; static files once.
         let kitty_scene = if self.browsing {
@@ -799,7 +818,7 @@ impl SnapshotView {
                                     frame.view(),
                                     bounds,
                                     &font,
-                                    &highlights,
+                                    highlights.as_deref().unwrap_or(&[]),
                                     (!kitty_scene.is_empty()).then_some(PlacedImages {
                                         placements: &kitty_scene,
                                         images,
@@ -822,7 +841,7 @@ impl SnapshotView {
                                 Some(bounds.size),
                                 width,
                                 &font,
-                                &highlights,
+                                highlights.as_deref().unwrap_or(&[]),
                                 &[],
                                 None,
                                 (!kitty_scene.is_empty()).then_some(PlacedImages {

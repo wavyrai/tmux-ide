@@ -3,10 +3,12 @@ pub(super) mod sidebar;
 pub(super) use sidebar::Keyboard as SidebarKeyboard;
 #[path = "browser_select.rs"]
 mod select;
+#[path = "sidebar_view.rs"]
+pub(super) mod sidebar_view;
 #[path = "workspace_agents.rs"]
 mod workspace_agents;
 use super::{SnapshotView, browser};
-use bezel_theme::{TextStyle, Typeset};
+
 use bezel_ui::widgets::Status;
 use gpui::{prelude::*, *};
 pub(super) enum Selection {
@@ -146,8 +148,11 @@ impl SnapshotView {
         }
         self.cancel_tab_focus_restore();
         self.cancel_tab_selection_restore();
-        // A split's hold takes keys while its stream is re-issued.
-        if (self.browser_state.retained_preview && !self.split_hold_waiting())
+        // A split's hold takes keys while its stream is re-issued; so does
+        // the hold of a reconnect that only just began.
+        if (self.browser_state.retained_preview
+            && !self.split_hold_waiting()
+            && !self.reconnect_hold_takes_keys())
             || (self.resize_gesture.busy() && self.divider.is_none())
         {
             self.interrupt_input(cx);
@@ -323,7 +328,8 @@ impl SnapshotView {
         );
         // Only terminal keys may wait in a split's hold; a wheel or scroll
         // during its preview is refused, as before, never sent to the old pane.
-        if (self.browser_state.retained_preview && !(terminal && self.split_hold_waiting()))
+        if (self.browser_state.retained_preview
+            && !(terminal && (self.split_hold_waiting() || self.reconnect_hold_waiting())))
             || self.resize_gesture.busy()
         {
             super::renderer_probe::runtime::rejected();
@@ -405,7 +411,7 @@ impl SnapshotView {
         self.reconcile_sidebar_keyboard(window, cx);
         self.restore_tab_focus(window, cx);
         self.restore_tab_selection();
-        self.agent_animation.begin_render();
+        self.agent_animation.begin_render(cx.entity_id());
         // GPUI dispatches shortcuts along the focused element path. Initial catalog
         // and selection transitions have no focused control; retain navigation without
         // granting terminal authority or clearing an interrupted-input latch.
@@ -433,145 +439,11 @@ impl SnapshotView {
         self.chrome.sync_motion(cx);
         self.chrome.sync(window, cx);
         let bezel = bezel_theme::Theme::of(cx).clone();
-        let mut sidebar = div()
-            .id("session-list")
-            .debug_selector(|| "session-list".into())
-            .when_some(self.sidebar_keyboard.focus.as_ref(), |list, focus| {
-                list.track_focus(focus)
-            })
-            .w_full()
-            .flex_1()
-            .min_h_0()
-            .p(px(bezel_theme::Theme::SPACE))
-            .flex()
-            .flex_col()
-            // Rows sit 2 pt apart, as in the mockup (#746 v3).
-            .gap(px(2.));
-        let request = self.browser_request;
-        let painter = bezel_motion::Painter::of(cx);
-        sidebar = sidebar.child(self.sidebar_home_row(cx));
-        let now = (self.connection.clock)().0;
-        let local_last_known = self.agents_shown_last_known();
-        for (index, mut row) in sidebar::rows_at(&self.browser_state, now)
-            .into_iter()
-            .enumerate()
-        {
-            // #362: agent state on this row may be old: this Mac's lane is
-            // marked, or the row's machine (or its agent's) is away.
-            row.last_known = local_last_known
-                || row.away
-                || row.agent.as_ref().is_some_and(|key| {
-                    sidebar::activity::row_agent(&self.browser_state, key)
-                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
-                })
-                || row.pane.as_deref().is_some_and(|pane| {
-                    sidebar::panes::pane_agent(&self.browser_state, pane)
-                        .is_some_and(|(agent, _)| self.agent_last_known(agent))
-                });
-            let mut element = sidebar::render_row(
-                index,
-                &row,
-                &theme,
-                &bezel,
-                painter,
-                self.sidebar_keyboard.active,
-            )
-            .map(|element| {
-                focus_ring(
-                    element,
-                    self.sidebar_keyboard.active
-                        && row.target.as_ref().is_some_and(|target| {
-                            Some(target) == self.sidebar_keyboard.selected.as_ref()
-                        }),
-                    &bezel,
-                )
-            });
-            // What a screen reader says: the row and its agent's state.
-            let state = row
-                .pane
-                .as_deref()
-                .and_then(|pane| sidebar::panes::pane_agent(&self.browser_state, pane))
-                .or_else(|| sidebar::activity::row_agent(&self.browser_state, row.agent.as_ref()?))
-                .map(|(agent, unavailable)| {
-                    super::agent_indicator::state_label(agent, unavailable)
-                });
-            element = sidebar::pane_row::spoken(element, &row, state);
-            if let Some((agent, unavailable)) = row
-                .agent
-                .as_ref()
-                .and_then(|key| sidebar::activity::row_agent(&self.browser_state, key))
-            {
-                element = element.children(self.agent_state(
-                    agent,
-                    unavailable,
-                    super::agent_indicator::Plate::Sidebar,
-                    row.last_known,
-                ));
-            }
-            if let Some(pane) = &row.pane {
-                element = self.sidebar_pane_row(element, index, pane, cx);
-            }
-            if let Some((action, favorite)) = &row.favorite {
-                element = element.child(
-                    div()
-                        .when(!*favorite && !self.sidebar_keyboard.active, |d| {
-                            d.opacity(0.)
-                                .group_hover("session-sidebar-row", |s| s.opacity(1.))
-                        })
-                        .child(self.fleet_preference_button(
-                            ("sidebar-favorite", index),
-                            action.as_deref(),
-                            !*favorite,
-                            if *favorite {
-                                "Remove favorite"
-                            } else {
-                                "Add favorite"
-                            },
-                            if *favorite {
-                                "icons/fleet-star-filled.svg"
-                            } else {
-                                "icons/fleet-star.svg"
-                            },
-                            cx,
-                        )),
-                );
-            }
-            if let Some(target) = row.target {
-                element =
-                    element
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.select_sidebar(request, &target, window, cx);
-                        }));
-            }
-            sidebar = sidebar.child(element);
+        // Its own view, replayed while unchanged (`sidebar_view`).
+        let sidebar = self.sidebar_element(window, cx);
+        if !show_sidebar {
+            self.sidebar_unmounted();
         }
-        if let Some(status) = self.fleet_preference_status() {
-            sidebar = sidebar.child(
-                div()
-                    .text_style(TextStyle::Callout)
-                    .text_color(bezel.text_muted)
-                    .children(super::design::ink_probe(|| "sidebar-status".into()))
-                    .child(status.message().to_owned()),
-            );
-        }
-        let sidebar = div()
-            .id("sidebar-viewport")
-            .debug_selector(|| "tmux-sidebar-viewport".into())
-            .relative()
-            .w(px(SIDEBAR_WIDTH))
-            .h_full()
-            .min_h_0()
-            .flex_shrink_0()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(
-                bezel_ui::scroll::Viewport::new("session-list", sidebar, Axis::Vertical)
-                    .track_scroll(&self.sidebar_keyboard.scroll)
-                    .fill(),
-            )
-            .child(self.sidebar_footer(cx));
         let status = self.status_line();
         // Routine window navigation must not insert a notice beside the tabs:
         // its width would move the entire strip during every retained frame.
@@ -604,8 +476,11 @@ impl SnapshotView {
                 .child(self.terminal_render(window, cx))
         });
         let home = is_home.then(|| self.home_render(window, cx));
-        if !is_home && let Some(controls) = self.home_filter.as_mut() {
-            controls.motion.end();
+        if !is_home {
+            if let Some(controls) = self.home_filter.as_mut() {
+                controls.motion.end();
+            }
+            self.fleet_view_hidden();
         }
         // Connection messages can wrap; retain the scroll owner instead of
         // imposing the upstream status bar's fixed single-line height.
@@ -715,7 +590,7 @@ impl SnapshotView {
             // The width snaps, so the terminal grid resizes once; the
             // contents fade in over FADE_QUICK (#761).
             .when(show_sidebar, |main| {
-                main.child(bezel_motion::fade_quick("sidebar-in", sidebar))
+                main.child(self.sidebar_fade_in(sidebar))
             })
             .child(
                 div()
@@ -774,7 +649,11 @@ impl SnapshotView {
 
 /// The keyboard-selected row's ring, laid over the row so focus never
 /// changes its size.
-fn focus_ring(row: Stateful<Div>, focused: bool, bezel: &bezel_theme::Theme) -> Stateful<Div> {
+pub(super) fn focus_ring(
+    row: Stateful<Div>,
+    focused: bool,
+    bezel: &bezel_theme::Theme,
+) -> Stateful<Div> {
     row.when(focused, |row| row.child(ring(bezel)))
 }
 

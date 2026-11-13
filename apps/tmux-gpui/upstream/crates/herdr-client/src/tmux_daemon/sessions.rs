@@ -61,7 +61,7 @@ impl LocalDaemon {
 }
 impl super::owner::Owner {
     pub(super) fn select_server(&self, scope: &ServerScope) -> Result<ServerClient, Error> {
-        if !self.list_servers()?.iter().any(|entry| matches!(entry, ServerRegistration::Online {scope:current,..} if current==scope)) {
+        if !self.known_servers()?.iter().any(|entry| matches!(entry, ServerRegistration::Online {scope:current,..} if current==scope)) {
             return Err(Error::ServerChanged);
         }
         Ok(ServerClient {

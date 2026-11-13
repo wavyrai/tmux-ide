@@ -7,7 +7,38 @@ use gpui::*;
 /// text, cursor, selection and 16 ANSI colours are taken as they are; every
 /// other grey in Bezel's palette for that appearance is tinted to the surface's
 /// hue, so overlays and controls sit in the same family as the shell.
+/// The Bezel palette for `theme`. Built once per theme and then cloned: a
+/// render asks for it from every row and chip, and building it (Brand
+/// tinting, OKLCH, the ink tiers) showed up in Home's profile (perf plan,
+/// finding 2). It depends on `theme` alone.
 pub(crate) fn palette(theme: &Theme) -> bezel_theme::Theme {
+    thread_local! {
+        /// The last few themes asked for: the window's own, and the
+        /// previews the theme picker shows.
+        static BUILT: std::cell::RefCell<Vec<(Theme, bezel_theme::Theme)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+    if let Some(built) = BUILT.with(|built| {
+        built
+            .borrow()
+            .iter()
+            .find(|(source, _)| source == theme)
+            .map(|(_, palette)| palette.clone())
+    }) {
+        return built;
+    }
+    let palette = build_palette(theme);
+    BUILT.with(|built| {
+        let mut built = built.borrow_mut();
+        if built.len() >= 8 {
+            built.remove(0);
+        }
+        built.push((theme.clone(), palette.clone()));
+    });
+    palette
+}
+
+fn build_palette(theme: &Theme) -> bezel_theme::Theme {
     use bezel_theme::{Appearance, Brand, Ink, Tint, Vibrancy};
     let appearance = if crate::contrast::luminance(theme.background) < 0.5 {
         Appearance::Dark

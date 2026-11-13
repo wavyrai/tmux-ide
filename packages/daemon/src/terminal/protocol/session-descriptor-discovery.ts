@@ -64,6 +64,37 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{pane_pid}",
 ].join("\t");
 
+/**
+ * Descriptor fields the program in a pane changes whenever it likes: its
+ * command name, the window name tmux derives from it, and its title.
+ */
+const VOLATILE_DESCRIPTOR_FIELDS: ReadonlySet<number> = new Set([
+  4, // pane_current_command
+  7, // window_name
+  9, // pane_title
+]);
+
+/**
+ * Whether two `list-panes` replies in SESSION_PANE_DESCRIPTOR_FORMAT describe
+ * the same panes. A busy pane changes its command and title between any two
+ * reads, which is not a pane set that is still changing: those fields are
+ * display text, read again on the next refresh (#730).
+ */
+export function sameSessionPaneInventory(
+  before: readonly string[],
+  after: readonly string[],
+): boolean {
+  const stable = (line: string) =>
+    line
+      .split("\t")
+      .map((field, index) => (VOLATILE_DESCRIPTOR_FIELDS.has(index) ? "" : field))
+      .join("\t");
+  return (
+    before.length === after.length &&
+    before.every((line, index) => line === after[index] || stable(line) === stable(after[index]!))
+  );
+}
+
 /** Decode the escapes emitted by tmux's `qa` format modifier. */
 export function decodeTmuxArgument(value: string): string {
   const encoded =

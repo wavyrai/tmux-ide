@@ -53,6 +53,7 @@ impl SnapshotView {
                 if self.browser_state.input_target_rejected {
                     self.interrupt_input(cx);
                 }
+                self.release_refused_keys();
                 self.expire_pending_input(cx);
                 if !self.browser_state.input_ready && !self.pending_input_ready() {
                     self.discard_composition(cx);

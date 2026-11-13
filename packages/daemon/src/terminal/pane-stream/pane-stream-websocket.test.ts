@@ -2047,6 +2047,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.closed).toBeNull();
 
     const inventoryRefusalOperationId = "00000000-0000-4000-8000-000000000095";
+    const intentLog = vi.spyOn(logger, "info").mockImplementation(() => {});
     h.submitIntent.mockRejectedValueOnce(
       new SessionRuntimeIntentError("rejected", "generic semantic refusal", {
         cause: new WorkspaceMultiplexerError("workspace_unavailable", {
@@ -2075,6 +2076,20 @@ describe("PaneStreamAdmissionCoordinator", () => {
       },
     });
     expect(JSON.stringify(socket.framesOfType("semantic-intent-ack")[2])).not.toContain("%99");
+    // #764: a refused selection used to leave no trace on either side.
+    expect(intentLog.mock.calls.filter(([, message]) => message === "intent rejected")).toEqual([
+      [
+        "pane-stream",
+        "intent rejected",
+        expect.objectContaining({
+          verb: "workspace.pane.select",
+          code: "pane_inventory_not_ready",
+          session: expect.any(String),
+        }),
+      ],
+    ]);
+    expect(JSON.stringify(intentLog.mock.calls)).not.toContain("%99");
+    intentLog.mockRestore();
 
     // Admission can refuse synchronously before an execution promise exists.
     h.submitIntent.mockImplementationOnce(() => {

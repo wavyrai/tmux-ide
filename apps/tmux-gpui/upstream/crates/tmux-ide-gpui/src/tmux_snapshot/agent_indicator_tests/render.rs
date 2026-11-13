@@ -260,3 +260,39 @@ fn a_last_known_spinner_stands_still(cx: &mut TestAppContext) {
     );
     assert!(cx.update(|_, cx| slot_bounds(snapshot.read(cx))).is_empty());
 }
+
+/// The sidebar is its own cached view, so its slots outlive `SnapshotView`'s
+/// renders. Once it is hidden nothing paints its rows, and the overlay must
+/// not go on spinning where they were.
+#[gpui::test]
+fn hiding_the_sidebar_drops_its_spinners(cx: &mut TestAppContext) {
+    let (snapshot, cx) = open(cx);
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            if let Some(fleet) = view.browser_state.fleet.as_mut() {
+                fleet.groups[0].sessions[0].selection =
+                    Some("70500000-0000-4000-8000-000000000001".into());
+            }
+            cx.notify();
+        })
+    });
+    cx.simulate_resize(size(px(1200.), px(700.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let slots = cx.update(|_, cx| slot_bounds(snapshot.read(cx)));
+    let width = px(crate::tmux_snapshot::browser_ui::SIDEBAR_WIDTH);
+    let in_sidebar = slots.iter().filter(|slot| slot.left() < width).count();
+    assert!(in_sidebar >= 1, "control: the sidebar row spins: {slots:?}");
+    cx.update(|window, cx| {
+        snapshot.update(cx, |view, cx| {
+            view.sidebar_hidden = true;
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    let after = cx.update(|_, cx| slot_bounds(snapshot.read(cx)));
+    assert_eq!(
+        after.len(),
+        slots.len() - in_sidebar,
+        "the hidden sidebar's slots are still reserved: {after:?}"
+    );
+}

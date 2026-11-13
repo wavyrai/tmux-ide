@@ -33,8 +33,22 @@ impl Owner {
     pub(super) fn verify_current(&self) -> Result<(), Error> {
         self.local()?.verify_current()
     }
+    /// Always asks the daemon.
     pub(super) fn list_servers(&self) -> Result<Vec<ServerRegistration>, Error> {
-        super::servers::parse(&self.get_resource("api/v1/tmux-servers")?)
+        match self {
+            Self::Local(daemon) => daemon.list_servers(),
+            #[cfg(unix)]
+            Self::Remote(_) => super::servers::parse(&self.get_resource("api/v1/tmux-servers")?),
+        }
+    }
+    /// For a check before a scoped request: a local daemon's remembered list
+    /// when nothing has dropped it (`servers.rs`). A remote always asks.
+    pub(super) fn known_servers(&self) -> Result<Vec<ServerRegistration>, Error> {
+        match self {
+            Self::Local(daemon) => daemon.known_servers(),
+            #[cfg(unix)]
+            Self::Remote(_) => self.list_servers(),
+        }
     }
     pub(super) fn get_resource(&self, path: &str) -> Result<Vec<u8>, Error> {
         match self {

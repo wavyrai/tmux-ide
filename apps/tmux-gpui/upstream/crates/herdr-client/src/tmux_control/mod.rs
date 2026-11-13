@@ -1,6 +1,7 @@
 //! Connection-local authority policy. One native worker owns this state and wire order.
 //! Returned commands reserve their correlation immediately. A failed transport enqueue
 //! MUST retire this policy and connection; commands are never replayable on a replacement.
+mod authority_retry;
 mod intent;
 mod paste;
 mod receive;
@@ -86,6 +87,8 @@ pub struct Policy {
     intents: BTreeMap<String, intent::PendingIntent>,
     split_layout: Option<(String, SplitLayout)>,
     split_scope: Option<(String, WindowLink)>,
+    /// Input requests sent again since the last presence change.
+    input_retries: u8,
 }
 impl Policy {
     pub fn new(
@@ -131,6 +134,7 @@ impl Policy {
             intents: BTreeMap::new(),
             split_layout: None,
             split_scope: None,
+            input_retries: 0,
         })
     }
     /// Call once for the exact redeemed socket; this policy cannot be reused on reconnect.
@@ -318,6 +322,7 @@ impl Policy {
             json!({"type":"presence","generation":self.generation,"state":if active{"foreground"}else{"background"}}),
         )?];
         self.foreground = active;
+        self.input_retries = 0;
         if self.interactive {
             if active {
                 commands.push(self.request_authority(Authority::Input, input_id, now)?);

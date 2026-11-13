@@ -32,6 +32,35 @@ describe("targeted agent admission", () => {
       await expect(admission.verify(true)).rejects.toThrow();
     });
   }
+  describe("on a stock tmux server, which has no pane birth id (#736)", () => {
+    it("maps the captured pane through promotion", async () => {
+      let rows = "$1\t@1\t%2\t\t\n$1\t@1\t%3\t\t";
+      const admission = await captureAgentAdmission(async () => rows, session, observed);
+      await admission.verify(false);
+      rows = "$1\t@1\t%2\t\tpane.promoted.original\n$1\t@1\t%3\t\tpane.promoted.other";
+      expect(await admission.verify(true)).toBe("pane.promoted.original");
+    });
+    for (const replacement of [
+      "$1\t@2\t%2\t\tpane.new",
+      "$1\t@1\t%3\t\tpane.new",
+      "$2\t@1\t%2\t\tpane.new",
+      "$1\t@1\t%2\t\tpane.same\n$1\t@1\t%3\t\tpane.same",
+      // A birth id that appears later means another server answered.
+      "$1\t@1\t%2\t12\tpane.new",
+    ]) {
+      it(`refuses changed or ambiguous binding ${replacement}`, async () => {
+        let rows = "$1\t@1\t%2\t\t";
+        const admission = await captureAgentAdmission(async () => rows, session, observed);
+        rows = replacement;
+        await expect(admission.verify(true)).rejects.toThrow();
+      });
+    }
+    it("refuses a server that reports a birth id for some panes only", async () => {
+      await expect(
+        captureAgentAdmission(async () => "$1\t@1\t%2\t\t\n$1\t@1\t%3\t13\t", session, observed),
+      ).rejects.toThrow("Agent native identity is unavailable");
+    });
+  });
   it("rejects mismatched agent identity before promotion", async () => {
     await expect(
       captureAgentAdmission(async () => "$1\t@1\t%2\t12\t", session, {

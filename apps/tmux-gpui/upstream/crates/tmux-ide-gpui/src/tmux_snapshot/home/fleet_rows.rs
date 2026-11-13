@@ -30,13 +30,10 @@ impl SnapshotView {
             && self.presence.ready()
             && self.browser_state.request == request;
         let group: SharedString = format!("fleet-row-{index}-{row}").into();
-        let star = div()
-            .flex_none()
-            .debug_selector(move || format!("fleet-star-{index}-{row}"))
-            .when(!session.favorite, |star| {
-                star.invisible().group_hover(group.clone(), |s| s.visible())
-            })
-            .child(self.fleet_preference_button(
+        // The star's tooltip box is its row cell: shown on a favourite, or
+        // under the pointer.
+        let star = self
+            .fleet_preference_tip(
                 ("fleet-favorite", index * 128 + row),
                 session.favorite_action.as_deref(),
                 !session.favorite,
@@ -51,7 +48,11 @@ impl SnapshotView {
                     "icons/fleet-star.svg"
                 },
                 cx,
-            ));
+            )
+            .flex_none()
+            .when(!session.favorite, |star| {
+                star.invisible().group_hover(group.clone(), |s| s.visible())
+            });
         let icon = match &session.favicon {
             Some(image) => img(image.clone())
                 .debug_selector(move || format!("fleet-session-favicon-{index}-{row}"))
@@ -122,6 +123,7 @@ impl SnapshotView {
             .group(group)
             .debug_selector(move || format!("fleet-session-{index}-{row}"))
             .h(px(ROW_HEIGHT))
+            .w_full()
             .px(px(ROW_GAP))
             .flex()
             .items_center()
@@ -209,10 +211,14 @@ impl SnapshotView {
         let Some(live) = session.session_id.as_deref() else {
             return Vec::new();
         };
+        // Live ids repeat across machines: an agent belongs to the row of the
+        // machine that observed it, not to every namesake.
+        let machine = self.browser_state.fleet.as_ref();
+        let machine = machine.and_then(|f| f.groups.get(index)).map(|g| &*g.id);
         let agents: Vec<_> = roster
             .rows
             .iter()
-            .filter(|r| r.session_id == live)
+            .filter(|r| r.session_id == live && machine.is_none_or(|m| r.observed_on(m)))
             .collect();
         let more = agents.len().saturating_sub(AGENT_CHIPS);
         let bezel = self.home_palette();
@@ -465,6 +471,22 @@ pub(super) fn layout(session: &browser::fleet::Session) -> String {
 }
 
 /// When a session was last active, said the way a person would.
+/// Which words [`last_active`] gives, as a number: equal exactly when the
+/// words are. The table's key hashes it, so a row is drawn again when its
+/// words change and not before.
+pub(super) fn last_active_step(now: i64, then: i64) -> (u8, i64) {
+    let ago = (now - then).max(0);
+    match ago {
+        0..60 => (0, 0),
+        60..3600 => (1, ago / 60),
+        3600..86_400 => (2, ago / 3600),
+        86_400..172_800 => (3, 0),
+        _ if ago < 7 * 86_400 => (4, ago / 86_400),
+        _ if ago < 14 * 86_400 => (5, 0),
+        _ => (6, ago / (7 * 86_400)),
+    }
+}
+
 pub(super) fn last_active(now: i64, then: i64) -> String {
     let ago = (now - then).max(0);
     match ago {

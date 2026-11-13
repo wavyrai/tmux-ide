@@ -40,7 +40,7 @@ pub(super) enum Kind {
 }
 
 /// What the slot shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Stage {
     Quiet,
     Spinner,
@@ -93,7 +93,7 @@ pub(super) enum Act {
     SshIdentity,
 }
 /// The one card Home shows for it, and the slot's short label.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Card {
     pub slot: &'static str,
     pub title: String,
@@ -287,6 +287,10 @@ pub(super) struct Watch {
     /// it until the agent lane's re-read clears the flag, even once the link
     /// is back and the connection's words are gone.
     pub(super) agents_marked: std::cell::Cell<bool>,
+    /// The input latch was set only by keys typed while reconnecting. Those
+    /// keys were refused and said so; the latch then lifts by itself once the
+    /// stream is back, so typing needs no click (`release_refused_keys`).
+    pub(super) keys_refused: bool,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -297,6 +301,7 @@ impl Default for Watch {
             _wake: None,
             _away_wake: None,
             agents_marked: std::cell::Cell::new(false),
+            keys_refused: false,
         }
     }
 }
@@ -386,6 +391,23 @@ impl SnapshotView {
     /// A key typed while the stream is down was refused (#702: never queued).
     fn key_refused(&self) -> bool {
         self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
+    }
+
+    /// How long the open session's stream has been reconnecting, by the
+    /// watch's clock; `None` when it is not.
+    pub(super) fn session_reconnecting_for(&self) -> Option<Duration> {
+        let (Kind::Session, since, _) = self.connection.since? else {
+            return None;
+        };
+        let (now, _) = (self.connection.clock)();
+        Some(now.saturating_duration_since(since))
+    }
+    /// Moves the start of the wait back, as time passing would.
+    #[cfg(test)]
+    pub(super) fn age_connection_wait(&mut self, by: Duration) {
+        if let Some((_, since, _)) = &mut self.connection.since {
+            *since -= by;
+        }
     }
 
     /// The slot's stage now, by the watch's clock.

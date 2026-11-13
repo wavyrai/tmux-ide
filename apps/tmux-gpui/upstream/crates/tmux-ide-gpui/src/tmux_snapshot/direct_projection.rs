@@ -1,7 +1,10 @@
 //! Pure live-grid projection. No transport, history, or input authority is inferred here.
 //!
 //! Canonical rows and composed canvas rows retain Arc identity. Only dirty canvas
-//! rows are merged; metadata-only updates never copy cells. This module prepares a
+//! rows are merged; metadata-only updates never copy cells. A row that moved to
+//! another line (scrolled) arrives as a new canonical `Arc` with the same
+//! digest; it reuses its converted cells, so the painter's retained glyph rows
+//! still recognise it. This module prepares a
 //! row-backed native frame consumed directly by the painter.
 use super::{Error, hit_regions::Region};
 use crate::terminal_painter::NativeFrame;
@@ -111,6 +114,7 @@ pub(super) struct ProjectionWork {
     pub converted_rows: usize,
     pub converted_cells: usize,
     pub copied_cells: usize,
+    pub moved_rows: usize,
 }
 
 pub(super) struct ProjectedFrame {
@@ -132,6 +136,8 @@ struct CachedRow {
 #[derive(Default)]
 struct RowProjection {
     panes: HashMap<String, Vec<CachedRow>>,
+    /// Per pane, while projecting: each prior row's index by its digest.
+    by_digest: HashMap<u64, usize>,
     regions: Vec<Region>,
     frame: Option<Arc<NativeFrame>>,
 }
@@ -214,12 +220,38 @@ impl RowProjection {
         for pane in panes {
             let mut rows = Vec::with_capacity(pane.rows.len());
             let prior = self.panes.get(&pane.region.id);
+            self.by_digest.clear();
+            let mut indexed = false;
             for (index, source) in pane.rows.iter().enumerate() {
                 let cached = prior
                     .and_then(|rows| rows.get(index))
                     .filter(|row| Arc::ptr_eq(&row.source, source));
+                // Equal content elsewhere in the prior rows: the digest finds
+                // it, full equality confirms it.
+                let moved = match (cached, prior) {
+                    (None, Some(rows)) => {
+                        if !indexed {
+                            indexed = true;
+                            for (at, row) in rows.iter().enumerate() {
+                                self.by_digest.entry(row.source.digest()).or_insert(at);
+                            }
+                        }
+                        self.by_digest
+                            .get(&source.digest())
+                            .and_then(|at| rows.get(*at))
+                            .filter(|row| *row.source == **source)
+                    }
+                    _ => None,
+                };
                 let cells = if let Some(cached) = cached {
                     Arc::clone(&cached.cells)
+                } else if let Some(moved) = moved {
+                    #[cfg(test)]
+                    {
+                        work.moved_rows += 1;
+                    }
+                    dirty[usize::from(pane.region.top) + index] = true;
+                    Arc::clone(&moved.cells)
                 } else {
                     let cells = convert(source)?;
                     if cells.len() != usize::from(pane.region.width) {

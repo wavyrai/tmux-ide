@@ -534,3 +534,47 @@ fn cached_revisit_retires_an_older_inflight_redraw() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Counts the store's wakes of the window's idle UI task (#714).
+fn counted(store: &Store) -> Arc<std::sync::atomic::AtomicUsize> {
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = wakes.clone();
+    store.on_change(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    wakes
+}
+
+/// An image the inflater thread finishes wakes the idle UI task, so it
+/// repaints without waiting for input.
+#[test]
+fn an_inflated_image_wakes_the_idle_ui_task() -> anyhow::Result<()> {
+    let store = Store::default();
+    let wakes = counted(&store);
+    let compressed = deflate(&[9u8; 16])?;
+    // The test-only line path does not wake by itself: only the inflater does.
+    store.accept_line(&chunk_as(
+        DIGEST,
+        "rgba-zlib",
+        compressed.len(),
+        0,
+        &compressed,
+    ))?;
+    store.settle();
+    assert!(wakes.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    assert!(
+        store.changed_or_inflating(),
+        "the repaint is still owed to the tick"
+    );
+    assert!(store.take_changed());
+    Ok(())
+}
+
+/// While a referenced image has not arrived, the tick stays armed to report it.
+#[test]
+fn a_missing_image_keeps_the_tick_armed() {
+    let store = Store::default();
+    assert!(!store.waiting());
+    store.scene(&[placement(0, 0)]);
+    assert!(store.waiting());
+}

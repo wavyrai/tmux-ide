@@ -2,8 +2,8 @@
 //! dropped and reported, the frame is held read-only, and the catalog is asked
 //! to re-issue this exact route (card #702).
 use super::{
-    Active, Command, NativeError, State, browser_native_actions, browser_native_input,
-    browser_native_owner, hold::Hold,
+    Active, Cause, Command, NativeError, State, browser_native_actions, browser_native_input,
+    browser_native_owner, diagnostics, hold::Hold,
 };
 use std::collections::VecDeque;
 
@@ -16,9 +16,87 @@ use std::collections::VecDeque;
 pub(super) struct Releases {
     request: u64,
     at: VecDeque<u64>,
+    stall: Stall,
 }
 const RELEASES: usize = 3;
 const WINDOW_MS: u64 = 10_000;
+/// A stream in the active window that shows frames but was never given input
+/// (seen in the soak after the daemon refused a stream as unavailable: the
+/// window said "Connecting…" until refreshed). After [`STALL_MS`] it is
+/// replaced like a lost stream, at most [`STALLS`] times in a row: a pane
+/// that can take no input (its program exited) is then left as it is. In the
+/// soak the daemon granted input again 21 s after such a close, so the limit
+/// covers a minute. A stream that is given input ends the row: the next
+/// stall in the same window is replaced again.
+#[derive(Default)]
+struct Stall {
+    request: u64,
+    replaced: usize,
+    /// The route that is waiting for input, and since when.
+    waiting: Option<(String, u64)>,
+}
+const STALL_MS: u64 = 10_000;
+const STALLS: usize = 6;
+impl Stall {
+    /// Whether the route `id` has now waited [`STALL_MS`] for input.
+    /// `granted`: the stream takes input now.
+    fn expired(&mut self, request: u64, id: &str, waiting: bool, granted: bool, now: u64) -> bool {
+        if self.request != request {
+            *self = Self {
+                request,
+                ..Self::default()
+            };
+        }
+        if granted {
+            self.replaced = 0;
+        }
+        if !waiting || self.replaced >= STALLS {
+            self.waiting = None;
+            return false;
+        }
+        match &self.waiting {
+            Some((route, since)) if route == id => {
+                if now.saturating_sub(*since) < STALL_MS {
+                    return false;
+                }
+            }
+            _ => {
+                self.waiting = Some((id.to_owned(), now));
+                return false;
+            }
+        }
+        self.waiting = None;
+        self.replaced += 1;
+        true
+    }
+}
+impl Releases {
+    /// Passes a poll result on, or fails it once `current` has waited
+    /// [`STALL_MS`] for input in the active window.
+    pub(super) fn stalled(
+        &mut self,
+        polled: Result<bool, NativeError>,
+        current: &Active,
+        foreground: bool,
+        now: u64,
+    ) -> Result<bool, NativeError> {
+        let dirty = polled?;
+        let granted = current.controller.input_ready();
+        let waiting = foreground
+            && !current.catalog_only
+            && !current.stream_interrupted
+            && !granted
+            && !current.owner.busy();
+        if (self.stall).expired(current.request, &current.id, waiting, granted, now) {
+            return Err(NativeError::Controller(
+                herdr_client::tmux_controller::Error::Transport(
+                    herdr_client::tmux_stream::Error::ReadyTimeout,
+                ),
+            ));
+        }
+        Ok(dirty)
+    }
+}
 impl Releases {
     /// Whether this poll error is a pane-set change to re-lease for now.
     pub(super) fn admit(&mut self, error: &NativeError, request: u64, now: u64) -> bool {
@@ -43,24 +121,46 @@ impl Releases {
     }
 }
 
+/// Whether `command` is a key. A key for which no stream is open is about to
+/// be dropped: the UI sent it before it saw the hold. The held frame then
+/// reports lost keys (`changed` is set when that is news), so the keys the UI
+/// holds after it are refused instead of running without it.
+pub(super) fn key(
+    command: &Command,
+    active: Option<&Active>,
+    hold: &mut Hold,
+    changed: &mut bool,
+) -> bool {
+    let Command::Input { request, .. } = command else {
+        return false;
+    };
+    if active.is_none_or(|a| a.request != *request) {
+        *changed |= hold.keys_lost();
+    }
+    true
+}
 /// Queued keys are never replayed onto a new stream. Whether any were dropped.
 fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     let before = pending.len();
     pending.retain(|command| !matches!(command, Command::Input { .. }));
     pending.len() != before
 }
-/// The stream under `current` failed. Keys in flight or queued die with it, so
-/// the held frame says they were not sent. Returns the re-issue notice.
+/// The stream under `current` failed with `error`. Keys in flight or queued
+/// die with it, so the held frame says they were not sent; so does a key that
+/// went unanswered until the scheduler gave it up (an input error). Returns
+/// the re-issue notice.
 pub(super) fn stream_lost(
     current: &Active,
     pending: &mut VecDeque<Command>,
     hold: &mut Hold,
     state: &State,
     presence_revision: u64,
+    error: &NativeError,
 ) -> Command {
     let queued = drop_queued_input(pending);
-    hold.begin(state, queued || current.input.busy());
-    interrupted(current, presence_revision)
+    let unanswered = matches!(error, NativeError::Input(_));
+    hold.begin(state, queued || unanswered || current.input.busy());
+    interrupted(current, presence_revision, diagnostics::cause(error))
 }
 /// A command failed in a way `fatal` says leaves the stream unusable. It is
 /// recovered like a lost stream. Keys are reported lost only when the failed
@@ -76,11 +176,11 @@ pub(super) fn command_failed(
     let queued = drop_queued_input(pending);
     let in_flight = active.is_some_and(|a| a.input.busy());
     hold.begin(state, failed_input || queued || in_flight);
-    active.map(|a| interrupted(a, presence_revision))
+    active.map(|a| interrupted(a, presence_revision, Cause::Lost))
 }
 
 /// The catalog matches this against its open route before it reconnects.
-pub(super) fn interrupted(current: &Active, presence_revision: u64) -> Command {
+pub(super) fn interrupted(current: &Active, presence_revision: u64, cause: Cause) -> Command {
     Command::NativeTerminalInterrupted {
         version: 1,
         id: current.id.clone(),
@@ -89,6 +189,7 @@ pub(super) fn interrupted(current: &Active, presence_revision: u64) -> Command {
         live_session_id: current.session.clone(),
         generation: current.generation.clone(),
         presence_revision,
+        cause,
     }
 }
 

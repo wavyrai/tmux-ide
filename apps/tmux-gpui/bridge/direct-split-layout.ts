@@ -59,10 +59,22 @@ export function createDirectSplitLayout(
         bound.catalogOnly ||
         command.id !== bound.id ||
         command.request !== bound.request ||
-        command.sequence <= bound.highest ||
         command.window.liveSessionId !== bound.config.liveSessionId
-      )
+      ) {
+        // A read this binding cannot serve is answered, not dropped: with no
+        // answer the app waits a minute before it asks again (#734).
+        send({
+          type: "native-split-layout-result",
+          version: 1,
+          id: command.id,
+          request: command.request,
+          sequence: command.sequence,
+          status: "failed",
+        });
         return false;
+      }
+      // A repeated or older read: the newer one in flight answers.
+      if (command.sequence <= bound.highest) return false;
       bound.highest = command.sequence;
       bound.pending?.abort();
       const controller = new AbortController();

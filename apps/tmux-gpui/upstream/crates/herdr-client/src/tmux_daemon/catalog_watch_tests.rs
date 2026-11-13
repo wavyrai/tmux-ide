@@ -383,3 +383,81 @@ fn a_resumed_lane_subscribes_after_its_cursor_and_reads_nothing() {
     worker.shutdown().unwrap();
     server.join().unwrap();
 }
+
+/// A live lane on a daemon that advertised `heartbeat` (or not) and then
+/// sends nothing and reads nothing. Returns how the lane ended within `watch`.
+fn silent_after_ready(
+    heartbeat: Option<&'static str>,
+    watch: Duration,
+) -> Option<(Duration, CatalogWatchError)> {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        socket
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        #[allow(clippy::result_large_err)]
+        let mut socket = tungstenite::accept_hdr(
+            socket,
+            |_: &tungstenite::handshake::server::Request,
+             mut response: tungstenite::handshake::server::Response| {
+                if let Some(heartbeat) = heartbeat {
+                    response
+                        .headers_mut()
+                        .insert("x-tmux-ide-heartbeat", heartbeat.parse().unwrap());
+                }
+                Ok(response)
+            },
+        )
+        .unwrap();
+        socket.send(daemon_hello(&identity, 0)).unwrap();
+        assert!(matches!(socket.read().unwrap(), Message::Text(_)));
+        socket.send(ack(0)).unwrap();
+        // Half-open: the peer neither sends nor reads until the client leaves.
+        let mut raw = socket.get_ref().try_clone().unwrap();
+        drop(socket);
+        thread::sleep(Duration::from_millis(50));
+        let _ = raw.read(&mut [0; 1]);
+    });
+    let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
+    wait(|| worker.live());
+    let started = Instant::now();
+    let mut ended = None;
+    while started.elapsed() < watch {
+        if let Some(Err(error)) = worker.poll().unwrap() {
+            ended = Some((started.elapsed(), error));
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    worker.shutdown().unwrap();
+    server.join().unwrap();
+    ended
+}
+
+/// PM, 12 Nov 2026: with the daemon's heartbeat header, silence past its
+/// limit (250 ms x 2, plus one interval) ends the events lane, so it is
+/// connected again. The client's own 15 s ping would not have noticed for 45 s.
+#[test]
+fn a_silent_daemon_that_advertised_a_heartbeat_ends_the_events_lane() {
+    let (after, error) = silent_after_ready(
+        Some("interval-ms=250, missed-limit=2"),
+        Duration::from_secs(4),
+    )
+    .unwrap();
+    assert!(matches!(error, CatalogWatchError::Timeout), "{error:?}");
+    assert!(
+        after >= Duration::from_millis(600) && after < Duration::from_millis(2500),
+        "ended after {after:?}"
+    );
+}
+
+/// A 2.9.22 daemon sends no header: the lane keeps its own 45 s limit.
+#[test]
+fn a_silent_daemon_without_the_header_keeps_the_events_lane() {
+    for header in [None, Some("interval-ms=250")] {
+        let ended = silent_after_ready(header, Duration::from_millis(1500));
+        assert!(ended.is_none(), "{header:?}: {:?}", ended.map(|e| e.0));
+    }
+}

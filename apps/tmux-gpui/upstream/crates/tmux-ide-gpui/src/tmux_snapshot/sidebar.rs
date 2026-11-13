@@ -21,7 +21,7 @@ use gpui::{prelude::*, *};
 pub(in crate::tmux_snapshot) use keyboard::Keyboard;
 pub(super) use keyboard::focus_shortcut;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::tmux_snapshot) enum Target {
     /// The sidebar's Home row (#746).
     Home,
@@ -50,7 +50,7 @@ pub(in crate::tmux_snapshot) enum Target {
 }
 /// How a row reads in the sidebar (#746): a project's heading, a window's
 /// subheading inside the open project, or an item (a pane, an agent).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(in crate::tmux_snapshot) enum Kind {
     Heading,
     Window,

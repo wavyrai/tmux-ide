@@ -216,6 +216,10 @@ pub(super) const FAILED_TIMEOUT: &str =
     "It stopped after 20 seconds without answering. Your files and sessions are fine.";
 pub(super) const FAILED_EARLY: &str =
     "It stopped before it answered. Your files and sessions are fine.";
+/// A run this window did not see start: how long it ran is not known, so
+/// the line says neither "20 seconds" nor "before".
+pub(super) const FAILED_STOPPED: &str =
+    "It stopped without answering. Your files and sessions are fine.";
 pub(super) const FAILED_OTHER: &str =
     "Something went wrong while starting it. Your files and sessions are fine.";
 pub(super) const MISSING: &str =
@@ -268,10 +272,10 @@ pub(super) fn lines(
             line(
                 Mark::Problem,
                 FAILED_TITLE,
-                Some(if ran_out {
-                    FAILED_TIMEOUT
-                } else {
-                    FAILED_EARLY
+                Some(match stopped_after {
+                    None => FAILED_STOPPED,
+                    Some(_) if ran_out => FAILED_TIMEOUT,
+                    Some(_) => FAILED_EARLY,
                 }),
                 "",
             )
@@ -550,7 +554,16 @@ impl SnapshotView {
             }
         }
         let now = cx.background_executor().now();
-        if setup == Some(Phase::Running) && self.welcome.setup_started.is_none() {
+        // A run counts from when this window saw it begin: a phase before
+        // Running, or its own Set up. One already running when the window
+        // first looked has no known start.
+        if setup == Some(Phase::Running)
+            && self.welcome.setup_started.is_none()
+            && self
+                .welcome
+                .last_phase
+                .is_some_and(|phase| phase != Phase::Running)
+        {
             self.welcome.setup_started = Some(now);
         }
         if matches!(setup, Some(Phase::Failed | Phase::StoppedWaiting))

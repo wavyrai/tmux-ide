@@ -578,7 +578,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 }
             }
             if let Some(current) = active.as_mut().filter(|a| !a.reissue) {
-                match current.poll(&mut state, presence.0, now) {
+                let polled = current.poll(&mut state, presence.0, now);
+                match releases.stalled(polled, current, presence.0, now) {
                     Ok(dirty) => changed |= dirty,
                     Err(error) => {
                         eprintln!(
@@ -621,6 +622,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 &mut hold,
                                 &state,
                                 presence.1,
+                                &error,
                             );
                             revoke_connection(&mut active, &mut state, &mut output);
                             if output(notice).is_err() {
@@ -675,9 +677,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             {
                 break 'worker;
             }
-            // The broker admits refresh only in the foreground. Retain a completed
-            // mutation until focus returns so its fresh inventory request is not lost.
-            if presence.0 && active.as_ref().is_some_and(|a| a.reissue) {
+            // The legacy broker admits refresh only in the foreground: wait for focus so
+            // the request is not lost. The native catalog recovers an inactive window too.
+            if (presence.0 || hold.enabled()) && active.as_ref().is_some_and(|a| a.reissue) {
                 if let Some(current) = active.as_ref() {
                     transition.begin(&state, current.request, now);
                     let command = Command::NativeTerminalRefresh {
@@ -757,7 +759,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 {
                     break 'worker;
                 }
-                let failed_input = matches!(command, Command::Input { .. });
+                let failed_input = loss::key(&command, active.as_ref(), &mut hold, &mut changed);
                 let result = match command {
                     Command::OpenEditor { request, id, token } => {
                         if let Some(current) = active
@@ -923,7 +925,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     changed = true;
                 }
             }
-            if presence.0 && state.input_ready && now >= browser_read_at {
+            if presence.0 && now >= browser_read_at {
                 for pane in state
                     .panes
                     .iter()
