@@ -89,12 +89,22 @@ chmod +x "$1/bin/npm"\n`,
     TMUX_IDE_CLAUDE_DIR: "",
     TMUX_IDE_NO_CLAUDE_AGENT_TEAMS: "",
   };
-  const run = (extra = {}, args = []) =>
-    spawnSync(shell, [installer, "--prefix", prefix, ...args], {
+  const run = (extra = {}, args = [], script = installer) =>
+    spawnSync(shell, [script, "--prefix", prefix, ...args], {
       env: { ...env, ...extra },
       encoding: "utf8",
     });
   return { root, prefix, run, env };
+}
+// Ends a detached installer's process group if the installer is still there.
+// A pid that has exited may already name another group; that one is not ours.
+function killGroup(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
 }
 
 test("fresh install and upgrade work with spaces and shell punctuation", (t) => {
@@ -334,6 +344,85 @@ test(
   },
 );
 
+// The same branch on every system: this copy of the installer reads the
+// records from a directory the test fills instead of /proc, so the kernel's
+// start tick is exercised where there is no /proc (macOS) as well.
+function fakeProc(t) {
+  const context = fixture(t);
+  const { root } = context;
+  const source = fs.readFileSync(installer, "utf8");
+  const read = '"/proc/$1/stat"';
+  assert.equal(source.split(read).length - 1, 2, "the installer tests and reads /proc/<pid>/stat");
+  const script = path.join(root, "install-fake-proc.sh");
+  fs.writeFileSync(script, source.replaceAll(read, `${quote(path.join(root, "proc"))}"/$1/stat"`));
+  // Field 22 is the start tick. A process name may hold spaces and parentheses.
+  const stat = (pid, tick) => {
+    fs.mkdirSync(path.join(root, "proc", String(pid)), { recursive: true });
+    const fields = Array.from({ length: 18 }, (_, index) => 104 + index).join(" ");
+    fs.writeFileSync(
+      path.join(root, "proc", String(pid), "stat"),
+      `${pid} (odd) name) x) S ${fields} ${tick} 123 124\n`,
+    );
+  };
+  // Counts its calls and never gives the same start time twice.
+  const psCalls = path.join(root, "ps-calls");
+  const ps = (body) =>
+    fs.writeFileSync(
+      path.join(root, "tools/ps"),
+      `#!/bin/sh\necho called >> ${quote(psCalls)}\n${body}\n`,
+      { mode: 0o755 },
+    );
+  ps(`echo "Mon Jan  1 00:00:$((10 + $(wc -l < ${quote(psCalls)}) % 50)) 2024"`);
+  return {
+    ...context,
+    stat,
+    ps,
+    psCalled: () => fs.existsSync(psCalls),
+    run: (extra, args) => context.run(extra, args, script),
+  };
+}
+
+test("an owner with the recorded start tick is running, whatever ps would say", (t) => {
+  const { prefix, run, stat, psCalled } = fakeProc(t);
+  stat(process.pid, 424242);
+  const lock = heldLock(prefix, `${process.pid}\n424242\nthis-host\n`);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const blocked = run();
+    assert.notEqual(blocked.status, 0);
+    assert.match(
+      blocked.stderr,
+      new RegExp(`Another installation is running \\(pid ${process.pid};`),
+    );
+  }
+  assert.equal(fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[1], "424242");
+  assert.equal(psCalled(), false, "the start time comes from the kernel's record alone");
+});
+
+test("an owner's pid with another start tick was reused, and its lock is taken over", (t) => {
+  const { prefix, run, stat } = fakeProc(t);
+  stat(process.pid, 424243);
+  const lock = heldLock(prefix, `${process.pid}\n424242\nthis-host\n`);
+  const installed = run();
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.match(installed.stdout, /lock of an installation that is no longer running/);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("a running owner whose start time cannot be read keeps its lock", (t) => {
+  const { prefix, run, ps, psCalled } = fakeProc(t);
+  // No record for the pid, and a ps that knows nothing either.
+  ps("exit 1");
+  const lock = heldLock(prefix, `${process.pid}\n424242\nthis-host\n`);
+  const blocked = run();
+  assert.notEqual(blocked.status, 0);
+  assert.match(
+    blocked.stderr,
+    new RegExp(`Another installation is running \\(pid ${process.pid};`),
+  );
+  assert.equal(psCalled(), true, "without a record the installer asks ps");
+  assert.ok(fs.existsSync(path.join(lock, "owner")));
+});
+
 test("a run records its own host", async (t) => {
   const { prefix, run } = fixture(t);
   const lock = heldLock(prefix, `${process.pid}\n${startedAt(process.pid)}\nthis-host\n`);
@@ -356,13 +445,7 @@ test("SIGPIPE during the download releases the lock", async (t) => {
     stdio: "ignore",
   });
   const closed = new Promise((resolve) => child.once("close", resolve));
-  t.after(() => {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
-  });
+  t.after(() => killGroup(child));
   const deadline = Date.now() + 10000;
   while (!fs.existsSync(ready)) {
     assert.ok(Date.now() < deadline, "fixture reached the download");
@@ -415,12 +498,7 @@ test("of many installers that find a dead owner's lock, one takes it and the res
   const lock = path.join(prefix, "share/tmux-ide/install.lock");
   const children = [];
   t.after(() => {
-    for (const { child } of children)
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
+    for (const { child } of children) killGroup(child);
   });
   for (let round = 0; round < 4; round++) {
     heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
@@ -434,29 +512,66 @@ test("of many installers that find a dead owner's lock, one takes it and the res
       const entry = { child, stderr: "", code: undefined };
       child.stderr.on("data", (chunk) => (entry.stderr += chunk));
       entry.closed = new Promise((resolve) =>
-        child.once("close", (code) => resolve((entry.code = code))),
+        child.once("close", (code, signal) => resolve((entry.code = code ?? signal))),
       );
       children.push(entry);
       return entry;
     });
-    const deadline = Date.now() + 20000;
-    while (
-      started.filter((entry) => entry.code === undefined).length > 1 ||
-      !fs.existsSync(ready)
-    ) {
-      assert.ok(Date.now() < deadline, "seven refused and one reached its download");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    // What the round came to, for the message of whichever assertion fails.
+    const state = () =>
+      [
+        `round ${round}: download ${fs.existsSync(ready) ? "reached" : "not reached"}`,
+        `owner record: ${JSON.stringify(fs.existsSync(path.join(lock, "owner")) ? fs.readFileSync(path.join(lock, "owner"), "utf8") : null)}`,
+        `takeover guard: ${fs.existsSync(`${lock}.takeover`)}`,
+        ...started.map(
+          (entry) =>
+            `pid ${entry.child.pid}: ${entry.code === undefined ? "running" : `ended ${entry.code}`} ${JSON.stringify(entry.stderr.trim())}`,
+        ),
+      ].join("\n");
+    // The round is decided by events, not by a clock: every run but one ends,
+    // and the one left reaches its download. The limit below only stops a
+    // round that can no longer be decided, and then says what each run did.
+    let limit;
+    const undecided = new Promise((_, reject) => {
+      limit = setTimeout(
+        () => reject(new Error(`the installers did not settle on one holder\n${state()}`)),
+        120000,
+      );
+    });
+    try {
+      await Promise.race([
+        undecided,
+        new Promise((resolve) => {
+          let ended = 0;
+          for (const entry of started)
+            entry.closed.then(() => {
+              ended += 1;
+              // Eight ended: nobody holds, and no download will be reached.
+              if (ended >= started.length - 1) resolve();
+            });
+        }),
+      ]);
+      while (!fs.existsSync(ready)) {
+        assert.ok(
+          started.some((entry) => entry.code === undefined),
+          `every installer ended, none holds the lock\n${state()}`,
+        );
+        await Promise.race([undecided, new Promise((resolve) => setTimeout(resolve, 20))]);
+      }
+    } finally {
+      clearTimeout(limit);
     }
     const holders = started.filter((entry) => entry.code === undefined);
-    assert.equal(holders.length, 1, "exactly one installer holds the lock");
+    assert.equal(holders.length, 1, `exactly one installer holds the lock\n${state()}`);
     for (const entry of started.filter((entry) => entry !== holders[0])) {
-      assert.notEqual(entry.code, 0);
-      assert.match(entry.stderr, /Another installation (is|may be) running/);
+      assert.notEqual(entry.code, 0, state());
+      assert.match(entry.stderr, /Another installation (is|may be) running/, state());
     }
     // The refused runs have exited: none of them may have released the holder's lock.
     assert.equal(
       fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
       String(holders[0].child.pid),
+      state(),
     );
     assert.equal(fs.existsSync(`${lock}.takeover`), false);
     process.kill(-holders[0].child.pid, "SIGTERM");
@@ -495,13 +610,7 @@ test("an installation killed during its download does not block the retry", asyn
     stdio: "ignore",
   });
   const closed = new Promise((resolve) => child.once("close", resolve));
-  t.after(() => {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch (error) {
-      if (error.code !== "ESRCH") throw error;
-    }
-  });
+  t.after(() => killGroup(child));
   const deadline = Date.now() + 10000;
   while (!fs.existsSync(ready)) {
     assert.ok(Date.now() < deadline, "fixture reached the download");
