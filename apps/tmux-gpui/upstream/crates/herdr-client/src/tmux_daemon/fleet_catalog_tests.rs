@@ -24,6 +24,12 @@ fn fleet_catalog_publishes_complete_scoped_rows_without_opening_terminals() {
     };
     assert_eq!(result.servers.len(), 1);
     assert_eq!(result.sessions.len(), 1);
+    // #831: the session list names the service it came from.
+    assert_eq!(
+        result.service_version.as_deref(),
+        value(port)["productVersion"].as_str()
+    );
+    assert!(result.service_version.is_some());
     assert_eq!(result.sessions[0].scope, server_scope());
     assert_eq!(result.sessions[0].sessions[0].session_name, "fixture");
     let requests = peer.join().unwrap();

@@ -145,10 +145,17 @@ impl CatalogWatchWorker {
     /// A pending change first, then the lane's end.
     pub fn poll(&self) -> Result<Option<Result<(), CatalogWatchError>>, WorkerError> {
         let mut notices = self.mailbox.lock().map_err(|_| WorkerError::Closed)?;
+        // Servers or sessions changed, or the lane that would say so is gone:
+        // the remembered server list is read again before its next use.
         if std::mem::take(&mut notices.changed) {
+            super::servers::forget();
             return Ok(Some(Ok(())));
         }
-        Ok(notices.failed.take().map(Err))
+        let failed = notices.failed.take();
+        if failed.is_some() {
+            super::servers::forget();
+        }
+        Ok(failed.map(Err))
     }
     /// True while this live lane is pushed fleet changes: registered servers,
     /// sessions and agents. Callers may then drop their own periodic reads.
@@ -181,6 +188,14 @@ impl CatalogWatchWorker {
             cancel,
             mailbox: Arc::default(),
             finished,
+        }
+    }
+    /// Puts a change, or the lane's end, in a detached worker's mailbox.
+    #[cfg(test)]
+    pub(super) fn report_detached(&self, lost: bool) {
+        if let Ok(mut notices) = self.mailbox.lock() {
+            notices.changed = !lost;
+            notices.failed = lost.then_some(CatalogWatchError::Closed);
         }
     }
     /// Moves a detached worker's lane on, as a received change would.
@@ -244,11 +259,13 @@ fn run(
         .max_frame_size(Some(64 * 1024))
         .write_buffer_size(0)
         .max_write_buffer_size(8192);
-    let (mut socket, _) = tungstenite::client::client_with_config(request, socket, Some(config))
-        .map_err(|error| match error {
-            tungstenite::HandshakeError::Failure(error) => CatalogWatchError::from(error),
-            tungstenite::HandshakeError::Interrupted(_) => CatalogWatchError::Timeout,
-        })?;
+    let (mut socket, response) =
+        tungstenite::client::client_with_config(request, socket, Some(config)).map_err(
+            |error| match error {
+                tungstenite::HandshakeError::Failure(error) => CatalogWatchError::from(error),
+                tungstenite::HandshakeError::Interrupted(_) => CatalogWatchError::Timeout,
+            },
+        )?;
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(1)))?;
@@ -256,6 +273,10 @@ fn run(
         Some(after) => CatalogEvents::resume(endpoint.identity, after),
         None => CatalogEvents::new(endpoint.identity),
     };
+    // A daemon that advertises its heartbeat pings by itself: its own limit
+    // applies. Any other daemon is judged by the pongs to this lane's pings.
+    let silence = crate::tmux_heartbeat::Heartbeat::advertised(&response)
+        .map_or(UNANSWERED, |heartbeat| heartbeat.silence());
     let ready_deadline = Instant::now() + Duration::from_secs(5);
     let mut received = Instant::now();
     let mut ping = received;
@@ -263,9 +284,7 @@ fn run(
     loop {
         cancel.check()?;
         let now = Instant::now();
-        if (!lane.ready() && now >= ready_deadline)
-            || now.duration_since(received) >= Duration::from_secs(45)
-        {
+        if (!lane.ready() && now >= ready_deadline) || now.duration_since(received) >= silence {
             return Err(CatalogWatchError::Timeout);
         }
         // Fleet push covers separately registered tmux owners. Only a daemon
@@ -326,6 +345,8 @@ fn run(
         }
     }
 }
+/// Three of this lane's own pings (one every 15 s) without any frame back.
+const UNANSWERED: Duration = Duration::from_secs(45);
 #[cfg(all(test, unix))]
 #[path = "catalog_watch_tests.rs"]
 mod tests;

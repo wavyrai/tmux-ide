@@ -23,6 +23,7 @@ fn fixture() -> Local {
         machine_id: "local".into(),
         machine_label: "Local".into(),
         catalog_identity: None,
+        service_version: None,
         worker: CatalogWorker::spawn(path.clone()).unwrap(),
         events: events.into(),
         state: State {
@@ -54,6 +55,8 @@ fn fixture() -> Local {
         agents: Default::default(),
         appearance: None,
         recovery: None,
+        flap: Default::default(),
+        empty_open: Default::default(),
         home: Default::default(),
         background_fleet: Default::default(),
         registry: Default::default(),

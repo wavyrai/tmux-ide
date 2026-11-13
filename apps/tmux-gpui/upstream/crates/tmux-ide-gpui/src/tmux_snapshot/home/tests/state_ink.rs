@@ -167,6 +167,9 @@ fn state_text_is_painted_inked(cx: &mut TestAppContext) {
         v.browser_state.status = "The local daemon could not be reached.".into();
     });
     check(&probes, "home-status", warning);
+    // #693: with the reason shown above, the list's own strip stays out.
+    assert!(!probes.contains_key("home-guidance-warning"));
+    let probes = paint(cx, &|v| v.browser_state.status.clear());
     check(&probes, "home-guidance-warning", warning);
     let probes = paint(cx, &|v| v.browser_commands = None);
     check(&probes, "home-guidance-error", error);

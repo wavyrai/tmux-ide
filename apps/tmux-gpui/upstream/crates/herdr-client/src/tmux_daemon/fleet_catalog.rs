@@ -10,6 +10,8 @@ use std::sync::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FleetCatalog {
     pub identity: CatalogIdentity,
+    /// The service's own version, for display only (#831).
+    pub service_version: Option<String>,
     pub servers: Vec<ServerRegistration>,
     pub sessions: Vec<FleetCatalogSessions>,
 }
@@ -28,7 +30,9 @@ impl Owner {
             }
         };
         current()?;
-        let catalog = self.catalog()?;
+        // The remembered server list may start the traversal; the read that
+        // ends it always asks, and a difference publishes nothing.
+        let catalog = self.known_catalog()?;
         let mut sessions = Vec::new();
         let mut count = 0;
         // Match the native Home publication limit, including offline entries.
@@ -65,6 +69,7 @@ impl Owner {
         }
         Ok(FleetCatalog {
             identity: catalog.identity,
+            service_version: catalog.service_version,
             servers: catalog.servers,
             sessions,
         })

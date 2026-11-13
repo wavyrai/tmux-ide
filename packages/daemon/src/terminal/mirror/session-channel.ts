@@ -69,6 +69,7 @@ import {
 } from "../protocol/layout-parse.ts";
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
+  sameSessionPaneInventory,
   SessionDescriptorDiscovery,
   decodeControlReplyUtf8,
   decodeTmuxArgument,
@@ -3536,9 +3537,7 @@ export class SessionChannel {
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
     );
     const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
-    const coherent =
-      beforeLines.length === afterLines.length &&
-      beforeLines.every((line, index) => line === afterLines[index]);
+    const coherent = sameSessionPaneInventory(beforeLines, afterLines);
     if (
       windowStage.repairedIdentity ||
       confirmedWindowStage.repairedIdentity ||

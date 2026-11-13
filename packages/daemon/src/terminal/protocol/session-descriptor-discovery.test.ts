@@ -5,6 +5,7 @@ import {
   SessionDescriptorDiscovery,
   decodeTmuxArgument,
   parseSessionPaneDescriptors,
+  sameSessionPaneInventory,
 } from "./session-descriptor-discovery.ts";
 
 function line(runtimePaneId: string, cwd = "/repo", title = "Shell"): string {
@@ -300,4 +301,39 @@ it("drops a reader whose file name has a C1 control character, keeping the pane"
       controlModeBytes(`${line("%3")}\tmanual\t\t${quoted}\t${process.pid}`),
     ])[0],
   ).toMatchObject({ runtimePaneId: "%3", reader: null });
+});
+
+describe("sameSessionPaneInventory (#730)", () => {
+  const fields = SESSION_PANE_DESCRIPTOR_FORMAT.split("\t");
+  const row = (change: Record<number, string> = {}) =>
+    fields.map((_, index) => change[index] ?? `v${index}`).join("\t");
+
+  it("ignores a pane's command, title and the window name tmux derives from the command", () => {
+    expect(fields[4]).toBe("#{qa:pane_current_command}");
+    expect(fields[7]).toBe("#{qa:window_name}");
+    expect(fields[9]).toBe("#{qa:pane_title}");
+    expect(
+      sameSessionPaneInventory(
+        [row({ 4: "zsh", 7: "zsh", 9: "~/repo" }), row()],
+        [row({ 4: "seq", 7: "seq", 9: "seq 1 100000" }), row()],
+      ),
+    ).toBe(true);
+  });
+
+  it("still sees every other field change, and a changed pane count or order", () => {
+    for (let index = 0; index < fields.length; index += 1) {
+      if (index === 4 || index === 7 || index === 9) continue;
+      expect(sameSessionPaneInventory([row()], [row({ [index]: "changed" })]), fields[index]).toBe(
+        false,
+      );
+    }
+    expect(sameSessionPaneInventory([row()], [row(), row()])).toBe(false);
+    expect(
+      sameSessionPaneInventory(
+        [row({ 0: "%1" }), row({ 0: "%2" })],
+        [row({ 0: "%2" }), row({ 0: "%1" })],
+      ),
+    ).toBe(false);
+    expect(sameSessionPaneInventory([], [])).toBe(true);
+  });
 });

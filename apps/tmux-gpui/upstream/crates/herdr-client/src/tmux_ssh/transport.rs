@@ -153,6 +153,9 @@ impl RemoteTransport {
     pub(crate) fn environment_id(&self) -> Option<&str> {
         self.descriptor.environment_id()
     }
+    pub(crate) fn product_version(&self) -> &str {
+        self.descriptor.product_version()
+    }
     pub fn generation(&self) -> uuid::Uuid {
         self.generation
     }
