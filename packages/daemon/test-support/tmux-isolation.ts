@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 
 /**
  * No test may reach a live tmux server.
@@ -79,6 +79,7 @@ GUARD='${directory}'
 REAL='${realTmux ?? ""}'
 private_dir() {
   case "$1" in
+    */../*|*/..) return 1 ;;
     /tmp/tmux-[0-9]*|/private/tmp/tmux-[0-9]*) return 1 ;;
     /tmp/?*/?*|/private/tmp/?*/?*|/var/folders/?*/?*|/private/var/folders/?*/?*) return 0 ;;
   esac
@@ -115,6 +116,8 @@ for argument in "$@"; do
     *) break ;;
   esac
 done
+# A socket name with a slash is a path in disguise (-L ../../tmux-501/default).
+case "$selector:$value" in name:*/*) selector=path ;; esac
 if [ "$selector" = path ]; then
   if ! private_dir "$value"; then
     printf 'REFUSED socket=%s args=%s\n' "$value" "$*" >> "$GUARD/refused.log"
@@ -165,13 +168,24 @@ exec "$REAL" "$@"
  */
 export function installTmuxGuard(environment: NodeJS.ProcessEnv = process.env): TmuxGuard {
   const inherited = environment.TMUX_IDE_TEST_TMUX_GUARD;
-  if (inherited && existsSync(join(inherited, "tmux")))
+  if (inherited && existsSync(join(inherited, "tmux"))) {
+    // A runner between the installer and this process (npx, pnpm) puts its own
+    // directories in front on PATH: put the guard back in front and complete it.
+    environment.PATH = [
+      inherited,
+      ...(environment.PATH ?? "").split(delimiter).filter((entry) => entry !== inherited),
+    ].join(delimiter);
+    environment.TMUX_IDE_TMUX_BIN = join(inherited, "tmux");
+    if (!environment.TMUX_TMPDIR) environment.TMUX_TMPDIR = inherited;
+    delete environment.TMUX;
+    delete environment.TMUX_PANE;
     return {
       directory: inherited,
       executable: join(inherited, "tmux"),
       log: join(inherited, "refused.log"),
       created: false,
     };
+  }
   // /tmp, not os.tmpdir(): macOS's per-user temp path would push a socket in
   // this directory past the sun_path limit.
   const directory = mkdtempSync(`/tmp/${PRIVATE_PREFIX}`);
@@ -259,17 +273,14 @@ export function tmuxGuardViolation(environment: NodeJS.ProcessEnv): string | nul
   // it resolved, which is the guard); any other directory could hold a real tmux.
   const path = (environment.PATH ?? "").split(delimiter);
   const position = path.indexOf(directory);
-  if (
-    position < 0 ||
-    !path.slice(0, position).every((entry) => isBelowTemporaryDirectory(`${entry}/tmux`))
-  )
+  if (position < 0 || !path.slice(0, position).every(privateShimDirectory))
     return "the tmux guard is no longer first on PATH";
   // Unset, the daemon would take a bundled tmux before PATH; a test's own
   // fake tmux in a temp dir is fine, any other binary bypasses the guard.
   const configured = environment.TMUX_IDE_TMUX_BIN;
   if (!configured)
     return "TMUX_IDE_TMUX_BIN is unset: a bundled tmux would be used instead of the guard";
-  if (configured !== join(directory, "tmux") && !isBelowTemporaryDirectory(configured))
+  if (configured !== join(directory, "tmux") && !leadsBelowTemporaryDirectory(configured))
     return `TMUX_IDE_TMUX_BIN names ${JSON.stringify(configured)}, a tmux that bypasses the guard`;
   if (environment.TMUX_IDE_RUNTIME_MODE === "development")
     return "TMUX_IDE_RUNTIME_MODE=development makes the daemon ignore TMUX_IDE_TMUX_BIN";
@@ -278,6 +289,31 @@ export function tmuxGuardViolation(environment: NodeJS.ProcessEnv): string | nul
 
 function isBelowTemporaryDirectory(path: string): boolean {
   return /^(?:\/private)?\/(?:tmp|var\/folders)\/[^/]+\/.+/u.test(path);
+}
+
+/**
+ * Where a path leads, not what it says: `..` is resolved and symlinks are
+ * followed, as far as the path exists. This is a check before each test: a
+ * test that later links a real tmux into its own temp directory is not caught.
+ */
+function leadsBelowTemporaryDirectory(path: string): boolean {
+  return isBelowTemporaryDirectory(followExisting(resolve(path)));
+}
+
+/** realpath of the longest part of the path that exists, with the rest appended. */
+function followExisting(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    const parent = dirname(path);
+    return parent === path ? path : join(followExisting(parent), basename(path));
+  }
+}
+
+/** A directory in front of the guard on PATH: private itself, and so is any tmux in it. */
+function privateShimDirectory(entry: string): boolean {
+  // Following entry/tmux follows the entry itself on the way.
+  return leadsBelowTemporaryDirectory(`${entry}/tmux`);
 }
 
 export function assertTmuxGuarded(environment: NodeJS.ProcessEnv = process.env): void {

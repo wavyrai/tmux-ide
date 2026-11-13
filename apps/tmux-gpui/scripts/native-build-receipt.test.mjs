@@ -179,10 +179,31 @@ test("Cargo failure preserves bounded rendered errors rather than unrelated arti
   assert.equal(cargoDiagnosticTail(message("x".repeat(9000))).length, 8192);
 });
 
+/** The vendored core GPUI crate's compiled inputs. */
+async function vendorCore(vendor) {
+  const core = join(vendor, "bezel-gpui");
+  await mkdir(join(core, "src"), { recursive: true });
+  await mkdir(join(core, "assets/fonts"), { recursive: true });
+  await mkdir(join(core, "examples"));
+  for (const name of [
+    "Cargo.toml",
+    "build.rs",
+    "LICENSE-APACHE",
+    "README.md",
+    "src/window.rs",
+    "assets/fonts/font.ttf",
+    "examples/not-an-input.rs",
+  ])
+    await writeFile(join(core, name), name);
+  await writeFile(join(vendor, "bezel-gpui-provenance.json"), "{}");
+  return core;
+}
+
 test("Apple renderer source and shaders participate in native build integrity", async () => {
   await fixture(async (f) => {
     const vendor = join(f.root, "vendor"),
       apple = join(vendor, "bezel-gpui-apple");
+    await vendorCore(vendor);
     await mkdir(join(apple, "src"), { recursive: true });
     await mkdir(join(apple, "gpui"));
     for (const name of [
@@ -198,6 +219,23 @@ test("Apple renderer source and shaders participate in native build integrity", 
     const receipt = await record(f);
     assert.ok(!JSON.stringify(receipt).includes("unrelated-private-file"));
     await writeFile(join(apple, "src/shaders.metal"), "changed renderer shader");
+    await assert.rejects(verifyNativeBuildReceipt(f.receiptPath, f.native, f.workspace));
+  });
+});
+test("vendored core GPUI sources and assets participate in native build integrity", async () => {
+  await fixture(async (f) => {
+    const vendor = join(f.root, "vendor"),
+      apple = join(vendor, "bezel-gpui-apple");
+    await mkdir(join(apple, "src"), { recursive: true });
+    await mkdir(join(apple, "gpui"));
+    for (const name of ["Cargo.toml", "build.rs", "LICENSE-APACHE", "src/lib.rs", "gpui/scene.rs"])
+      await writeFile(join(apple, name), name);
+    await writeFile(join(vendor, "bezel-gpui-apple-provenance.json"), "{}");
+    const core = await vendorCore(vendor);
+    const receipt = await record(f);
+    assert.ok(JSON.stringify(receipt).includes("bezel-gpui/assets/fonts/font.ttf"));
+    assert.ok(!JSON.stringify(receipt).includes("not-an-input"));
+    await writeFile(join(core, "src/window.rs"), "changed core source");
     await assert.rejects(verifyNativeBuildReceipt(f.receiptPath, f.native, f.workspace));
   });
 });

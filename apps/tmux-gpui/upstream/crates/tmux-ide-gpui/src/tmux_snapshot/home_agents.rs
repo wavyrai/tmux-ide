@@ -8,7 +8,7 @@ pub(in crate::tmux_snapshot) enum Phase {
     Partial,
     Unavailable,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Hash)]
 #[serde(rename_all = "UPPERCASE")]
 pub(in crate::tmux_snapshot) enum Status {
     Working,
@@ -52,6 +52,12 @@ pub(in crate::tmux_snapshot) struct Row {
     pub available: bool,
 }
 impl Row {
+    /// Whether `machine` (a fleet group id) is where this agent was observed.
+    /// A row with no machine, which the projection never publishes, joins
+    /// by its live id alone.
+    pub(in crate::tmux_snapshot) fn observed_on(&self, machine: &str) -> bool {
+        self.machine.as_deref().is_none_or(|own| own == machine)
+    }
     pub(in crate::tmux_snapshot) fn matches_query(&self, query: &str) -> bool {
         let query = query.trim().to_lowercase();
         [

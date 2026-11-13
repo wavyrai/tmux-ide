@@ -9,9 +9,12 @@ pub(super) mod filters;
 pub(super) mod fleet;
 pub(super) mod fleet_nav;
 pub(super) mod fleet_rows;
+pub(super) mod fleet_view;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
+mod row_root;
+pub(super) mod rows_window;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
@@ -80,6 +83,27 @@ pub(super) fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
 /// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
+    thread_local! {
+        /// The last theme and canvas Home was inked for, and the result:
+        /// every row and chip asks, and the answer changes only with the
+        /// appearance (perf plan, finding 2).
+        static LAST: std::cell::RefCell<Option<(crate::config::Theme, u32, bezel_theme::Theme)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    if let Some(inked) = LAST.with(|last| {
+        last.borrow()
+            .as_ref()
+            .filter(|(source, plate, _)| source == theme && *plate == canvas)
+            .map(|(_, _, inked)| inked.clone())
+    }) {
+        return inked;
+    }
+    let inked = ink_home(theme, canvas);
+    LAST.with(|last| *last.borrow_mut() = Some((theme.clone(), canvas, inked.clone())));
+    inked
+}
+
+fn ink_home(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
     thread_local! {
@@ -265,13 +289,16 @@ impl SnapshotView {
         // First run: the welcome takes Home's place (onboarding A1).
         self.observe_welcome(cx);
         if self.welcome.open {
+            self.fleet_view_hidden();
             return self.welcome_render(window, cx);
         }
         let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
+        let mut settling = false;
         if let Some(controls) = self.home_filter.as_mut() {
             let machines = super::motion::home_machines(&self.browser_state);
             controls.motion.observe(&machines, now);
-            if controls.motion.settle(now, reduced) {
+            settling = controls.motion.settle(now, reduced);
+            if settling {
                 window.request_animation_frame();
             }
         }
@@ -467,13 +494,18 @@ impl SnapshotView {
         }
         // The pane-limit notice is always loud: it shows beside a card too.
         let notice = self.browser_state.home_notice.as_ref().filter(|_| is_live);
-        if (act.is_some() && notice.is_some())
+        let status_shown = (act.is_some() && notice.is_some())
             || (act.is_none()
                 && ((connected && setup_phase.is_some())
                     || (!is_live && !waiting && !self.browser_state.status.is_empty())
                     || (is_live && self.browser_state.home_fault)
-                    || notice.is_some()))
-        {
+                    || notice.is_some()));
+        // #693: the status line above already says why the list failed, so
+        // the list's own strip would be a second one under it.
+        let list_failure_said = status_shown
+            && connected
+            && self.browser_state.home_phase == browser::HomePhase::Unavailable;
+        if status_shown {
             let status = match notice.filter(|_| act.is_some()) {
                 Some(notice) => crate::notifications::safe_text(notice, 480),
                 None => status_message(&self.browser_state, connected),
@@ -544,7 +576,7 @@ impl SnapshotView {
             .flex_col()
             .gap(px(SPACE * 1.5));
         let nav = self.fleet_nav(cx);
-        if let Some(cards) = self.fleet_cards(window, cx) {
+        if let Some(cards) = self.fleet_element(settling, window, cx) {
             // The left list names the view; the table needs no heading.
             detail = detail.child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
@@ -598,7 +630,11 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if (!connected || setup_phase.is_none()) && !waiting && act.is_none() {
+        } else if (!connected || setup_phase.is_none())
+            && !waiting
+            && act.is_none()
+            && !list_failure_said
+        {
             let guidance = if !connected {
                 bezel
                     .error_strip(CONNECTION_LOST)

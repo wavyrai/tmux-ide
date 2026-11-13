@@ -5,6 +5,7 @@ const state = vi.hoisted(() => ({
   selected: "local",
   agentGroups: [] as readonly ApplicationMachineAgentGroup[],
   agentCurrent: true,
+  agentRefreshing: false as boolean,
   preferenceOptions: null as null | {
     onError(message: string): void;
     onRecovered(message: string): void;
@@ -66,6 +67,7 @@ vi.mock("./application-machine-agents.ts", () => ({
     start: () => {},
     dispose: () => {},
     isCurrentTarget: () => state.agentCurrent,
+    isRefreshing: () => state.agentRefreshing === true,
   }),
 }));
 vi.mock("../../../lib/local-fleet-request.ts", () => ({
@@ -162,6 +164,7 @@ beforeEach(() => {
   state.selected = "local";
   state.agentGroups = [];
   state.agentCurrent = true;
+  state.agentRefreshing = false;
   state.handles.clear();
   state.trace = [];
   state.catalogStart.mockReset();
@@ -350,6 +353,13 @@ it("opens a background agent only after switching to its machine, even with a sh
   owner.sidebar.onOpenAgent?.("A", "same", "pane", "mouse");
   expect(callbacks.openAgent).toHaveBeenCalledTimes(1);
   expect(callbacks.setNote).toHaveBeenCalledWith(expect.stringContaining("unavailable"));
+  // PR #383's journey: while the roster re-reads, a row is not current. The
+  // click goes on to the opener, which waits for the re-read, instead of
+  // being refused here.
+  state.agentRefreshing = true;
+  owner.sidebar.onOpenAgent?.("A", "same", "pane", "mouse");
+  expect(callbacks.openAgent).toHaveBeenCalledTimes(2);
+  state.agentRefreshing = false;
 });
 
 it("F5 routes same-name sessions explicitly and rejects an obsolete generation", async () => {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Workspace, WorkspacePromoteMutationRequest } from "@tmux-ide/contracts";
 
 import {
+  PROMOTION_PROOF_ATTEMPTS,
   WorkspacePromotionAuthority,
   WorkspacePromotionError,
   type WorkspacePromotionIo,
@@ -1018,6 +1019,94 @@ describe("WorkspacePromotionAuthority", () => {
       }),
     ]);
     expect(mock.sessionOf("$1")!.options.get("@tmux_ide_adopted")).toBe("1");
+  });
+
+  // CI, PR #381: a session opened while another client was splitting panes
+  // answered 503. The proof reads the inventory twice; the second read
+  // differed and the promotion was refused outright.
+  describe("an inventory that changes during the proof", () => {
+    /** Promotion of a one-pane session; `onProofRead(n)` runs before the n-th proof read. */
+    function racing(onProofRead: (read: number, mock: MockTmux) => void) {
+      const mock = new MockTmux();
+      const session = mock.session("fleet-busy", "$1");
+      const window = mock.window(session, "@1", "main");
+      mock.pane(window, "%1", { active: true, currentCommand: "zsh" });
+      let proofReads = 0;
+      const registry = new FakeRegistry();
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry,
+        io: io(mock, {
+          runTmux: async (args) => {
+            const format = args[args.indexOf("-F") + 1] ?? "";
+            if (args[0] === "list-panes" && format.includes("#{window_index}")) {
+              proofReads += 1;
+              onProofRead(proofReads, mock);
+            }
+            return mock.run(args);
+          },
+        }),
+      });
+      return { mock, window, registry, authority, proofReads: () => proofReads };
+    }
+
+    it("is proved again, and the pane that appeared is stamped like the others", async () => {
+      const r = racing((read, mock) => {
+        // Another client splits the window between the two reads of the first proof.
+        if (read === 2) mock.pane(mock.windowOf("@1")!.window, "%2", { currentCommand: "zsh" });
+      });
+      const result = await r.authority.promote(request(fleetSessionIdForName("fleet-busy")));
+      expect(result.outcome).toBe("promoted");
+      expect(r.registry.list()).toHaveLength(1);
+      // One failed proof (2 reads), one good one (2 reads).
+      expect(r.proofReads()).toBe(4);
+      expect(r.mock.paneOption("%2")!.options.get("@tmux_ide_pane_id")).toMatch(
+        /^pane\.promoted\.[0-9a-f]{20}$/u,
+      );
+    });
+
+    it("is refused after a bounded number of proofs when it never holds still", async () => {
+      let next = 2;
+      const r = racing((read, mock) => {
+        if (read % 2 === 0)
+          mock.pane(mock.windowOf("@1")!.window, `%${next++}`, { currentCommand: "zsh" });
+      });
+      await expect(
+        r.authority.promote(request(fleetSessionIdForName("fleet-busy"))),
+      ).rejects.toMatchObject({
+        code: "promotion_verification_failed",
+        context: { reason: "inventory_changed_during_proof" },
+      });
+      expect(r.proofReads()).toBe(PROMOTION_PROOF_ATTEMPTS * 2);
+      expect(r.registry.list()).toHaveLength(0);
+    });
+
+    it("does not prove again for a refusal that another try cannot change", async () => {
+      const mock = new MockTmux();
+      const session = mock.session("fleet-unverified", "$1");
+      const window = mock.window(session, "@1", "split");
+      for (const paneId of ["%1", "%2"])
+        mock.pane(window, paneId, {
+          active: paneId === "%1",
+          options: { "@tmux_ide_pane_id": "pane.workspace.collision" },
+        });
+      let proofReads = 0;
+      const authority = new WorkspacePromotionAuthority({
+        daemonInstanceId: DAEMON,
+        registry: new FakeRegistry(),
+        io: io(mock, {
+          runTmux: async (args) => {
+            const format = args[args.indexOf("-F") + 1] ?? "";
+            if (args[0] === "list-panes" && format.includes("#{window_index}")) proofReads += 1;
+            return mock.run(args);
+          },
+        }),
+      });
+      await expect(
+        authority.promote(request(fleetSessionIdForName("fleet-unverified"))),
+      ).rejects.toMatchObject({ code: "promotion_verification_failed" });
+      expect(proofReads).toBe(2);
+    });
   });
 
   it("does not publish fleet enrollment when terminal verification fails", async () => {

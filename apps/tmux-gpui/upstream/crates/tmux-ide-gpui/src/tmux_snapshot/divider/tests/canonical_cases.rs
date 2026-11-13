@@ -206,12 +206,15 @@ fn painted_gutters_reject_changed_authority_geometry_and_content_insets() {
     }
 }
 
-/// A layout that arrives after a lost read must end in a handle a person can
-/// find. The test platform does not report the window's resolved cursor, so this
-/// pins the cursor the handle asks for and the gutter it asks for it on, and that
-/// the mouse starts a drag there.
+/// A window with no layout shows no handle; once a layout is published it
+/// shows one a person can find. The layout is set on the view directly: how a
+/// lost read is retried is the controller's, tested in herdr-client's
+/// `tmux_controller_divider_tests.rs` (#734). The test platform does not
+/// report the window's resolved cursor, so this pins the cursor the handle
+/// asks for and the gutter it asks for it on, and that the mouse starts a
+/// drag there.
 #[gpui::test]
-fn a_layout_issued_after_a_lost_read_draws_a_resize_handle_on_the_gutter(cx: &mut TestAppContext) {
+fn a_published_layout_draws_a_resize_handle_on_the_gutter(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);

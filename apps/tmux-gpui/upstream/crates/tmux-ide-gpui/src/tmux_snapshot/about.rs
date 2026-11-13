@@ -102,6 +102,7 @@ pub(super) const CONNECTION_LABEL: &str = "Background service";
 /// connection that reported it is live, never a stale one.
 pub(super) fn connection_line(
     live: Option<&super::diagnostics::Versions>,
+    service: Option<&str>,
     connected: bool,
 ) -> String {
     match live.and_then(|v| v.daemon_version.as_deref().map(|d| (d, v))) {
@@ -109,8 +110,12 @@ pub(super) fn connection_line(
             Some(tmux) => format!("tmux-ide {service} · tmux {tmux}"),
             None => format!("tmux-ide {service}"),
         },
-        None if connected => "Connected · open a terminal to see its version".into(),
-        None => "Not connected".into(),
+        // No terminal open: the session list's service still names itself (#831).
+        None => match service.filter(|_| connected) {
+            Some(service) => format!("tmux-ide {service}"),
+            None if connected => "Connected · open a terminal to see its version".into(),
+            None => "Not connected".into(),
+        },
     }
 }
 
@@ -206,6 +211,9 @@ impl SnapshotView {
         connection_line(
             self.diagnostics_live()
                 .then_some(self.browser_state.diagnostics.as_ref())
+                .flatten(),
+            self.service_version_live()
+                .then_some(self.browser_state.service_version.as_deref())
                 .flatten(),
             connected,
         )
@@ -316,7 +324,7 @@ impl SnapshotView {
                     [
                         ("about-website", "Website", Control::Website),
                         ("about-docs", "Docs", Control::Docs),
-                        ("about-changelog", "What’s new", Control::WhatsNew),
+                        ("about-changelog", "What's new", Control::WhatsNew),
                     ]
                     .map(|(id, label, control)| {
                         link(id, label, control).on_click(cx.listener(

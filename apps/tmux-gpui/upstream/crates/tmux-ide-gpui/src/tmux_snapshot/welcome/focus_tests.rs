@@ -358,3 +358,201 @@ fn checklist_details_are_read_out(cx: &mut TestAppContext) {
         "each checklist row carries its detail as its accessibility description"
     );
 }
+
+/// Closing the welcome also counts this version's What's new as seen: a new
+/// user who just closed the welcome does not get the card straight away.
+#[gpui::test]
+fn closing_the_welcome_remembers_this_versions_whats_new(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_view, cx, _rx) = home(cx, Some(Phase::Available), &[], fresh(&dir));
+    assert!(shown(cx));
+    let skip = cx.debug_bounds("welcome-skip").unwrap();
+    cx.simulate_click(skip.center(), Modifiers::default());
+    assert!(!shown(cx));
+    assert!(
+        cx.debug_bounds("whats-new").is_none(),
+        "no card right after"
+    );
+    assert_eq!(whats_new_seen(&dir, cx).as_deref(), Some("0.1.17"));
+}
+
+/// The deadline line allows half a second under the 20 s deadline, no more.
+#[test]
+fn the_deadline_line_starts_half_a_second_before_twenty_seconds() {
+    let detail = |ran: Duration| {
+        lines(Stage::Setup(Phase::StoppedWaiting), None, Some(ran))[1]
+            .detail
+            .clone()
+    };
+    let half = Duration::from_millis(500);
+    assert_eq!(detail(SETUP_DEADLINE).as_deref(), Some(FAILED_TIMEOUT));
+    assert_eq!(
+        detail(SETUP_DEADLINE - half).as_deref(),
+        Some(FAILED_TIMEOUT)
+    );
+    assert_eq!(
+        detail(SETUP_DEADLINE - half - Duration::from_millis(1)).as_deref(),
+        Some(FAILED_EARLY)
+    );
+    assert_eq!(
+        detail(SETUP_DEADLINE + Duration::from_secs(5)).as_deref(),
+        Some(FAILED_TIMEOUT)
+    );
+}
+
+/// A setup already running when the window first looked: how long it ran is
+/// unknown, so when it stops the line claims neither "20 seconds" nor
+/// "before it answered".
+#[gpui::test]
+fn a_run_this_window_did_not_see_start_says_neither(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, _rx) = home(cx, Some(Phase::Running), &[], fresh(&dir));
+    assert!(shown(cx));
+    cx.executor().advance_clock(Duration::from_secs(3));
+    draw(cx);
+    cx.update(|_, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.local_setup = Some(browser::local_setup::Setup {
+                phase: Phase::StoppedWaiting,
+            });
+            cx.notify();
+        })
+    });
+    draw(cx);
+    let line = view.read_with(cx, |v, _| {
+        lines(stage(&v.browser_state, true), None, v.welcome.stopped_after)[1].clone()
+    });
+    assert_eq!(line.detail.as_deref(), Some(FAILED_STOPPED));
+}
+
+/// A run the window saw start from Available keeps its measured length.
+#[gpui::test]
+fn a_run_seen_from_its_start_is_measured(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, _rx) = home(cx, Some(Phase::Available), &[], fresh(&dir));
+    assert!(shown(cx));
+    let set = |view: &Entity<SnapshotView>, cx: &mut VisualTestContext, phase| {
+        cx.update(|_, cx| {
+            view.update(cx, |v, cx| {
+                v.browser_state.local_setup = Some(browser::local_setup::Setup { phase });
+                cx.notify();
+            })
+        });
+        draw(cx);
+    };
+    set(&view, cx, Phase::Running);
+    cx.executor().advance_clock(Duration::from_secs(4));
+    set(&view, cx, Phase::StoppedWaiting);
+    let line = view.read_with(cx, |v, _| {
+        lines(stage(&v.browser_state, true), None, v.welcome.stopped_after)[1].clone()
+    });
+    assert_eq!(line.detail.as_deref(), Some(FAILED_EARLY));
+}
+
+/// What's new is keyed by the bundle's exact version. The newest entry must
+/// be at least the version the public installer ships, so a release cut
+/// without notes (or with a key in another format) fails here instead of
+/// silently showing no card.
+#[test]
+fn the_newest_notes_are_not_older_than_the_shipped_app() {
+    let installer = include_str!("../../../../../../../../docs/public/install-native-alpha.sh");
+    let shipped = installer
+        .split("tmux-ide-gpui-")
+        .nth(1)
+        .and_then(|rest| rest.split("-macos-arm64").next());
+    // The installer names its app archive.
+    let shipped = shipped.unwrap();
+    let parse = |v: &str| -> Vec<u32> { v.split('.').map(|n| n.parse().unwrap()).collect() };
+    let newest = whats_new::RELEASES[0].0;
+    assert_eq!(parse(newest).len(), 3, "a plain x.y.z key: {newest}");
+    assert_eq!(parse(shipped).len(), 3, "{shipped}");
+    assert!(
+        parse(newest) >= parse(shipped),
+        "What's new ends at {newest}, but the installer ships {shipped}"
+    );
+    assert!(whats_new::notes(newest).is_some());
+}
+
+/// Each session's Open button is a keyboard stop, before the footer's
+/// buttons as on screen, and Return on one opens that session.
+#[gpui::test]
+fn tab_reaches_each_sessions_open_button(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    draw(cx);
+    assert!(cx.debug_bounds("welcome-session-1").is_some());
+    while rx.try_recv().is_ok() {}
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                v.welcome.focus.iter().position(|f| f.is_focused(window))
+            })
+        })
+    };
+    let start = focused(cx).unwrap();
+    assert!(start < 3, "focus starts on a footer button: {start}");
+    let mut seen = Vec::new();
+    for _ in 0..8 {
+        press(cx, "tab", false);
+        seen.push(focused(cx).unwrap());
+    }
+    assert!(seen.contains(&3) && seen.contains(&4), "{seen:?}");
+    let first = seen.iter().position(|&i| i == 3).unwrap();
+    assert_eq!(seen[first + 1], 4, "the rows in order: {seen:?}");
+    assert!(seen[first + 2] < 3, "then the footer: {seen:?}");
+    // Return on the second row's Open opens that session.
+    while focused(cx) != Some(4) {
+        press(cx, "tab", false);
+    }
+    assert!(rx.try_recv().is_err());
+    press(cx, "enter", false);
+    assert!(
+        rx.try_iter().next().is_some(),
+        "Return on Open sends the open"
+    );
+}
+
+/// A focused Open button whose row goes away (its session ended, or the
+/// list was lost) does not keep the keyboard on nothing: the welcome's
+/// start button takes it, and Tab and Return work again.
+#[gpui::test]
+fn a_focused_open_button_that_disappears_hands_the_keyboard_on(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
+    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    draw(cx);
+    let focused = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.read_with(cx, |v, _| {
+                v.welcome.focus.iter().position(|f| f.is_focused(window))
+            })
+        })
+    };
+    // The second row goes, then the first: each time its Open had the keyboard.
+    for gone in [1usize, 0] {
+        for _ in 0..8 {
+            if focused(cx) == Some(3 + gone) {
+                break;
+            }
+            press(cx, "tab", false);
+        }
+        assert_eq!(focused(cx), Some(3 + gone), "fixture: on row {gone}'s Open");
+        cx.update(|_, cx| {
+            view.update(cx, |v, cx| {
+                v.browser_state.sessions.truncate(gone);
+                cx.notify();
+            })
+        });
+        draw(cx);
+        assert!(shown(cx), "the welcome stays open");
+        let at = focused(cx);
+        assert!(
+            at.is_some_and(|stop| stop < 3 + gone),
+            "the keyboard is on a button that is on screen: {at:?}"
+        );
+        press(cx, "tab", false);
+        assert_ne!(focused(cx), at, "Tab moves again");
+    }
+    let _ = rx;
+}

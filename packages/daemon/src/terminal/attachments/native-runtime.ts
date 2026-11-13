@@ -1628,6 +1628,25 @@ export class WorkspaceTerminalInventoryRuntime {
     if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
     const epoch = this.#inventoryEpoch;
     const nativeEpoch = this.#nativeServerEpoch?.() ?? null;
+    // An invalidation can also land while the snapshot is being adopted. That
+    // publication is refused, as before, and the inventory is read again: it
+    // used to fail the caller, and at startup the caller is the daemon.
+    const publish = async (
+      value: NativeTerminalInventorySnapshot,
+      publicationSignal: AbortSignal,
+    ): Promise<NativeTerminalInventorySnapshot> => {
+      try {
+        return await this.#publishInventory(value, nativeEpoch, publicationSignal, epoch);
+      } catch (error) {
+        if (this.#disposed || signal?.aborted || this.#inventoryEpoch === epoch) throw error;
+        if (staleRetry < INVENTORY_STALE_RETRIES)
+          return this.#readInventory(signal, staleRetry + 1);
+        throw new NativeTerminalAttachmentRuntimeError(
+          "discovery-failed",
+          "overtaken-by-invalidations",
+        );
+      }
+    };
     if (signal) {
       if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
       let snapshot: NativeTerminalInventorySnapshot;
@@ -1653,7 +1672,7 @@ export class WorkspaceTerminalInventoryRuntime {
           "overtaken-by-invalidations",
         );
       }
-      return this.#publishInventory(snapshot, nativeEpoch, signal, epoch);
+      return publish(snapshot, signal);
     }
     if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
     const abort = new AbortController();
@@ -1680,7 +1699,7 @@ export class WorkspaceTerminalInventoryRuntime {
           "overtaken-by-invalidations",
         );
       }
-      return this.#publishInventory(value, nativeEpoch, abort.signal, epoch);
+      return publish(value, abort.signal);
     })().finally(() => {
       if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
     });

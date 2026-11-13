@@ -69,6 +69,7 @@ import {
 } from "../protocol/layout-parse.ts";
 import {
   SESSION_PANE_DESCRIPTOR_FORMAT,
+  sameSessionPaneInventory,
   SessionDescriptorDiscovery,
   decodeControlReplyUtf8,
   decodeTmuxArgument,
@@ -3536,9 +3537,7 @@ export class SessionChannel {
       `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`,
     );
     const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
-    const coherent =
-      beforeLines.length === afterLines.length &&
-      beforeLines.every((line, index) => line === afterLines[index]);
+    const coherent = sameSessionPaneInventory(beforeLines, afterLines);
     if (
       windowStage.repairedIdentity ||
       confirmedWindowStage.repairedIdentity ||
@@ -3826,7 +3825,8 @@ export class SessionChannel {
         !leftLayout ||
         !rightLayout ||
         leftWindow.semanticId !== rightWindow.semanticId ||
-        leftWindow.name !== rightWindow.name ||
+        // Not the name: tmux derives it from the running command, and the
+        // pane rows' own check ignores it too (sameSessionPaneInventory, #730).
         leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus ||
         leftWindow.modeKeys !== rightWindow.modeKeys ||
         !layoutIdentitiesEqual(leftLayout, rightLayout)

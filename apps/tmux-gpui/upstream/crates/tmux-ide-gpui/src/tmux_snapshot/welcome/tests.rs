@@ -173,7 +173,7 @@ fn the_checklist_says_what_is_true_in_each_stage() {
     );
     assert_eq!(early[1].2.as_deref(), Some(FAILED_EARLY));
     let unknown = titles(Stage::Setup(Phase::StoppedWaiting), None, None);
-    assert_eq!(unknown[1].2.as_deref(), Some(FAILED_EARLY));
+    assert_eq!(unknown[1].2.as_deref(), Some(FAILED_STOPPED));
     let failed = titles(Stage::Setup(Phase::Failed), None, None);
     assert_eq!(failed[1].2.as_deref(), Some(FAILED_OTHER));
     let missing = titles(Stage::Setup(Phase::Missing), None, None);
@@ -306,6 +306,7 @@ fn the_welcome_speaks_plainly() {
         texts.push(version.to_string());
         texts.extend(notes.iter().map(|n| n.to_string()));
     }
+    texts.push(FAILED_STOPPED.into());
     for text in texts {
         assert_eq!(jargon(&text), None, "{text}");
     }

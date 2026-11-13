@@ -51,7 +51,23 @@ interface DiagnosticWindowFrameContext {
   readonly rows: number;
 }
 
+/**
+ * How a selection made behind an admission ended. "failed": the daemon did not
+ * select the pane. "superseded": a later selection or a new control replaced it.
+ */
+export type AdmittedPaneSelectionOutcome = "selected" | "not-admitted" | "failed" | "superseded";
+
+/**
+ * Waits between tries of a selection the daemon refused as
+ * `pane_inventory_not_ready`: it refuses, before any effect, a pane its
+ * inventory has not adopted yet, which is the case for a moment after a pane
+ * is created (#764). About 3 s in all.
+ */
+export const PANE_INVENTORY_RETRY_DELAYS_MS: readonly number[] = [100, 200, 400, 800, 1500];
+
 export interface ApplicationTerminalInteractionControllerOptions {
+  /** Test seam for PANE_INVENTORY_RETRY_DELAYS_MS. */
+  readonly selectionRetryDelaysMs?: readonly number[];
   readonly generation: Accessor<OpenTuiGenerationHostSnapshot | null>;
   readonly layout: Accessor<OpenTuiWorkspaceLayoutSnapshot>;
   readonly focusedPane?: Accessor<string | null>;
@@ -89,7 +105,12 @@ export interface ApplicationTerminalInteractionController {
    * selection replaced it; otherwise that input is dropped, never delivered to
    * another pane. (The app's root sends no input while an agent is opening.)
    */
-  selectPane(paneId: string, admission?: Promise<boolean>): void;
+  selectPane(paneId: string): void;
+  selectPane(paneId: string, admission: Promise<boolean>): Promise<AdmittedPaneSelectionOutcome>;
+  selectPane(
+    paneId: string,
+    admission?: Promise<boolean>,
+  ): void | Promise<AdmittedPaneSelectionOutcome>;
   selectWindowLink(target: WindowLinkTarget): Promise<void>;
   unlinkWindowLink(target: WindowLinkTarget): Promise<string>;
   sendInput(
@@ -830,7 +851,32 @@ export function createApplicationTerminalInteractionController(
 
   // The one way a pane selection reaches the runtime (#764: also used once an
   // admitted agent selection settles).
+  const selectionRetryDelaysMs = options.selectionRetryDelaysMs ?? PANE_INVENTORY_RETRY_DELAYS_MS;
+  /**
+   * A refusal for an inventory that is not ready happened before any effect,
+   * so the same selection may be sent again while it is still the current one.
+   * Any other failure is final.
+   */
   const selectInRuntime = async (paneId: string): Promise<boolean> => {
+    const version = paneInput.selectionVersion;
+    for (let attempt = 0; ; attempt++) {
+      const failure: { current: PaneSelectionFailure | null } = { current: null };
+      if (await selectInRuntimeOnce(paneId, failure)) return true;
+      const delayMs = selectionRetryDelaysMs[attempt];
+      if (
+        delayMs === undefined ||
+        failure.current?.backendReason !== "pane_inventory_not_ready" ||
+        paneInput.selectionVersion !== version
+      )
+        return false;
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      if (paneInput.selectionVersion !== version) return false;
+    }
+  };
+  const selectInRuntimeOnce = async (
+    paneId: string,
+    selectionFailure: { current: PaneSelectionFailure | null },
+  ): Promise<boolean> => {
     finishLinkSelection(false);
     const initial = options.generation();
     const selectionControl = controlIdentity(initial);
@@ -856,7 +902,6 @@ export function createApplicationTerminalInteractionController(
     let dispatchedRendererEpoch: number | undefined;
     const selecting = pendingWindowSwitch;
     const operationId = selecting?.traceId;
-    const selectionFailure: { current: PaneSelectionFailure | null } = { current: null };
     const receipt = expected
       ? await selectTerminalPane(
           expected,
@@ -1238,23 +1283,32 @@ export function createApplicationTerminalInteractionController(
       maybeRequestWindowSwitchFrame();
       maybeRequestPaneResizeFrame();
     },
-    selectPane: (paneId, admission) => {
+    selectPane: ((paneId: string, admission?: Promise<boolean>) => {
       finishLinkSelection(false);
-      if (admission)
-        // Ordered now; selected only once admitted, otherwise held input drops.
-        paneInput.selectPane(paneId, {
-          presentOptimistically: false,
-          selection: () => {
-            // A later selection supersedes this one: never select it after all.
-            const version = paneInput.selectionVersion;
-            return admission.then((admitted) =>
-              admitted && paneInput.selectionVersion === version ? selectInRuntime(paneId) : false,
-            );
-          },
-        });
-      else paneInput.selectPane(paneId);
+      if (!admission) {
+        paneInput.selectPane(paneId);
+        selectionWaiter.reconcile();
+        return;
+      }
+      let outcome!: Promise<AdmittedPaneSelectionOutcome>;
+      // Ordered now; selected only once admitted, otherwise held input drops.
+      paneInput.selectPane(paneId, {
+        presentOptimistically: false,
+        selection: () => {
+          // A later selection supersedes this one: never select it after all.
+          const version = paneInput.selectionVersion;
+          outcome = admission.then(async (admitted): Promise<AdmittedPaneSelectionOutcome> => {
+            if (!admitted) return "not-admitted";
+            if (paneInput.selectionVersion !== version) return "superseded";
+            if (await selectInRuntime(paneId)) return "selected";
+            return paneInput.selectionVersion === version ? "failed" : "superseded";
+          });
+          return outcome.then((result) => result === "selected");
+        },
+      });
       selectionWaiter.reconcile();
-    },
+      return outcome;
+    }) as ApplicationTerminalInteractionController["selectPane"],
     async unlinkWindowLink(target) {
       const expected = liveSelectionTarget();
       const observed = windowLinkTarget(options.layout(), target.linkId);
