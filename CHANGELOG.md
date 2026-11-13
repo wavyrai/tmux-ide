@@ -9,6 +9,24 @@ All notable changes to this project will be documented in this file.
 - A daemon stop after SIGTERM or SIGINT is bounded. After 10 s without progress, or 25 s in all, the daemon logs the teardown steps still open, removes `daemon.json` and exits 1. Two waits on the stop path that had no limit now have one. Why a daemon sometimes did not stop after its tmux server was replaced is not found: it did not happen in 74 local runs.
 - Clients keep re-reading a terminal inventory the daemon refuses: after 250 ms, 500 ms, then every 1 s for up to 15 s, then by reconnecting after 1, 2, 4 and up to 30 s. Before, the client stopped after two quick retries and kept showing a stale terminal.
 - The daemon announces when a session's terminal inventory is readable again, so an idle client re-reads it.
+- Two daemons on one tmux server no longer remove each other's hooks. A daemon's hook install removed every tmux-ide daemon's hooks, and each gap lost `send-keys` and `capture-pane` observations and made clients re-read the terminal inventory. A daemon now removes only its own hooks and those no living daemon owns. A daemon older than 2.9.23 on the same server still removes everyone's.
+- Add a heartbeat on terminal streams and the events socket. The daemon pings every 10 s and drops a connection after 3 unanswered pings, so a half-open stream no longer looks like a frozen terminal.
+- Every synchronous tmux call has a 5 s limit. One hung tmux call could freeze the whole daemon, including its signal handling.
+- An absent or stale tmux server costs a file check or a connect, not a tmux process. A refused connection never retires a server connection, and on macOS touching the socket file no longer does either.
+- A daemon restart in place keeps its port. A restart whose stop hangs exits after the stop limit.
+- With `--json`, all log records go to stderr, so stdout stays one JSON document.
+- Fix a terminal inventory read answering 503 when it was overtaken twice by changes; it now keeps reading. This was one cause of a click on an agent that had just appeared doing nothing.
+- The daemon checks its healthy hooks every 5 minutes instead of every 30 s: with three tmux servers, 5.8 idle tmux processes a minute become 0.6.
+- `tmux-ide doctor` adds a "tmux server" row with the socket the daemon uses, and warns when this shell's tmux (`TMUX_TMPDIR`, or a tmux started with `-S` or `-L`) means another server. The daemon announces on the events socket when a tmux server comes online or is retired.
+- Heavy output in a viewed pane no longer slows tmux itself. The daemon committed after every write; it now skips a commit while more output is queued. With a 2 MB flood and one viewer, daemon CPU time fell from 2.16 s to 1.05 s and tmux's own time to produce the output from 1557 ms to 616 ms.
+- A pane nobody has watched for 10 s is parked: tmux pauses its output to the daemon and the daemon keeps the last frame. On return the last frame appears as fast as before, and the current content follows after about 250 to 290 ms instead of 100 to 130 ms, longer on a heavily loaded machine. Agent status is not affected.
+- The daemon uses less memory at rest: its process footprint fell from 327–333 MiB to 283–288 MiB.
+- The fleet poll slows from every 500 ms to every 1 s after ten unchanged reads, and returns to 500 ms on any change or new subscriber. That halves its tmux processes while idle. No CPU saving was measured.
+- On tmux 3.8 servers, a window with `pane-border-status` set to `top-floating` or `bottom-floating` can be opened. Before, its session had no pane to attach to.
+- Opening a session on an agent works on a tmux server that is not tmux-ide's own. Before, it answered 503.
+- Browser panes and the Markdown reader work on a tmux server that is not tmux-ide's own. Before, both answered 503.
+- When the tmux socket cannot be read, the workspace catalog answers 503 `tmux-unavailable` instead of an empty session list.
+- The daemon starts on a tmux socket whose path is too long once `/tmp` is written as `/private/tmp`. Before, it exited at startup.
 - A terminal stream now closes with 1012 `tmux-server-retired` when its tmux server is gone or replaced, and 1012 `daemon-restarting` when the daemon restarts in place. 1001 `daemon-shutdown` means the daemon stops.
 - New daemon log lines: every tmux server connection kept after a failed probe, retired, built or failed to build, with the trigger, the probe's duration and its error; each daemon restart in place with its trigger; a slow or failed stop with its slowest steps.
 
