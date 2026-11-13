@@ -6,6 +6,7 @@
 use super::*;
 
 pub(super) const NO_PANES: &str = "Session has no attachable terminal panes";
+pub(super) const REFRESH_TO_RETRY: &str = "Session changed or is unavailable — refresh to retry";
 /// Home's words while the daemon answers and its tmux server does not.
 pub(super) const TMUX_NOT_ANSWERING: &str =
     "The tmux server is not answering. Tmux IDE keeps trying.";
@@ -117,20 +118,34 @@ impl Local {
             eprintln!("tmux-ide: opening the session failed, trying again: {error}");
             return self.reconnect_opening(target, pane, failure);
         }
-        // Home keeps looking for the daemon meanwhile. A daemon that answers
-        // 503 is there, but its tmux server is not answering it: say that,
-        // not "refresh", which cannot help (soak: a tmux server that could
-        // not finish kill-server answered nothing for an hour).
-        let unanswered = matches!(error, herdr_client::tmux_daemon::Error::RequestStatus(503));
-        self.unavailable_retrying(if unanswered {
-            TMUX_NOT_ANSWERING
-        } else {
-            "Session changed or is unavailable — refresh to retry"
-        })?;
+        // Home keeps looking for a local daemon meanwhile.
+        let words = self.stopped_words(matches!(stage, Stage::Servers), error);
+        self.unavailable_retrying(words)?;
         if matches!(stage, Stage::Servers) {
             self.offer_local_setup()?;
         }
         Ok(())
+    }
+    /// What a stopped Home says. A daemon that answers 503 to the catalog is
+    /// there, but its tmux server is not answering it: Home says that
+    /// instead of "refresh", which cannot help (soak: a tmux server that
+    /// could not finish kill-server answered nothing for an hour). Only for
+    /// the catalog (`catalog`): the daemon answers 503 for other things too.
+    /// And only where Home does keep trying, which is a local daemon
+    /// (`unavailable_retrying`): a saved SSH machine is not reloaded by
+    /// itself, so there "refresh to retry" stays the true hint.
+    pub(super) fn stopped_words(
+        &self,
+        catalog: bool,
+        error: &herdr_client::tmux_daemon::Error,
+    ) -> &'static str {
+        let unanswered = matches!(error, herdr_client::tmux_daemon::Error::RequestStatus(503));
+        let retried = self.selected_profile.is_none() && self.local_record.is_some();
+        if catalog && unanswered && retried {
+            TMUX_NOT_ANSWERING
+        } else {
+            REFRESH_TO_RETRY
+        }
     }
     /// How long until the next try, for the actor's idle wait.
     pub(super) fn empty_open_wait(&self) -> Option<Duration> {

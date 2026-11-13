@@ -236,3 +236,88 @@ fn a_daemon_whose_tmux_server_does_not_answer_is_named_and_retried() {
         "Session changed or is unavailable — refresh to retry"
     );
 }
+
+/// Review of b7341466, B1: with a saved SSH machine selected nothing reloads
+/// Home by itself, so Home must not say it keeps trying.
+#[test]
+fn home_says_it_keeps_trying_only_where_it_does() {
+    let (mut local, events, _target) = opening();
+    local.state.surface = Surface::Home;
+    local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
+        id: uuid::Uuid::new_v4().to_string(),
+        label: "Build".into(),
+        ssh_target: "fixture.invalid".into(),
+        expected_environment_id: None,
+        enabled: true,
+    });
+    let unanswered = herdr_client::tmux_daemon::Error::RequestStatus(503);
+    local.stage_failed(Stage::Servers, &unanswered).unwrap();
+    let status = last_catalog(&events).status;
+    assert!(
+        local.home.quiet.wait(Instant::now()).is_some() || !status.contains("keeps trying"),
+        "status {status:?} while nothing retries"
+    );
+    assert_eq!(
+        status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+}
+
+/// N1: the daemon answers 503 for more than a silent tmux server. Only a
+/// failed catalog read gets the tmux sentence.
+#[test]
+fn only_a_catalog_read_that_got_503_blames_the_tmux_server() {
+    let (mut local, events, target) = opening();
+    local.state.surface = Surface::Home;
+    let unanswered = herdr_client::tmux_daemon::Error::RequestStatus(503);
+    let stage = Stage::Open {
+        target,
+        preferred: None,
+    };
+    local.stage_failed(stage, &unanswered).unwrap();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+}
+
+/// N2: while Home reloads quietly, its sentence follows why the latest try
+/// failed. The same reason again publishes nothing.
+#[test]
+fn the_stopped_sentence_follows_the_latest_failed_try() {
+    let (mut local, events, _target) = opening();
+    local.state.surface = Surface::Home;
+    let gone = herdr_client::tmux_daemon::Error::OwnerExited;
+    let unanswered = herdr_client::tmux_daemon::Error::RequestStatus(503);
+    local.stage_failed(Stage::Servers, &gone).unwrap();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+    local.quiet_failed(&gone).unwrap();
+    assert!(
+        events.try_recv().is_err(),
+        "the same failure repainted Home"
+    );
+    local.quiet_failed(&unanswered).unwrap();
+    assert_eq!(
+        last_catalog(&events).status,
+        "The tmux server is not answering. Tmux IDE keeps trying."
+    );
+    local.quiet_failed(&unanswered).unwrap();
+    assert!(
+        events.try_recv().is_err(),
+        "the same failure repainted Home"
+    );
+    local.quiet_failed(&gone).unwrap();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+    // A stop with other words (only the user can clear it) is left alone.
+    local.unavailable(reconnect::UPDATE_APP).unwrap();
+    while events.try_recv().is_ok() {}
+    local.quiet_failed(&unanswered).unwrap();
+    assert!(events.try_recv().is_err());
+    assert_eq!(local.state.status, reconnect::UPDATE_APP);
+}

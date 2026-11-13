@@ -351,7 +351,9 @@ fn a_home_that_failed_to_load_keeps_looking_for_the_daemon_without_repainting() 
         assert!(local.home.quiet.probing());
         // The load failed again: nothing is published, the next one is scheduled.
         local.stage = None;
-        local.quiet_failed();
+        local
+            .quiet_failed(&herdr_client::tmux_daemon::Error::OwnerExited)
+            .unwrap();
         assert!(events.try_recv().is_err(), "a quiet retry repainted Home");
     }
     assert_eq!(waits, [1000, 2000, 4000, 5000, 5000]);

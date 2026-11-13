@@ -72,10 +72,26 @@ impl Local {
         self.submitted = false;
         Ok(())
     }
-    /// The quiet load failed: the window stays as it is until the next one.
-    pub(super) fn quiet_failed(&mut self) {
+    /// The quiet load failed: the window stays as it is until the next one,
+    /// unless why it failed changed what Home should say (a daemon that was
+    /// unreachable now answers 503 for its tmux server, or the reverse).
+    /// Only those two sentences are replaced; a failure for the same reason
+    /// publishes nothing.
+    pub(super) fn quiet_failed(
+        &mut self,
+        error: &herdr_client::tmux_daemon::Error,
+    ) -> Result<(), Error> {
         self.home.quiet.probing = false;
         self.home.quiet.due = Some(Instant::now() + self.home.quiet.delay());
+        let words = self.stopped_words(true, error);
+        let shown = self.state.status.as_str();
+        if shown != words
+            && (shown == open_retry::TMUX_NOT_ANSWERING || shown == open_retry::REFRESH_TO_RETRY)
+        {
+            self.state.status = words.into();
+            return self.publish();
+        }
+        Ok(())
     }
     /// The quiet load answered: Home starts over, as after Refresh.
     pub(super) fn quiet_found(&mut self) {
