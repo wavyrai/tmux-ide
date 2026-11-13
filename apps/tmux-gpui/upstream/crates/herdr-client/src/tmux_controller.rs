@@ -507,7 +507,8 @@ impl Controller {
                 .update(&self.topology, &self.current, true)?;
             // The window after a pane change may need a seed or a resize;
             // until then the window as it was stays up, without input.
-            if !self.hold(presented.is_some(), now)? {
+            let up = self.cached_window.is_some();
+            if !self.hold(presented.is_some(), up, now)? {
                 self.cached_window = presented;
             } else if let Some(held) = &mut self.cached_window {
                 held.coherent = false;

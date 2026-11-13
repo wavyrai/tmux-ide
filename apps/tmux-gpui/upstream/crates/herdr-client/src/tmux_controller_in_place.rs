@@ -19,8 +19,11 @@
 //!   the stream no longer matches the session: it fails as a pane-set
 //!   change, which the app answers with a new lease.
 //! - A pane whose source the daemon closed must be removed by a frame within
-//!   [`REMOVAL_MS`] too, with the same answer. Until the frame the window as
-//!   it was stays up, without input.
+//!   [`REMOVAL_MS`] too, with the same answer.
+//! - The delivery of a pane that is being closed often breaks off a moment
+//!   before its frame, and the pane has no cells then. The window as it was
+//!   stays up for at most [`REMOVAL_MS`], without input; with no frame and
+//!   no new cells by then it goes, as on a stream without the capability.
 use super::*;
 
 /// How long a closed pane may wait for the frame that removes it, and a
@@ -38,6 +41,10 @@ pub(super) struct InPlace {
     /// Since when a frame's window is owed: set by the frame, cleared when a
     /// window was painted after it.
     following: Option<u64>,
+    /// Since when a window that cannot be painted waits with no frame.
+    waiting: Option<u64>,
+    /// The window as it was is up in place of one that cannot be painted.
+    held: bool,
     /// Panes whose source closed, and when that was first seen.
     closed: BTreeMap<String, u64>,
 }
@@ -116,28 +123,36 @@ impl Controller {
         }
         Ok(true)
     }
-    /// A frame's window is owed, or a closed pane waits for its frame: the
-    /// window is looked at again on every poll, and nothing is actionable.
+    /// A pane change is being followed, or the window as it was is up for
+    /// one that cannot be painted: the window is looked at again on every
+    /// poll, and nothing is actionable.
     pub(super) fn changing(&self) -> bool {
-        self.in_place.settling.is_some()
-            || self.in_place.following.is_some()
-            || !self.in_place.closed.is_empty()
+        self.in_place.settling.is_some() || self.in_place.following.is_some() || self.in_place.held
     }
-    /// The window after the controls and commits of one poll. `None` cannot
-    /// be painted now. Whether the window as it was stays up instead; an
-    /// error when a frame's window is overdue.
-    pub(super) fn hold(&mut self, presented: bool, now: u64) -> Result<bool, Error> {
-        if presented {
+    /// The window after the controls and commits of one poll: `painted`, or
+    /// it cannot be painted now. Whether the window as it was stays up
+    /// instead (`up`: there is one); an error when a frame's window is
+    /// overdue.
+    pub(super) fn hold(&mut self, painted: bool, up: bool, now: u64) -> Result<bool, Error> {
+        self.in_place.held = false;
+        if painted {
             self.in_place.following = None;
+            self.in_place.waiting = None;
             return Ok(false);
         }
         if let Some(since) = self.in_place.following {
             if now.saturating_sub(since) >= REMOVAL_MS {
                 return Err(Error::Topology(tmux_topology::Error::Unissued));
             }
+            self.in_place.held = up;
             return Ok(true);
         }
-        Ok(!self.in_place.closed.is_empty())
+        if !self.in_place.enabled || !up {
+            return Ok(false);
+        }
+        let since = *self.in_place.waiting.get_or_insert(now);
+        self.in_place.held = now.saturating_sub(since) < REMOVAL_MS;
+        Ok(self.in_place.held)
     }
     /// The 2 s rule. `unavailable` is the session's set of panes whose source
     /// closed.

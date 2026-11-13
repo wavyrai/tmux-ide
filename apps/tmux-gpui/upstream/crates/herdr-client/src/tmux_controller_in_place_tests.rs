@@ -182,20 +182,24 @@ fn the_window_stays_up_while_the_remaining_pane_is_resized() {
     c.poll(60_000).unwrap();
 }
 
-/// The source of a pane closes a moment before the frame that removes the
-/// pane. The window stays up in between, without input.
+/// A pane with no cells, as the session reports it when the pane's delivery
+/// broke off: its source closed, or it is being seeded again.
+fn without_cells(c: &Controller, pane: &str) -> Arc<CommittedPane> {
+    let live = c.current.get(pane).cloned().unwrap();
+    Arc::new(CommittedPane {
+        snapshot: None,
+        identity: Arc::clone(&live.identity),
+    })
+}
+
+/// The delivery of a pane breaks off a moment before the frame that removes
+/// the pane (seen live: 9 to 70 ms). The window stays up in between, without
+/// input.
 #[test]
-fn a_pane_whose_source_closed_stays_painted_until_its_frame() {
+fn a_pane_that_lost_its_cells_stays_painted_until_its_frame() {
     let (mut c, _observed, _response, _peer) = in_place();
-    let live = c.current.get("right").cloned().unwrap();
-    c.session.mark_panes(&[], &["right"]);
-    c.session.push_commit(
-        "right",
-        Arc::new(CommittedPane {
-            snapshot: None,
-            identity: Arc::clone(&live.identity),
-        }),
-    );
+    c.session.mark_panes(&["right"], &[]);
+    c.session.push_commit("right", without_cells(&c, "right"));
     let update = c.poll(1_000).unwrap();
     assert_eq!(regions(&update), ["left", "right"], "the window blanked");
     assert!(updating(&update), "the held window reads as current");
@@ -207,18 +211,66 @@ fn a_pane_whose_source_closed_stays_painted_until_its_frame() {
     let update = c.poll(1_030).unwrap();
     assert_eq!(regions(&update), ["left"]);
     assert!(c.actionable);
+    c.poll(60_000).unwrap();
     // A stream without the capability drops the window as before.
     let (mut c, _observed, _response, _peer) = fixture();
-    let live = c.current.get("right").cloned().unwrap();
-    c.session.mark_panes(&[], &["right"]);
-    c.session.push_commit(
-        "right",
-        Arc::new(CommittedPane {
-            snapshot: None,
-            identity: Arc::clone(&live.identity),
-        }),
-    );
+    c.session.mark_panes(&["right"], &[]);
+    c.session.push_commit("right", without_cells(&c, "right"));
     assert!(regions(&c.poll(1_000).unwrap()).is_empty());
+}
+
+/// No frame and no new cells: the old window is not shown for ever. After
+/// two seconds it goes, as on a stream without the capability, and the
+/// stream stays (a seed may still come; the app's stall check has the rest).
+#[test]
+fn a_pane_without_cells_holds_the_window_for_two_seconds_at_most() {
+    let (mut c, _observed, _response, _peer) = in_place();
+    let cells = c.current.get("right").cloned().unwrap();
+    c.session.mark_panes(&["right"], &[]);
+    c.session.push_commit("right", without_cells(&c, "right"));
+    assert_eq!(regions(&c.poll(1_000).unwrap()), ["left", "right"]);
+    assert_eq!(regions(&c.poll(2_999).unwrap()), ["left", "right"]);
+    assert!(regions(&c.poll(3_000).unwrap()).is_empty());
+    // The clock does not start again on an empty window.
+    assert!(regions(&c.poll(3_500).unwrap()).is_empty());
+    assert!(regions(&c.poll(9_000).unwrap()).is_empty());
+    // The seed, late.
+    c.session.mark_panes(&[], &[]);
+    c.session.push_commit("right", cells);
+    let update = c.poll(9_010).unwrap();
+    assert_eq!(regions(&update), ["left", "right"]);
+    assert!(!updating(&update));
+    assert!(c.actionable);
+    // The next loss gets its own two seconds.
+    c.session.mark_panes(&["right"], &[]);
+    c.session.push_commit("right", without_cells(&c, "right"));
+    assert_eq!(regions(&c.poll(20_000).unwrap()), ["left", "right"]);
+    assert_eq!(regions(&c.poll(21_999).unwrap()), ["left", "right"]);
+    assert!(regions(&c.poll(22_000).unwrap()).is_empty());
+}
+
+/// Seen live: the selected pane lost its cells, then a frame added a pane,
+/// and no seed came for the selected pane. Two seconds after the frame the
+/// stream ends as a pane-set change, although the window was already down.
+#[test]
+fn a_frame_whose_window_never_comes_ends_the_stream_from_an_empty_window_too() {
+    let (mut c, _observed, _response, _peer) = fixture();
+    c.in_place.enabled = true;
+    c.session.mark_panes(&["left"], &[]);
+    c.session.push_commit("left", without_cells(&c, "left"));
+    c.poll(1_000).unwrap();
+    c.poll(3_100).unwrap();
+    assert!(regions(&c.poll(3_200).unwrap()).is_empty());
+    c.session
+        .push_control(topology(4, &["left", "right", "third"], &[], &["third"]));
+    c.session
+        .push_control(snapshot(4, &["left", "right", "third"], "left"));
+    c.poll(4_000).unwrap();
+    c.poll(5_999).unwrap();
+    assert!(matches!(
+        c.poll(6_000),
+        Err(Error::Topology(tmux_topology::Error::Unissued))
+    ));
 }
 
 /// The 2 s rule: with `topologyInPlace`, a pane whose source closed is
