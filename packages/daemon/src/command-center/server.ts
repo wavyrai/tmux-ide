@@ -16,7 +16,7 @@ import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
-  discoverLiveSessionSummaries,
+  readLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
   type FleetSessionFacts,
@@ -220,12 +220,17 @@ export interface CreateAppOptions {
       operation: "terminal-resource-handler-admitted" | "terminal-resource-response-projection",
     ): void;
   } | null;
-  /** Injectable live tmux projection for catalog tests and alternate hosts. */
-  catalogLiveSessions?: () => readonly {
-    readonly liveSessionId: `live-session.${string}`;
-    readonly sessionName: string;
-    readonly paneCount: number;
-  }[];
+  /**
+   * Injectable live tmux projection for catalog tests and alternate hosts.
+   * Null when tmux could not be asked; an empty list only for no sessions.
+   */
+  catalogLiveSessions?: () =>
+    | readonly {
+        readonly liveSessionId: `live-session.${string}`;
+        readonly sessionName: string;
+        readonly paneCount: number;
+      }[]
+    | null;
   /** Injectable daemon-generation-pinned adopted fleet projection. */
   catalogFleet?: () => FleetSessionFacts[] | null | Promise<FleetSessionFacts[] | null>;
   fleetPreviewCapture?: (
@@ -881,7 +886,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               },
             ],
       );
-      const observedSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const observedSessions = options.catalogLiveSessions
+        ? options.catalogLiveSessions()
+        : readLiveSessionSummaries();
+      // As for the fleet catalog: an unreachable tmux must not replace the
+      // client's last known sessions with a successful empty list (#753).
+      if (observedSessions === null)
+        return c.json(
+          { error: "Tmux session discovery is unavailable", code: "tmux-unavailable" },
+          503,
+        );
       const liveSessions = observedSessions.map(({ sessionName, paneCount }) => ({
         sessionName,
         fleetSessionId: fleetSessionIdForName(sessionName),

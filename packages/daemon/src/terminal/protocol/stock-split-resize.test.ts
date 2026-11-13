@@ -6,6 +6,7 @@ import {
   resizeStockSplit,
   stockSplitCommand,
   stockSplitMovable,
+  stockSplitRange,
   stockSplitTarget,
 } from "./stock-split-resize.ts";
 
@@ -161,6 +162,17 @@ describe("stock split options", () => {
       scrollbar: 4,
     });
     expect(parseStockSplitOptions("off\tmodal\t")).toMatchObject({ scrollbar: 1 });
+  });
+  it("reads tmux 3.8's floating border status, which leaves tiled panes without a status line", () => {
+    for (const borderStatus of ["top-floating", "bottom-floating"]) {
+      const options = parseStockSplitOptions(`${borderStatus}\toff\t`);
+      expect(options).toEqual({ borderStatus, scrollbars: "off", scrollbar: 0 });
+      const tree = parseLayoutTree("aaaa,80x24,0,0[80x12,0,0,1,80x11,0,13,2]")!;
+      // No status line on the window's edge: the edge pane can shrink to one row.
+      expect(stockSplitRange(tree, [0], "rows", options!)).toEqual(
+        stockSplitRange(tree, [0], "rows", { borderStatus: "off", scrollbar: 0 }),
+      );
+    }
   });
   it("refuses anything else", () => {
     for (const line of [undefined, "", "sideways\toff\t", "top\t\t", "top\tof f\t"])

@@ -84,8 +84,9 @@ export function createPaneReaderResolver(options: {
       );
       if (matches.length !== 1) throw new PaneReaderUnavailable();
       const pane = { ...matches[0]! };
-      if (!pane.nativePaneBirthId || !/^%[0-9]+$/u.test(pane.runtimePaneId))
-        throw new PaneReaderUnavailable();
+      // A stock tmux server has no pane birth id; it reads empty there, both times.
+      const paneBirth = pane.nativePaneBirthId ?? "";
+      if (!/^%[0-9]+$/u.test(pane.runtimePaneId)) throw new PaneReaderUnavailable();
       const observe = async (): Promise<ReaderOption> => {
         const raw = await options.run(
           [
@@ -103,7 +104,7 @@ export function createPaneReaderResolver(options: {
           .trimEnd()
           .split("\t")
           .map(decodeTmuxArgument);
-        if (semantic !== target.semanticPaneId || birth !== pane.nativePaneBirthId)
+        if (semantic !== target.semanticPaneId || birth !== paneBirth)
           throw new PaneReaderUnavailable();
         const reader = readerOption(option ?? "", panePid ?? "", options.alive);
         if (!reader) throw new PaneReaderUnavailable();
