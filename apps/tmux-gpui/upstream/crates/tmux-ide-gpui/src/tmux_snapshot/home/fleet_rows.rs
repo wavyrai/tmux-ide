@@ -211,10 +211,14 @@ impl SnapshotView {
         let Some(live) = session.session_id.as_deref() else {
             return Vec::new();
         };
+        // Live ids repeat across machines: an agent belongs to the row of the
+        // machine that observed it, not to every namesake.
+        let machine = self.browser_state.fleet.as_ref();
+        let machine = machine.and_then(|f| f.groups.get(index)).map(|g| &*g.id);
         let agents: Vec<_> = roster
             .rows
             .iter()
-            .filter(|r| r.session_id == live)
+            .filter(|r| r.session_id == live && machine.is_none_or(|m| r.observed_on(m)))
             .collect();
         let more = agents.len().saturating_sub(AGENT_CHIPS);
         let bezel = self.home_palette();

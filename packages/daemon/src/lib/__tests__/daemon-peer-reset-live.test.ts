@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inspectCanonicalDaemonInfo } from "../canonical-daemon.ts";
 import { startEmbeddedDaemon, type EmbeddedDaemonHandle } from "../daemon-embed.ts";
 import { WorkspaceRegistry, _setDefaultWorkspaceRegistryForTests } from "../workspace-registry.ts";
+import { declareDaemonWithoutTmuxServer } from "../../../test-support/tmux-isolation-vitest.ts";
+
+// The daemon under test is started with no tmux server of its own.
+declareDaemonWithoutTmuxServer();
 
 describe.sequential("embedded daemon peer reset containment", () => {
   vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });

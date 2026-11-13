@@ -515,7 +515,7 @@ impl NativePresentation {
         state.status = if self.restoring() {
             "Restoring terminal history"
         } else if !coherent {
-            "Waiting for coherent terminal geometry"
+            "Updating the terminal layout…"
         } else if !foreground {
             "Window inactive — activate tmux-ide to type"
         } else if !input_authority {

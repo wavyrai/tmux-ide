@@ -280,6 +280,14 @@ export interface WorkspaceTmuxAsyncRunOptions extends WorkspaceTmuxRunOptions {
   readonly maxOutputBytes?: number;
 }
 
+/**
+ * Every synchronous tmux call blocks the daemon's only thread: requests,
+ * signal handlers and deadlines all wait for it. A tmux client that never
+ * returns must therefore never be waited for without a bound. Callers may
+ * pass their own; nobody gets "no timeout".
+ */
+export const PINNED_SYNC_TMUX_TIMEOUT_MS = 5_000;
+
 export function createPinnedWorkspaceTmuxRunner(
   authority: WorkspacePaneTmuxAuthority,
   options: Readonly<{ timeoutMs?: number }> = {},
@@ -325,7 +333,9 @@ export function createPinnedWorkspaceTmuxRunner(
         env: environment,
         maxBuffer: TMUX_OUTPUT_BYTES,
         stdio: ["ignore", "pipe", "pipe"],
-        ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+        timeout: options.timeoutMs ?? PINNED_SYNC_TMUX_TIMEOUT_MS,
+        // A client that ignores TERM must not outlive the bound.
+        killSignal: "SIGKILL",
       }),
     );
     // A cold named authority may create its first server with this command.

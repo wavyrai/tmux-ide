@@ -122,6 +122,8 @@ pub(super) struct State {
     pub browser_pending: Option<super::browser_toolbar::Pending>,
     pub renderer_probe_scope: Option<super::renderer_probe::Scope>,
     pub diagnostics: Option<super::diagnostics::Versions>,
+    /// The connected service's version, known without a terminal (#831).
+    pub service_version: Option<String>,
     pub native_diagnostics: Option<super::browser_native_editor::Diagnostics>,
     pub pointer_modes: Option<decode::PointerModes>,
     pub local_setup: Option<local_setup::Setup>,
@@ -169,6 +171,9 @@ pub(super) struct State {
     /// `Some(attempt)` while the stream is being re-established; the last frame
     /// stays on screen, read-only, with the attempt count and a Retry button.
     pub reconnect_attempt: Option<u32>,
+    /// Keys typed just before the drop were not delivered. Keys typed after
+    /// them are then refused, never held: they must not run alone.
+    pub reconnect_keys_lost: bool,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
     /// Agent rows and pills are last known: their link dropped, or the one
@@ -296,7 +301,7 @@ struct Publication {
 }
 #[path = "browser_commands.rs"]
 mod commands;
-pub(super) use commands::Command;
+pub(super) use commands::{Cause, Command};
 #[path = "browser_mailbox.rs"]
 mod mailbox;
 pub(super) use mailbox::{MailboxSlot, tick_or_publication};
@@ -580,6 +585,7 @@ impl Reader {
             readers: Default::default(),
             browser_pending: None,
             diagnostics: p.diagnostics,
+            service_version: None,
             native_diagnostics: p.native_diagnostics,
             pointer_modes: None,
             local_setup: p.local_setup,
@@ -625,6 +631,7 @@ impl Reader {
             input_ready: p.input_ready,
             retained_preview,
             reconnect_attempt: None,
+            reconnect_keys_lost: false,
             home_fault: false,
             agents_last_known: false,
             act: None,

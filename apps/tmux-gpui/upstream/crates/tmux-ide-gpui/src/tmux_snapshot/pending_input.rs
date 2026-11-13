@@ -1,6 +1,7 @@
 //! Bounded never-dispatched input for explicit pane selection or focus reclamation.
 mod focus_reclaim;
 mod history;
+mod reconnect;
 mod split;
 mod viewport;
 use super::{SnapshotView, browser, keys::Input};
@@ -47,6 +48,9 @@ enum Kind {
     /// Typed after a split: the target is the pane the split creates, known
     /// only once the re-issued stream arrives (`split.rs`).
     Split(split::Hold),
+    /// Typed while a dropped stream is put back: the target is the same pane,
+    /// under the token its new stream gives it (`reconnect.rs`).
+    Reconnect(reconnect::Hold),
 }
 pub(super) struct Pending {
     kind: Kind,
@@ -104,6 +108,9 @@ impl Pending {
         })
     }
     fn compatible(&self, view: &SnapshotView) -> bool {
+        if let Kind::Reconnect(hold) = &self.kind {
+            return self.reconnect_compatible(hold, view);
+        }
         // A split hold waits for the pane it created; one that was not
         // applied has nowhere to deliver.
         let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting());
@@ -113,7 +120,11 @@ impl Pending {
             && (waiting || view.browser_state.selected_pane.as_ref() == Some(&self.id))
             && view.browser_state.selected_session.as_ref() == Some(&self.session)
             && match self.kind {
-                Kind::Selection | Kind::Viewport { .. } | Kind::History { .. } | Kind::Split(_) => {
+                Kind::Selection
+                | Kind::Viewport { .. }
+                | Kind::History { .. }
+                | Kind::Split(_)
+                | Kind::Reconnect(_) => {
                     view.browser_state.presence_revision == self.presence && view.presence.ready()
                 }
                 Kind::Focus => {
@@ -140,7 +151,7 @@ impl Pending {
             && view.browser_commands.is_some()
             && match self.kind {
                 Kind::Split(_) if waiting => true,
-                Kind::Selection | Kind::Split(_) => view
+                Kind::Selection | Kind::Split(_) | Kind::Reconnect(_) => view
                     .browser_state
                     .input_targets
                     .iter()
@@ -165,7 +176,11 @@ impl Pending {
             Input::Text(s) | Input::Paste(s) | Input::Key(s) | Input::Bytes(s) => s.len(),
             _ => return false,
         };
-        if self.inputs.len() >= 64 || bytes > 65536usize.saturating_sub(self.bytes) {
+        let (keys, limit) = match self.kind {
+            Kind::Reconnect(_) => (reconnect::MAX_KEYS, reconnect::MAX_BYTES),
+            _ => (64, 65536),
+        };
+        if self.inputs.len() >= keys || bytes > limit.saturating_sub(self.bytes) {
             return false;
         }
         self.bytes += bytes;
@@ -194,6 +209,7 @@ impl SnapshotView {
     }
     pub(super) fn expire_pending_input(&mut self, cx: &mut Context<Self>) {
         self.observe_split_hold();
+        self.observe_reconnect_hold();
         if self.pending_input.is_some() && !self.pending_input_ready() {
             self.cancel_pending_input(cx);
         }

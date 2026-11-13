@@ -472,6 +472,14 @@ impl Controller {
         if !expired.viewports.is_empty() {
             self.inflight_viewport = None;
         }
+        // An input request the daemon did not answer is sent again (bounded).
+        let again = uuid::Uuid::new_v4().to_string();
+        if let Some(command) = (self.policy)
+            .retry_input(&expired.authorities, &again, now)
+            .map_err(Error::Control)?
+        {
+            self.send(command)?;
+        }
         inputs.extend(expired.inputs);
         let selection = self.finish_selection(&intents, &expired.intents)?;
         let presence_revision = self

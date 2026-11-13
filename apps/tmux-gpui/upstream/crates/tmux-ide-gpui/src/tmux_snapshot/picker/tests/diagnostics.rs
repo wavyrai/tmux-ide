@@ -145,3 +145,39 @@ fn diagnostics_do_not_reuse_version_after_local_request_retirement(cx: &mut Test
     });
     assert!(receiver.try_recv().is_err());
 }
+
+/// #831: Copy diagnostics on Home, with no terminal open, reports the
+/// connected service's version; a retired request's version is not reused.
+#[gpui::test]
+fn diagnostics_on_home_report_the_service_version(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.request = view.browser_request;
+            view.browser_state.surface = browser::Surface::Home;
+            view.browser_state.diagnostics = None;
+            view.browser_state.service_version = Some("2.9.22".into());
+            view.frame = None;
+            let report =
+                |view: &mut SnapshotView, window: &mut Window, cx: &mut Context<SnapshotView>| {
+                    view.copy_diagnostics(window, cx);
+                    let text = cx.read_from_clipboard().unwrap().text().unwrap();
+                    serde_json::from_str::<serde_json::Value>(&text).unwrap()
+                };
+            assert_eq!(report(view, window, cx)["daemonVersion"], "2.9.22");
+            assert_eq!(view.about_connection(), "tmux-ide 2.9.22");
+            view.browser_request += 1;
+            assert!(report(view, window, cx)["daemonVersion"].is_null());
+            assert_eq!(
+                view.about_connection(),
+                "Connected · open a terminal to see its version"
+            );
+            view.browser_request -= 1;
+            view.browser_commands = None;
+            assert!(report(view, window, cx)["daemonVersion"].is_null());
+            assert_eq!(view.about_connection(), "Not connected");
+        })
+    });
+}

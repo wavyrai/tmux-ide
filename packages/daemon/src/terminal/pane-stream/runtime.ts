@@ -8,6 +8,7 @@ import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import {
   PaneStreamAdmissionCoordinator,
   type PaneStreamAdmissionCoordinatorOptions,
+  type PaneStreamShutdownClose,
 } from "./pane-stream-websocket.ts";
 
 export interface PaneStreamRuntimeOptions {
@@ -75,11 +76,12 @@ export class PaneStreamRuntime {
     });
   }
 
-  dispose(): Promise<void> {
+  /** `close` says what the streams are told; the default is a daemon shutdown. */
+  dispose(close?: PaneStreamShutdownClose): Promise<void> {
     if (!this.#disposePromise) {
       this.#disposePromise = (async () => {
         this.nativeSurfaces?.close();
-        await this.coordinator.shutdown();
+        await this.coordinator.shutdown(close);
       })();
     }
     return this.#disposePromise;

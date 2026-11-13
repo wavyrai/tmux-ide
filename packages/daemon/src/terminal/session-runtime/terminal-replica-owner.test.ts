@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CanonicalTerminalReplicaUpdate } from "@tmux-ide/contracts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
-import { SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
+import { PARK_AFTER_MS, SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
 
@@ -1310,4 +1310,357 @@ it("captures real committed history and restores it after subscriber disposal wi
   } finally {
     await owner.dispose();
   }
+});
+
+describe("parking a pane nobody watches (perf F2)", () => {
+  function parkRig() {
+    const timers: Array<{ task: () => void; delayMs: number; cancelled: boolean }> = [];
+    const calls: string[] = [];
+    let request: MirrorSubscribeRequest | undefined;
+    let historySize: number | null = 0;
+    let nativeGate: Promise<void> | null = null;
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        request = candidate;
+        setTimeout(() => {
+          candidate.onLayout?.(layout(12, 3, "top"));
+          candidate.onEvent({ type: "reset", cols: 12, rows: 2 });
+          candidate.onEvent({
+            type: "seed",
+            data: new TextEncoder().encode("one\r\ntwo\r\nthree\r\nabc"),
+          });
+          candidate.onEvent({ type: "cursor", x: 3, y: 1 });
+        }, 0);
+        return {
+          session: candidate.session,
+          semanticPaneId: candidate.semanticPaneId,
+          freeze: () => calls.push("freeze"),
+          thaw: () => calls.push("thaw"),
+          reseed: () => calls.push("reseed"),
+          readHistorySize: async () => {
+            calls.push("history-size");
+            return historySize;
+          },
+          captureNativeBacking: async () => {
+            calls.push("capture-native");
+            if (!nativeGate) return { status: "unsupported" } as never;
+            await nativeGate;
+            return { status: "captured", snapshot: { version: 1 }, isCurrent: () => true } as never;
+          },
+          sendText: () => undefined,
+          sendKey: () => undefined,
+          close: async () => {
+            calls.push("close");
+          },
+        };
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      {
+        incarnation: `${generation}:0`,
+        initialRevision: 0,
+        scheduler: {
+          nowMs: () => 0,
+          createId: () => "id",
+          microtask: (task) => queueMicrotask(task),
+          timer: (task, delayMs) => {
+            const timer = { task, delayMs, cancelled: false };
+            timers.push(timer);
+            return { cancel: () => (timer.cancelled = true) };
+          },
+        },
+      },
+    );
+    const pending = (delayMs: number) =>
+      timers.filter((t) => t.delayMs === delayMs && !t.cancelled);
+    const fireAll = (delayMs: number) => {
+      for (const t of pending(delayMs)) {
+        t.cancelled = true;
+        t.task();
+      }
+    };
+    /** The reseed tmux's recovery delivers after a thaw (or any recapture). */
+    const reseed = (text: string) => {
+      request!.onEvent({ type: "reset", cols: 12, rows: 2 });
+      request!.onEvent({ type: "seed", data: new TextEncoder().encode(text) });
+      request!.onEvent({ type: "cursor", x: 0, y: 1 });
+    };
+    return {
+      owner,
+      calls,
+      parkTimers: () => pending(PARK_AFTER_MS),
+      /** The park grace period elapses. */
+      fire: () => fireAll(PARK_AFTER_MS),
+      fireHistoryCheck: () => fireAll(250),
+      reseed,
+      request: () => request!,
+      setHistorySize: (size: number | null) => (historySize = size),
+      holdNativeCapture: () => {
+        let release!: () => void;
+        nativeGate = new Promise<void>((resolve) => (release = resolve));
+        return release;
+      },
+    };
+  }
+  const proofOf = (update: CanonicalTerminalReplicaUpdate) => {
+    const { workspaceName, semanticPaneId, generation, incarnation, revision, stateHash } =
+      update as CanonicalTerminalReplicaUpdate & { stateHash: string };
+    return { workspaceName, semanticPaneId, generation, incarnation, revision, stateHash };
+  };
+
+  it("freezes its channel subscription PARK_AFTER_MS after the last listener leaves", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    const second = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    expect(rig.parkTimers()).toEqual([]);
+    await second.close();
+    expect(rig.parkTimers()).toHaveLength(1);
+    expect(rig.calls).toEqual([]);
+    rig.fire();
+    expect(rig.calls).toEqual(["freeze"]);
+    expect(rig.owner.parked).toBe(true);
+    await rig.owner.dispose();
+  });
+
+  it("serves the last frame first, then thaws, when a listener returns", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    rig.fire();
+    const order: string[] = [];
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    await rig.owner.subscribe((update) => {
+      updates.push(update);
+      // What had been asked of tmux when the frame arrived.
+      order.push(`frame after [${rig.calls.join(",")}]`);
+    });
+    // The retained seed arrives with the subscription, before the thaw is requested.
+    expect(updates.map((update) => update.type)).toEqual(["terminal.seed"]);
+    expect(updates[0]).toMatchObject({ cols: 12, rows: 2 });
+    expect(order).toEqual(["frame after [freeze]"]);
+    expect(rig.calls).toEqual(["freeze", "thaw"]);
+    expect(rig.owner.parked).toBe(false);
+    await rig.owner.dispose();
+  });
+
+  it("does not park a pane whose listener comes back within the grace period", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    await rig.owner.subscribe(() => undefined);
+    expect(rig.parkTimers()).toEqual([]);
+    rig.fire();
+    expect(rig.calls).toEqual([]);
+    await rig.owner.dispose();
+  });
+
+  it("serves the retained frame with its original revision and stateHash, never as newer", async () => {
+    const rig = parkRig();
+    const before: CanonicalTerminalReplicaUpdate[] = [];
+    const first = await rig.owner.subscribe((update) => before.push(update));
+    await first.close();
+    rig.fire();
+    const after: CanonicalTerminalReplicaUpdate[] = [];
+    await rig.owner.subscribe((update) => after.push(update));
+    expect(after[0]).toMatchObject({
+      type: "terminal.seed",
+      revision: before[0]!.revision,
+      stateHash: (before[0] as { stateHash: string }).stateHash,
+    });
+    await rig.owner.dispose();
+  });
+
+  it("thaws once for a listener that arrives right after the freeze, and parks again later", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    rig.fire();
+    // Arrives before tmux has even answered the pause: one thaw, no second freeze.
+    const back = await rig.owner.subscribe(() => undefined);
+    const also = await rig.owner.subscribe(() => undefined);
+    expect(rig.calls).toEqual(["freeze", "thaw"]);
+    await back.close();
+    await also.close();
+    rig.fire();
+    expect(rig.calls).toEqual(["freeze", "thaw", "freeze"]);
+    expect(rig.owner.parked).toBe(true);
+    await rig.owner.dispose();
+  });
+
+  it("parks a source subscription (the delivery hub's) the same way", async () => {
+    const rig = parkRig();
+    const source = await rig.owner.subscribeSource(
+      () => undefined,
+      () => undefined,
+    );
+    await source.close();
+    rig.fire();
+    expect(rig.calls).toEqual(["freeze"]);
+    await rig.owner.subscribeSource(
+      () => undefined,
+      () => undefined,
+    );
+    expect(rig.calls).toEqual(["freeze", "thaw"]);
+    await rig.owner.dispose();
+  });
+
+  it("refuses native backing from a parked replica until the return reseed lands", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    rig.fire();
+    expect(await rig.owner.captureNativeBacking()).toEqual({ status: "changed" });
+    const updates: CanonicalTerminalReplicaUpdate[] = [];
+    await rig.owner.subscribe((update) => updates.push(update));
+    // Thawed, but tmux's recovery has not reseeded yet: still stale.
+    expect(await rig.owner.captureNativeBacking()).toEqual({ status: "changed" });
+    expect(rig.calls).not.toContain("capture-native");
+    rig.reseed("fresh");
+    await vi.waitFor(() =>
+      expect(updates.filter((u) => u.type === "terminal.seed")).toHaveLength(2),
+    );
+    await rig.owner.captureNativeBacking();
+    expect(rig.calls).toContain("capture-native");
+    await rig.owner.dispose();
+  });
+
+  it("refuses a native capture that was in flight when the pane parked", async () => {
+    const rig = parkRig();
+    const release = rig.holdNativeCapture();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    const capture = rig.owner.captureNativeBacking();
+    await vi.waitFor(() => expect(rig.calls).toContain("capture-native"));
+    rig.fire();
+    release();
+    // tmux's grid was read before the park, the replica is judged after it.
+    expect(await capture).toEqual({ status: "changed" });
+    await rig.owner.dispose();
+  });
+
+  it("answers history anchors as unavailable from the park until the return reseed lands", async () => {
+    const rig = parkRig();
+    const before: CanonicalTerminalReplicaUpdate[] = [];
+    const first = await rig.owner.subscribe((update) => before.push(update));
+    const seed = before[0]!;
+    expect((seed as { snapshot: { history: unknown[] } }).snapshot.history).toHaveLength(2);
+    const identity = proofOf(seed);
+    const saved = rig.owner.captureHistoryAnchor(identity, 1);
+    if (saved.status !== "captured") throw new Error("anchor was not captured before the park");
+    expect(rig.owner.resolveHistoryAnchor(identity, saved.token).status).toBe("resolved");
+    await first.close();
+    // Left but not parked yet: the replica is still live, anchors still work.
+    expect(rig.owner.captureHistoryAnchor(identity, 0).status).toBe("captured");
+    rig.fire();
+    // Parked: tmux has moved on, so a row index in this replica proves nothing.
+    expect(rig.owner.captureHistoryAnchor(identity, 1)).toEqual({ status: "unavailable" });
+    expect(rig.owner.resolveHistoryAnchor(identity, saved.token)).toEqual({
+      status: "unavailable",
+    });
+    // A client returns and scrolls before the reseed lands: same answer, with
+    // the retained frame's own (valid) proof.
+    const back: CanonicalTerminalReplicaUpdate[] = [];
+    await rig.owner.subscribe((update) => back.push(update));
+    expect(proofOf(back[0]!)).toEqual(identity);
+    expect(rig.owner.captureHistoryAnchor(identity, 1)).toEqual({ status: "unavailable" });
+    expect(rig.owner.resolveHistoryAnchor(identity, saved.token)).toEqual({
+      status: "unavailable",
+    });
+    // The reseed lands: anchors work again against the new frame, and the
+    // anchor saved before the park is gone for good.
+    rig.reseed("four\r\nfive\r\nsix\r\nnew");
+    await vi.waitFor(() => expect(back.filter((u) => u.type === "terminal.seed")).toHaveLength(2));
+    const fresh = proofOf(back.at(-1)!);
+    const again = rig.owner.captureHistoryAnchor(fresh, 1);
+    if (again.status !== "captured") throw new Error("anchor was not captured after the reseed");
+    expect(rig.owner.resolveHistoryAnchor(fresh, again.token)).toMatchObject({
+      status: "resolved",
+      historyIndex: 1,
+    });
+    expect(rig.owner.resolveHistoryAnchor(fresh, saved.token)).toEqual({ status: "lost" });
+    await rig.owner.dispose();
+  });
+
+  it("keeps a parked replica stale when a recapture lands while it is still parked", async () => {
+    const rig = parkRig();
+    const before: CanonicalTerminalReplicaUpdate[] = [];
+    const first = await rig.owner.subscribe((update) => before.push(update));
+    await first.close();
+    rig.fire();
+    // Another subscriber of the channel forced a capture: this replica gets a
+    // fresh frame once, and falls behind again at once because it is frozen.
+    const revision = rig.owner.qualificationSnapshot().revision;
+    rig.reseed("four\r\nfive\r\nsix\r\nnew");
+    await vi.waitFor(() => expect(rig.owner.qualificationSnapshot().revision).not.toBe(revision));
+    const proof = {
+      ...proofOf(before[0]!),
+      revision: rig.owner.qualificationSnapshot().revision!,
+      stateHash: rig.owner.qualificationSnapshot().stateHash!,
+    };
+    expect(rig.owner.parked).toBe(true);
+    expect(rig.owner.captureHistoryAnchor(proof, 1)).toEqual({ status: "unavailable" });
+    expect(await rig.owner.captureNativeBacking()).toEqual({ status: "changed" });
+    expect(rig.calls).not.toContain("capture-native");
+    await rig.owner.dispose();
+  });
+
+  it("does not ask for a reseed over a history-size difference while parked", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    // Output just before leaving schedules the history-size check.
+    rig.request().onEvent({ type: "delta", data: new TextEncoder().encode("x") });
+    await first.close();
+    rig.fire();
+    // tmux kept printing while parked: its history no longer matches the replica.
+    rig.setHistorySize(500);
+    rig.fireHistoryCheck();
+    await vi.waitFor(() => expect(rig.calls).toContain("history-size"));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(rig.calls).not.toContain("reseed");
+    await rig.owner.dispose();
+  });
+
+  it("asks for a reseed over a history-size difference when not parked", async () => {
+    const rig = parkRig();
+    await rig.owner.subscribe(() => undefined);
+    rig.request().onEvent({ type: "delta", data: new TextEncoder().encode("x") });
+    rig.setHistorySize(500);
+    rig.fireHistoryCheck();
+    await vi.waitFor(() => expect(rig.calls).toContain("reseed"));
+    await rig.owner.dispose();
+  });
+
+  it("pins the park grace period at 10 s", () => {
+    expect(PARK_AFTER_MS).toBe(10_000);
+  });
+
+  it("cancels a pending park on dispose", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    expect(rig.parkTimers()).toHaveLength(1);
+    await rig.owner.dispose();
+    expect(rig.parkTimers()).toEqual([]);
+  });
+
+  it("leaves nothing behind when the owner is retired while parked", async () => {
+    const rig = parkRig();
+    const first = await rig.owner.subscribe(() => undefined);
+    await first.close();
+    rig.fire();
+    expect(rig.owner.parked).toBe(true);
+    // The tmux server owner retires and the runtime disposes this pane.
+    await rig.owner.dispose("runtime-disposed");
+    expect(rig.parkTimers()).toEqual([]);
+    // The channel subscription is closed, never thawed or frozen again.
+    expect(rig.calls).toEqual(["freeze", "close"]);
+    rig.fire();
+    expect(rig.calls).toEqual(["freeze", "close"]);
+    await expect(rig.owner.subscribe(() => undefined)).rejects.toThrow("disposed");
+  });
 });

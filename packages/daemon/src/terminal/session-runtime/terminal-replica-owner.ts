@@ -42,6 +42,12 @@ export interface TerminalReplicaSubscription {
 }
 
 export type TerminalReplicaSourceSubscription = TerminalReplicaSubscription;
+/**
+ * How long a pane may have no listener before it is parked (perf F2). Long
+ * enough that switching away and back stays warm.
+ */
+export const PARK_AFTER_MS = 10_000;
+
 export interface TerminalReplicaCommittedRaw {
   readonly baseRevision: number;
   readonly revision: number;
@@ -103,6 +109,11 @@ export class SessionRuntimeTerminalReplicaOwner {
   readonly #start: Promise<void>;
   #upstream: MirrorSubscription | null = null;
   #disposed = false;
+  #parkTimer: SessionRuntimeTimer | null = null;
+  #parked = false;
+  // From the park until the next reseed lands, the replica is older than tmux.
+  // Native backing and history anchors must not pair it with current tmux state.
+  #stale = false;
   readonly #historyAnchors = new HistoryAnchorOwner();
   #cols = 80;
   #rows = 24;
@@ -243,13 +254,13 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   captureHistoryAnchor(proof: HistoryAnchorProof, historyIndex: number) {
-    if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture)
+    if (this.#disposed || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
       return { status: "unavailable" as const };
     return this.#historyAnchors.capture(proof, historyIndex);
   }
 
   resolveHistoryAnchor(proof: HistoryAnchorIdentity, token: string) {
-    if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture)
+    if (this.#disposed || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
       return { status: "unavailable" as const };
     return this.#historyAnchors.resolve(proof, token);
   }
@@ -287,7 +298,8 @@ export class SessionRuntimeTerminalReplicaOwner {
     const upstream = this.#upstream;
     if (!upstream?.captureNativeBacking) return { status: "unsupported" };
     const initial = this.#interpreter.currentSeed();
-    if (!initial || this.#reseed || this.#waitingForGeometryCapture) return { status: "changed" };
+    if (!initial || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
+      return { status: "changed" };
     const epoch = this.#subscriptionEpoch;
     const captured = await upstream.captureNativeBacking();
     if (captured.status !== "captured") return captured;
@@ -298,6 +310,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         !this.#disposed &&
         this.#upstream === upstream &&
         this.#subscriptionEpoch === epoch &&
+        !this.#stale &&
         !this.#reseed &&
         !this.#waitingForGeometryCapture &&
         captured.isCurrent() &&
@@ -362,6 +375,8 @@ export class SessionRuntimeTerminalReplicaOwner {
       } catch {
         // Bootstrap delivery has the same client-isolation rule as live frames.
       }
+      // The last frame is out; now ask for the reseed that makes it current.
+      this.#unpark();
     } catch (error) {
       this.#listeners.delete(listener);
       throw error;
@@ -374,8 +389,45 @@ export class SessionRuntimeTerminalReplicaOwner {
         if (closed) return;
         closed = true;
         this.#listeners.delete(listener);
+        if (this.#listeners.size === 0) this.#schedulePark();
       },
     };
+  }
+
+  /**
+   * Park this pane PARK_AFTER_MS after its last listener leaves (perf F2).
+   * The owner is the pane's only channel subscriber, so freezing it pauses the
+   * pane's output to the daemon's control client (the channel's all-frozen
+   * path). tmux keeps running the pane; nothing here is parsed or hashed. The
+   * last committed seed stays, so the next listener sees it at once, and
+   * thawing runs the channel's requested-pause recovery, which reseeds.
+   * Until that reseed lands the replica is stale: history anchors and native
+   * backing answer as they do during any reseed, and the reseed's reset then
+   * drops every anchor taken before the park.
+   */
+  #schedulePark(): void {
+    if (this.#disposed || this.#parked) return;
+    this.#parkTimer?.cancel();
+    this.#parkTimer = this.#scheduler.timer(() => {
+      this.#parkTimer = null;
+      if (this.#disposed || this.#parked || this.#listeners.size > 0 || !this.#upstream) return;
+      this.#parked = true;
+      this.#stale = true;
+      this.#upstream.freeze();
+    }, PARK_AFTER_MS);
+  }
+
+  #unpark(): void {
+    this.#parkTimer?.cancel();
+    this.#parkTimer = null;
+    if (!this.#parked) return;
+    this.#parked = false;
+    this.#upstream?.thaw();
+  }
+
+  /** True while the pane is parked (tests and qualification). */
+  get parked(): boolean {
+    return this.#parked;
   }
 
   /** Kitty graphics side channel: current state now (if any), then every change. */
@@ -420,6 +472,8 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#historyAnchors.invalidate();
     this.#historyTimer?.cancel();
     this.#historyTimer = null;
+    this.#parkTimer?.cancel();
+    this.#parkTimer = null;
     this.#subscriptionEpoch += 1;
     await this.#interpreter.enqueue({ type: "close", reason });
     await this.#start.catch(() => undefined);
@@ -454,6 +508,7 @@ export class SessionRuntimeTerminalReplicaOwner {
         // Output received during the probe makes its count incomparable with
         // the newer parser state. The dirty flag schedules another check.
         this.#historyDirty ||
+        this.#stale ||
         this.#reseed ||
         this.#waitingForGeometryCapture ||
         size === null
@@ -511,6 +566,8 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#waitingForGeometryCapture = false;
       const reseed = this.#reseed;
       this.#reseed = null;
+      // A completed capture after the park makes the replica current again.
+      if (reseed && !this.#parked) this.#stale = false;
       const lease = reseed ? this.#qualifyReseed(reseed, event.x, event.y) : null;
       this.#supervise(
         reseed && lease

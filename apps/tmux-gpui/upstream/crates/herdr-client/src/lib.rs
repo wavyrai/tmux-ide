@@ -9,6 +9,7 @@ pub mod tmux_controller;
 pub mod tmux_daemon;
 pub mod tmux_delivery;
 pub mod tmux_handoff;
+pub mod tmux_heartbeat;
 pub mod tmux_native_session;
 pub mod tmux_receiver;
 pub mod tmux_ssh;

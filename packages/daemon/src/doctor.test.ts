@@ -7,6 +7,7 @@ import {
   agentIntegrationRows,
   daemonProvenanceRow,
   hooksTargetRow,
+  tmuxServerSocketRow,
   plainTmuxRow,
   snapshotRow,
   tmuxFeaturesRow,
@@ -70,6 +71,58 @@ describe("agentIntegrationRows", () => {
       agent({ id: "codex", integration: false, path: "/bin/codex" }),
     ]);
     expect(rows.every((r) => r.optional)).toBe(true);
+  });
+});
+
+describe("tmuxServerSocketRow", () => {
+  it("names the daemon's socket and passes when the shell's tmux means the same server", () => {
+    expect(tmuxServerSocketRow({}, 501)).toEqual({
+      label: "tmux server",
+      pass: true,
+      detail: "the daemon uses /tmp/tmux-501/default",
+      optional: true,
+    });
+    // macOS spells the same directory two ways.
+    expect(tmuxServerSocketRow({ TMUX: "/private/tmp/tmux-501/default,14910,0" }, 501).pass).toBe(
+      true,
+    );
+    expect(tmuxServerSocketRow({ TMUX_TMPDIR: "/tmp" }, 501).pass).toBe(true);
+  });
+
+  it("warns when TMUX_TMPDIR puts this shell's tmux where the daemon does not look", () => {
+    const row = tmuxServerSocketRow({ TMUX_TMPDIR: "/Users/u/.tmux-sockets" }, 501);
+    expect(row).toMatchObject({ label: "tmux server", pass: false, optional: true });
+    expect(row.detail).toContain("this shell's tmux uses /Users/u/.tmux-sockets/tmux-501/default");
+    expect(row.detail).toContain("a background daemon uses /tmp/tmux-501/default");
+    expect(row.detail).toContain("the daemon ignores it");
+    expect(row.detail).toContain(
+      "TMUX_IDE_TMUX_SOCKET_PATH=/Users/u/.tmux-sockets/tmux-501/default",
+    );
+    expect(row.detail).toContain("or unset TMUX_TMPDIR");
+  });
+
+  it("warns inside a tmux that was started on its own socket", () => {
+    const row = tmuxServerSocketRow({ TMUX: "/Users/u/work.sock,77,0" }, 501);
+    expect(row.pass).toBe(false);
+    expect(row.detail).toContain("this shell is inside a tmux on another socket");
+    expect(row.detail).toContain("TMUX_IDE_TMUX_SOCKET_PATH=/Users/u/work.sock");
+    expect(row.detail).not.toContain("unset TMUX_TMPDIR");
+  });
+
+  it("reports an explicit socket as the daemon's, whatever the shell uses", () => {
+    expect(
+      tmuxServerSocketRow(
+        { TMUX_IDE_TMUX_SOCKET_PATH: "/Users/u/work.sock", TMUX_TMPDIR: "/elsewhere" },
+        501,
+      ),
+    ).toMatchObject({ pass: true, detail: "the daemon uses /Users/u/work.sock (set explicitly)" });
+    expect(tmuxServerSocketRow({ TMUX_IDE_TMUX_SOCKET_NAME: "work" }, 501).detail).toBe(
+      "the daemon uses /tmp/tmux-501/work (set explicitly)",
+    );
+  });
+
+  it("never fails doctor overall", () => {
+    expect(tmuxServerSocketRow({ TMUX_TMPDIR: "/x" }, 0).optional).toBe(true);
   });
 });
 

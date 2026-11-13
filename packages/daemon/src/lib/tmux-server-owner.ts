@@ -48,6 +48,8 @@ import { isVisibleFleetSession, type LiveSessionSummary } from "../command-cente
 import { WorkspaceTerminalInventoryRuntime } from "../terminal/attachments/native-runtime.ts";
 import { createTmuxAgentStatusProbe } from "../terminal/attachments/agent-status-probe.ts";
 import { createPaneStreamRuntime } from "../terminal/pane-stream/runtime.ts";
+import { createNativeOwnerTeardown } from "./tmux-server-owner-teardown.ts";
+import type { TrackTeardownStep } from "./daemon-stop-progress.ts";
 import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { SessionRuntimeRegistry } from "../terminal/session-runtime/registry.ts";
 import { createSessionRuntimeMultiplexerBackend } from "../terminal/session-runtime/multiplexer-backend.ts";
@@ -81,6 +83,8 @@ export interface NativeTmuxServerOwnerOptions {
   readonly stateDirectory: string;
   readonly webSocketUrl: string;
   readonly nativeServerIdentity?: NativeTmuxServerIdentity;
+  /** Names each step of this owner's teardown for the daemon's stop diagnostics. */
+  readonly trackTeardown?: TrackTeardownStep;
 }
 
 /** Native display names are not necessarily valid shared-contract record identities. */
@@ -259,7 +263,6 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
     io: { runTmux: generationRun },
   });
   let disposed = false;
-  let disposePromise: Promise<void> | null = null;
   let observerStarted: Promise<void> | null = null;
   const interactionReceipts = new InteractionReceiptJournal();
   const interactionEvidence = new InteractionEvidenceAuthority(options.environmentId, {
@@ -575,40 +578,34 @@ export async function createNativeTmuxServerOwner(options: NativeTmuxServerOwner
       return backend.mutate(...args);
     },
   };
-  const dispose = (): Promise<void> => {
-    if (disposePromise) return disposePromise;
-    disposed = true;
-    credentialLifetime.abort();
-    sourceCredentials.dispose();
-    authoredReceiptEnricher.dispose();
-    const observationDisposal = observationSelector.dispose();
-    disposePromise = (async () => {
-      const failures: unknown[] = [];
-      for (const close of [
-        () => observationDisposal,
-        () => sessionOpener.dispose(),
-        () => sessionCreator.dispose(),
-        () => paneCreation.dispose(),
-        () => paneStreamRuntime.dispose(),
-        () => observer.dispose(),
-        () => terminalInventoryRuntime.dispose(),
-        () => multiplexer.dispose(),
-        () => sessionRuntimeRegistry.dispose(),
-        () => interactionReceipts.dispose(),
-        () => interactionEvidence.dispose(),
-        () => interactionObservation.dispose(),
-      ]) {
-        try {
-          await close();
-        } catch (error) {
-          failures.push(error);
-        }
-      }
-      if (failures.length)
-        throw new AggregateError(failures, "Tmux server owner retirement failed");
-    })();
-    return disposePromise;
-  };
+  const dispose = createNativeOwnerTeardown({
+    serverId: options.serverId,
+    paneStreams: paneStreamRuntime,
+    track: options.trackTeardown,
+    markRetired: () => {
+      disposed = true;
+    },
+    begin: (streamsClosed) => {
+      credentialLifetime.abort();
+      sourceCredentials.dispose();
+      authoredReceiptEnricher.dispose();
+      const observationDisposal = observationSelector.dispose();
+      return [
+        ["observation-selector", () => observationDisposal],
+        ["session-opener", () => sessionOpener.dispose()],
+        ["session-creator", () => sessionCreator.dispose()],
+        ["pane-creation", () => paneCreation.dispose()],
+        ["pane-streams", () => streamsClosed],
+        ["interaction-observer", () => observer.dispose()],
+        ["terminal-inventory", () => terminalInventoryRuntime.dispose()],
+        ["multiplexer", () => multiplexer.dispose()],
+        ["session-runtimes", () => sessionRuntimeRegistry.dispose()],
+        ["interaction-receipts", () => interactionReceipts.dispose()],
+        ["interaction-evidence", () => interactionEvidence.dispose()],
+        ["interaction-observation", () => interactionObservation.dispose()],
+      ];
+    },
+  });
   try {
     await terminalInventoryRuntime.whenReady();
     await catalog();

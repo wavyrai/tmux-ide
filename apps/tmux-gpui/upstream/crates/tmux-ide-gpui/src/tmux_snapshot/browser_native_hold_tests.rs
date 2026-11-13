@@ -154,12 +154,13 @@ fn keys_lost_with_the_stream_are_reported_while_reconnecting() {
         shown.status,
         format!("Reconnecting… attempt 2 — {LOST_INPUT}")
     );
+    // The view reads this to refuse, not hold, what is typed after them.
+    assert!(shown.reconnect_keys_lost);
     let mut hold = Hold::default();
     hold.begin(&live(7), false);
-    assert_eq!(
-        hold.publication(&reconnecting(7, 2)).status,
-        "Reconnecting… attempt 2"
-    );
+    let shown = hold.publication(&reconnecting(7, 2));
+    assert_eq!(shown.status, "Reconnecting… attempt 2");
+    assert!(!shown.reconnect_keys_lost);
 }
 
 /// The legacy pipe catalog never ends a hold (it recovers on its own and
@@ -173,4 +174,92 @@ fn a_disabled_hold_never_holds_a_frame() {
     assert!(!hold.active(), "the legacy pipe held a frame");
     let shown = hold.publication(&reconnecting(7, 1));
     assert!(shown.frame.is_none(), "a disabled hold published a frame");
+}
+
+/// The session ended while it was held: the catalog loads Home again under the
+/// same request, with a notice. The held frame must not cover that Home.
+#[test]
+fn an_ended_session_ends_the_hold() {
+    let mut hold = Hold::default();
+    hold.begin(&live(7), false);
+    // Home loading for the same request: still held.
+    let loading = State {
+        request: 7,
+        ..State::default()
+    };
+    assert!(hold.publication(&loading).frame.is_some());
+    let ended = State {
+        request: 7,
+        home_notice: Some("“work” ended: its tmux session is no longer running.".into()),
+        ..State::default()
+    };
+    let shown = hold.publication(&ended);
+    assert!(shown.frame.is_none());
+    assert_eq!(shown.surface, Surface::Home);
+    assert!(shown.home_notice.is_some());
+    assert!(!hold.active());
+}
+
+/// Review of 9c0da9fe, finding 2: a later stream of the same recovery that
+/// fails with no key in flight must not forget the keys the first one lost.
+#[test]
+fn keys_lost_stay_lost_through_later_failures_of_the_same_recovery() {
+    let mut hold = Hold::default();
+    hold.observe(&live(7));
+    hold.begin(&live(7), true);
+    let wiped = State {
+        frame: None,
+        input_ready: false,
+        ..live(7)
+    };
+    hold.begin(&wiped, false);
+    assert!(hold.publication(&reconnecting(7, 2)).reconnect_keys_lost);
+    // A stream that takes input ends the hold; the next drop starts clean.
+    hold.publication(&live(7));
+    hold.observe(&live(7));
+    hold.begin(&live(7), false);
+    assert!(!hold.publication(&reconnecting(7, 1)).reconnect_keys_lost);
+}
+
+/// Finding 3: two streams that fail before their first frame (two ready
+/// timeouts on a loaded machine) left nothing held on the third failure: a
+/// blank pane and the click latch.
+#[test]
+fn every_failure_of_one_recovery_keeps_the_frame() {
+    let mut hold = Hold::default();
+    hold.observe(&live(7));
+    hold.begin(&live(7), false);
+    let wiped = State {
+        frame: None,
+        input_ready: false,
+        ..live(7)
+    };
+    for failure in 2..=6 {
+        hold.begin(&wiped, false);
+        assert!(hold.active(), "failure {failure} lost the frame");
+        assert!(hold.publication(&reconnecting(7, failure)).frame.is_some());
+    }
+    // Another request's failure does not inherit this frame.
+    hold.begin(
+        &State {
+            request: 8,
+            ..wiped
+        },
+        false,
+    );
+    assert!(!hold.active());
+}
+
+/// Finding 1: a key dropped during the hold marks it, once.
+#[test]
+fn a_key_dropped_during_the_hold_is_reported_from_then_on() {
+    let mut hold = Hold::default();
+    assert!(!hold.keys_lost(), "nothing is held");
+    hold.begin(&live(7), false);
+    assert!(!hold.publication(&reconnecting(7, 1)).reconnect_keys_lost);
+    assert!(hold.keys_lost());
+    assert!(!hold.keys_lost(), "reported as news twice");
+    let shown = hold.publication(&reconnecting(7, 1));
+    assert!(shown.reconnect_keys_lost);
+    assert!(shown.status.ends_with(LOST_INPUT));
 }

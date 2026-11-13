@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
-import { terminalSafe, terminalSafeBlock } from "@tmux-ide/contracts";
+import { ACTION_NAMES, terminalSafe, terminalSafeBlock } from "@tmux-ide/contracts";
 import { grantConsent, hashPluginDirectory, revokeConsent } from "./consent.ts";
 import { discoverPlugins, pluginPaths, type PluginAwaitingConsent } from "./discovery.ts";
 import { findOnPath } from "./exec-sandbox.ts";
@@ -609,7 +609,6 @@ export async function defaultPluginCliIo(): Promise<PluginCliIo> {
       }
     },
     dispatchBuiltin: async (name, input) => {
-      const { ACTION_NAMES } = await import("@tmux-ide/contracts");
       if (!(ACTION_NAMES as readonly string[]).includes(name))
         throw new PluginCliError(`No command named '${name}'.`);
       const { tryDispatchAction } = await import("../lib/cli-action-bridge.ts");
