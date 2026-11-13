@@ -1844,13 +1844,12 @@ async function startEmbeddedDaemonGeneration(
       // The background service keeps the crash snapshot for its default server
       // when no chrome updater does (#783). An app-embedded daemon does not: it
       // lives only as long as its window. The timer ends with this generation.
-      if (opts.launcher === "headless") {
-        const inventory = terminalInventoryRuntime;
-        startDaemonCrashSnapshot({
-          run: (args) => fleetFactsTmuxRunner(args),
-          retired: () => ["disposed", "failed"].includes(inventory.lifecycleState()),
-        });
-      }
+      const snapshotInventory = terminalInventoryRuntime;
+      startDaemonCrashSnapshot({
+        launcher: opts.launcher ?? "embedded",
+        run: (args) => fleetFactsTmuxRunner(args),
+        retired: () => ["disposed", "failed"].includes(snapshotInventory.lifecycleState()),
+      });
       const getTerminalAttachmentRuntime = (): NativeTerminalAttachmentRuntime => {
         if (terminalAttachmentRuntime) return terminalAttachmentRuntime;
         terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({

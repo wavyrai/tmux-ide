@@ -87,11 +87,17 @@ export function createDaemonCrashSnapshot(deps: DaemonCrashSnapshotDeps) {
 /**
  * Pulse on a timer until `retired` says the daemon generation is gone; the
  * timer then clears itself, so no stop step has to know about it. Returns a
- * stop function for callers that have one.
+ * stop function for callers that have one. Only the background service
+ * ("headless") writes: a daemon embedded in an app lives only as long as its
+ * window, and gets null.
  */
 export function startDaemonCrashSnapshot(
-  deps: DaemonCrashSnapshotDeps & { readonly retired: () => boolean },
-): () => void {
+  deps: DaemonCrashSnapshotDeps & {
+    readonly launcher: "headless" | "embedded";
+    readonly retired: () => boolean;
+  },
+): (() => void) | null {
+  if (deps.launcher !== "headless") return null;
   const snapshot = createDaemonCrashSnapshot(deps);
   let busy = false;
   const timer = setInterval(() => {

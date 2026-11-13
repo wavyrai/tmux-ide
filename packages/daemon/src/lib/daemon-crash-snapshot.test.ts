@@ -124,7 +124,7 @@ describe("the crash snapshot timer", () => {
         () => new Promise<string>((resolve) => (release = () => resolve("work\t"))),
       );
       let retired = false;
-      startDaemonCrashSnapshot({ ...w.deps, retired: () => retired });
+      startDaemonCrashSnapshot({ ...w.deps, launcher: "headless", retired: () => retired });
       await vi.advanceTimersByTimeAsync(30_000);
       expect(w.run).toHaveBeenCalledTimes(1);
       // The first pulse still waits for tmux: the next tick starts no second one.
@@ -138,6 +138,21 @@ describe("the crash snapshot timer", () => {
       await vi.advanceTimersByTimeAsync(120_000);
       expect(w.run).toHaveBeenCalledTimes(calls);
       expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not run in a daemon embedded in an app, which lives only as long as its window", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = world({ sessions: ["work"], panes: [pane("work")] });
+      expect(
+        startDaemonCrashSnapshot({ ...w.deps, launcher: "embedded", retired: () => false }),
+      ).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(w.run).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
