@@ -15290,7 +15290,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.23",
+      version: "2.9.24",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -28063,6 +28063,10 @@ var init_reader_option = __esm({
 });
 
 // packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts
+function sameSessionPaneInventory(before, after) {
+  const stable = (line) => line.split("	").map((field, index) => VOLATILE_DESCRIPTOR_FIELDS.has(index) ? "" : field).join("	");
+  return before.length === after.length && before.every((line, index) => line === after[index] || stable(line) === stable(after[index]));
+}
 function decodeTmuxArgument(value) {
   const encoded = value.length >= 2 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) ? value.slice(1, -1) : value;
   let decoded = "";
@@ -28198,7 +28202,7 @@ function decodeControlReplyUtf8(value) {
 function positiveInteger(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-var SESSION_PANE_DESCRIPTOR_FORMAT, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
+var SESSION_PANE_DESCRIPTOR_FORMAT, VOLATILE_DESCRIPTOR_FIELDS, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
 var init_session_descriptor_discovery = __esm({
   "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
     "use strict";
@@ -28232,6 +28236,14 @@ var init_session_descriptor_discovery = __esm({
       // The reader option belongs to the pane only when its own process set it.
       "#{pane_pid}"
     ].join("	");
+    VOLATILE_DESCRIPTOR_FIELDS = /* @__PURE__ */ new Set([
+      4,
+      // pane_current_command
+      7,
+      // window_name
+      9
+      // pane_title
+    ]);
     SessionDescriptorDiscovery = class {
       options;
       epoch = 0;
@@ -30196,10 +30208,13 @@ function processIsAlive(pid) {
     return error.code !== "ESRCH";
   }
 }
-function nextHookHealthcheckDelay(previousMs, outcome, schedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE) {
+function nextHookHealthcheckDelay(previousMs, outcome, schedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE, consecutiveUnhealthy = 1) {
   const base2 = Math.max(1, Math.floor(schedule.baseMs));
   const max = Math.max(base2, Math.floor(schedule.maxMs));
-  if (outcome !== "healthy") return base2;
+  if (outcome !== "healthy") {
+    const streak = Math.max(1, Math.min(32, Math.floor(consecutiveUnhealthy) || 1));
+    return Math.min(base2 * 2 ** (streak - 1), max);
+  }
   const previous = Number.isFinite(previousMs) ? Math.max(base2, Math.floor(previousMs)) : base2;
   return Math.min(previous * 2, max);
 }
@@ -30386,6 +30401,8 @@ var init_tmux_external_interaction_observer = __esm({
       #healthcheckSchedule;
       #healthcheckDelayMs;
       #lastHealthcheckOutcome = "failed";
+      /** Scheduled checks in a row that did not find the hooks intact. */
+      #unhealthyChecks = 0;
       #onAvailability;
       #onGap;
       #tmuxWork = Promise.resolve();
@@ -30497,11 +30514,13 @@ var init_tmux_external_interaction_observer = __esm({
           if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
           outcome = "failed";
         }
+        this.#unhealthyChecks = outcome === "healthy" ? 0 : this.#unhealthyChecks + 1;
         if (this.#healthcheckDelayMs === delayBefore) {
           this.#healthcheckDelayMs = nextHookHealthcheckDelay(
             delayBefore,
             outcome,
-            this.#healthcheckSchedule
+            this.#healthcheckSchedule,
+            this.#unhealthyChecks
           );
         }
         if (this.#hookHealthcheck === null) this.#scheduleHealthcheck();
@@ -30595,9 +30614,15 @@ var init_tmux_external_interaction_observer = __esm({
         const work = this.#serializeTmux(async () => {
           const finish = this.#beginDiagnostic("healthcheck");
           try {
-            if (await this.#ownedHooksPresent(this.#abort.signal)) {
+            const hooks = await this.#ownedHooksPresent(this.#abort.signal);
+            if (hooks === "present") {
               this.#lastHealthcheckOutcome = "healthy";
               finish(true);
+              return;
+            }
+            if (hooks === "unknown") {
+              this.#lastHealthcheckOutcome = "failed";
+              finish(false);
               return;
             }
             if (this.#installed) this.#reportGap("hooks-replaced");
@@ -30831,9 +30856,9 @@ var init_tmux_external_interaction_observer = __esm({
             signal
           );
         } catch {
-          return false;
+          return "unknown";
         }
-        return ownedHookInstalled(output, "after-send-keys", this.#bufferName) && ownedHookInstalled(output, "after-capture-pane", this.#bufferName);
+        return ownedHookInstalled(output, "after-send-keys", this.#bufferName) && ownedHookInstalled(output, "after-capture-pane", this.#bufferName) ? "present" : "missing";
       }
       get available() {
         return this.#installed;
@@ -36535,7 +36560,7 @@ var init_session_channel = __esm({
           `list-panes -s -t "${expectedRuntimeSessionId}" -F "${SESSION_PANE_DESCRIPTOR_FORMAT}"`
         );
         const confirmedWindowStage = await this.stageWindows(expectedRuntimeSessionId);
-        const coherent = beforeLines.length === afterLines.length && beforeLines.every((line, index) => line === afterLines[index]);
+        const coherent = sameSessionPaneInventory(beforeLines, afterLines);
         if (windowStage.repairedIdentity || confirmedWindowStage.repairedIdentity || repairedPanes || !coherent || !this.windowStageIdentitiesEqual(windowStage, confirmedWindowStage) || authorityOrdinal !== this.windowIdentityOrdinal) {
           if (attempt >= 1)
             throw new Error(`trusted inventory for ${this.opts.session} did not settle`);
@@ -36731,7 +36756,9 @@ var init_session_channel = __esm({
           const rightWindow = right.windows.get(runtimeId);
           const leftLayout = left.layouts.get(runtimeId);
           const rightLayout = right.layouts.get(runtimeId);
-          if (!rightWindow || !leftLayout || !rightLayout || leftWindow.semanticId !== rightWindow.semanticId || leftWindow.name !== rightWindow.name || leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus || leftWindow.modeKeys !== rightWindow.modeKeys || !layoutIdentitiesEqual(leftLayout, rightLayout)) {
+          if (!rightWindow || !leftLayout || !rightLayout || leftWindow.semanticId !== rightWindow.semanticId || // Not the name: tmux derives it from the running command, and the
+          // pane rows' own check ignores it too (sameSessionPaneInventory, #730).
+          leftWindow.paneBorderStatus !== rightWindow.paneBorderStatus || leftWindow.modeKeys !== rightWindow.modeKeys || !layoutIdentitiesEqual(leftLayout, rightLayout)) {
             return false;
           }
         }
@@ -42158,7 +42185,7 @@ function classifiedAsyncRunner(tmuxAuthority) {
 function digest2(value) {
   return createHash19("sha256").update(value).digest("hex").slice(0, 20);
 }
-var MAX_OPERATIONS, MAX_REPLAYABLE_FAILURES2, MAX_TMUX_OUTPUT_BYTES, ADOPTED_OPTION2, SESSION_PROMOTED_MARKER_OPTION, SESSION_WORKSPACE_OPTION, SESSION_OPERATION_OPTION, SEMANTIC_PANE_OPTION3, SEMANTIC_WINDOW_OPTION2, FIELD, SENTINEL, SESSION_FORMAT, PANE_SCAN_FORMAT, PANE_VERIFY_FORMAT, ERROR_MESSAGES3, WorkspacePromotionError, VALID_SEMANTIC_PANE_ID, RESERVED_DISCOVERED_PREFIX, DEFAULT_IO3, WorkspacePromotionAuthority;
+var MAX_OPERATIONS, MAX_REPLAYABLE_FAILURES2, MAX_TMUX_OUTPUT_BYTES, ADOPTED_OPTION2, SESSION_PROMOTED_MARKER_OPTION, SESSION_WORKSPACE_OPTION, SESSION_OPERATION_OPTION, SEMANTIC_PANE_OPTION3, SEMANTIC_WINDOW_OPTION2, FIELD, SENTINEL, SESSION_FORMAT, PANE_SCAN_FORMAT, PANE_VERIFY_FORMAT, ERROR_MESSAGES3, PROMOTION_PROOF_ATTEMPTS, WorkspacePromotionError, VALID_SEMANTIC_PANE_ID, RESERVED_DISCOVERED_PREFIX, DEFAULT_IO3, WorkspacePromotionAuthority;
 var init_workspace_promotion2 = __esm({
   "packages/daemon/src/lib/workspace-promotion.ts"() {
     "use strict";
@@ -42231,6 +42258,7 @@ var init_workspace_promotion2 = __esm({
       operation_conflict: "The operation id was already used for another promotion intent.",
       operation_capacity: "The daemon has reached its bounded workspace-promote operation capacity."
     };
+    PROMOTION_PROOF_ATTEMPTS = 3;
     WorkspacePromotionError = class extends Error {
       code;
       context;
@@ -42350,9 +42378,19 @@ var init_workspace_promotion2 = __esm({
           }
           const identity4 = alreadyRegistered ? { workspaceName: alreadyRegistered.name, sessionName: session.sessionName } : derivePromotionIdentity(session.sessionName);
           this.#assertConflictFreeIdentity(identity4);
-          const canonicalRoot = await this.#stampSession(request3, session, identity4);
-          this.#assertActive(request3.operationId);
-          await this.#verifyPromotedInventory(session.sessionId, identity4);
+          let canonicalRoot;
+          for (let attempt = 1; ; attempt += 1) {
+            canonicalRoot = await this.#stampSession(request3, session, identity4);
+            this.#assertActive(request3.operationId);
+            try {
+              await this.#verifyPromotedInventory(session.sessionId, identity4);
+              break;
+            } catch (error) {
+              if (attempt >= PROMOTION_PROOF_ATTEMPTS || !(error instanceof WorkspacePromotionError) || error.context.reason !== "inventory_changed_during_proof")
+                throw error;
+              this.#assertActive(request3.operationId);
+            }
+          }
           await this.#publishFleetEnrollment(request3, session, identity4);
           const discovered = this.#registeredSession(session.sessionName);
           if (discovered) {
@@ -74353,6 +74391,19 @@ var init_native_runtime = __esm({
         if (this.#disposed) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
         const epoch = this.#inventoryEpoch;
         const nativeEpoch = this.#nativeServerEpoch?.() ?? null;
+        const publish = async (value, publicationSignal) => {
+          try {
+            return await this.#publishInventory(value, nativeEpoch, publicationSignal, epoch);
+          } catch (error) {
+            if (this.#disposed || signal?.aborted || this.#inventoryEpoch === epoch) throw error;
+            if (staleRetry < INVENTORY_STALE_RETRIES)
+              return this.#readInventory(signal, staleRetry + 1);
+            throw new NativeTerminalAttachmentRuntimeError(
+              "discovery-failed",
+              "overtaken-by-invalidations"
+            );
+          }
+        };
         if (signal) {
           if (signal.aborted) throw new NativeTerminalAttachmentRuntimeError("runtime-disposed");
           let snapshot3;
@@ -74378,7 +74429,7 @@ var init_native_runtime = __esm({
               "overtaken-by-invalidations"
             );
           }
-          return this.#publishInventory(snapshot3, nativeEpoch, signal, epoch);
+          return publish(snapshot3, signal);
         }
         if (this.#inventoryRead?.epoch === epoch) return this.#inventoryRead.promise;
         const abort = new AbortController();
@@ -74405,7 +74456,7 @@ var init_native_runtime = __esm({
               "overtaken-by-invalidations"
             );
           }
-          return this.#publishInventory(value, nativeEpoch, abort.signal, epoch);
+          return publish(value, abort.signal);
         })().finally(() => {
           if (this.#inventoryRead?.promise === promise) this.#inventoryRead = null;
         });
@@ -78233,6 +78284,12 @@ var init_pane_stream_websocket = __esm({
             "pane_not_active",
             "mutation_unverified"
           ].includes(rawCode) ? rawCode : "stream-unavailable";
+          logger.info("pane-stream", "intent rejected", {
+            session: this.#descriptor.sessionName,
+            clientId: this.#clientId,
+            verb: intent.verb,
+            code: code2
+          });
           this.#sendFrame(null, {
             type: "semantic-intent-ack",
             operationId,
@@ -78685,6 +78742,136 @@ var init_multiplexer_backend = __esm({
     init_registry2();
     init_semantic_mutation_executor();
     init_transport_binding();
+  }
+});
+
+// packages/daemon/src/lib/orphaned-control-clients.ts
+import { execFile as execFile11 } from "node:child_process";
+function parseProcessTable(text2) {
+  const rows = [];
+  for (const line of text2.split("\n")) {
+    const match = /^\s*([0-9]+)\s+([0-9]+)\s+(.+)$/u.exec(line);
+    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] });
+  }
+  return rows;
+}
+function isTmuxIdeControlClientCommand(command3) {
+  return /(?:^|\s)-C(?:\s|$)/u.test(command3) && /ignore-size,pause-after=[0-9]+,active-pane/u.test(command3);
+}
+function commandTargetsServer(command3, selector) {
+  const words = command3.split(/\s+/u);
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index];
+    if (word === "-C") return false;
+    const flag = selector.kind === "path" ? "-S" : "-L";
+    const value = word === flag ? words[index + 1] : word.startsWith(flag) ? word.slice(2) : null;
+    if (value === null || value === void 0 || value === "") continue;
+    return selector.kind === "path" ? withoutPrivate(value) === withoutPrivate(selector.path) : value === selector.name;
+  }
+  return false;
+}
+function adoptsOrphans(pid, command3) {
+  if (pid === 1) return true;
+  return command3 !== null && /^(?:\S*\/)?(?:systemd|launchd|init)(?:\s|$)/u.test(command3);
+}
+async function evictOrphanedControlClients(io, ownPid, selector) {
+  let processes;
+  try {
+    processes = await io.listProcesses();
+  } catch {
+    return [];
+  }
+  const byPid = new Map(processes.map((row) => [row.pid, row]));
+  const evicted = [];
+  for (const client of processes) {
+    if (client.pid <= 1 || client.pid === ownPid || client.ppid === ownPid || !isTmuxIdeControlClientCommand(client.command) || !commandTargetsServer(client.command, selector) || !adoptsOrphans(client.ppid, byPid.get(client.ppid)?.command ?? null))
+      continue;
+    try {
+      io.kill(client.pid, "SIGTERM");
+      await io.delay(ORPHAN_KILL_GRACE_MS);
+      if (io.isAlive(client.pid)) io.kill(client.pid, "SIGKILL");
+      evicted.push(client.pid);
+    } catch {
+    }
+  }
+  return evicted;
+}
+function orphanedControlClientIo() {
+  return {
+    listProcesses: () => new Promise((resolve47, reject) => {
+      execFile11(
+        "/bin/ps",
+        ["-xww", "-o", "pid=,ppid=,command="],
+        {
+          encoding: "utf8",
+          timeout: 3e3,
+          maxBuffer: 16 * 1024 * 1024,
+          env: { LC_ALL: "C", PATH: "/usr/bin:/bin" }
+        },
+        (error, stdout) => error ? reject(error) : resolve47(parseProcessTable(stdout))
+      );
+    }),
+    kill: (pid, signal) => {
+      process.kill(pid, signal);
+    },
+    isAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        return error.code === "EPERM";
+      }
+    },
+    delay: (ms) => new Promise((resolve47) => setTimeout(resolve47, ms))
+  };
+}
+function createOrphanedControlClientWatch(options) {
+  const io = options.io ?? orphanedControlClientIo();
+  const now = options.now ?? Date.now;
+  const fields = options.serverId ? { serverId: options.serverId } : {};
+  let lastPassAt = Number.NEGATIVE_INFINITY;
+  let lastLogAt = Number.NEGATIVE_INFINITY;
+  let running = null;
+  const pass = () => {
+    if (running) return running;
+    lastPassAt = now();
+    const current = evictOrphanedControlClients(io, process.pid, options.selector).catch(() => []).then((pids) => {
+      if (pids.length > 0)
+        logger.warn("tmux-server-owners", "ended control clients a dead daemon left attached", {
+          ...fields,
+          pids
+        });
+      return pids;
+    }).finally(() => {
+      if (running === current) running = null;
+    });
+    running = current;
+    return current;
+  };
+  return {
+    onOwnership: () => pass().then(() => void 0),
+    async onTrouble(kind) {
+      if (now() - lastPassAt < EMPTY_SERVER_PASS_INTERVAL_MS) return;
+      const pids = await pass();
+      if (now() - lastLogAt < EMPTY_SERVER_LOG_INTERVAL_MS) return;
+      lastLogAt = now();
+      logger.warn(
+        "tmux-server-owners",
+        kind === "no-sessions" ? "tmux server answers with no sessions" : "tmux server does not answer its catalog",
+        { ...fields, endedControlClients: pids.length }
+      );
+    }
+  };
+}
+var ORPHAN_KILL_GRACE_MS, withoutPrivate, EMPTY_SERVER_PASS_INTERVAL_MS, EMPTY_SERVER_LOG_INTERVAL_MS;
+var init_orphaned_control_clients = __esm({
+  "packages/daemon/src/lib/orphaned-control-clients.ts"() {
+    "use strict";
+    init_log();
+    ORPHAN_KILL_GRACE_MS = 500;
+    withoutPrivate = (path2) => path2.replace(/^\/private(?=\/)/u, "");
+    EMPTY_SERVER_PASS_INTERVAL_MS = 1e4;
+    EMPTY_SERVER_LOG_INTERVAL_MS = 6e4;
   }
 });
 
@@ -79150,9 +79337,15 @@ function discoveredWorkspaceName(registry, sessionName) {
   }
   throw new Error("Unable to allocate discovered workspace identity");
 }
-function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () => void 0) {
+function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () => void 0, onTrouble) {
   return async () => {
     assertOpen();
+    const tell = (kind) => {
+      try {
+        void Promise.resolve(onTrouble?.(kind)).catch(() => void 0);
+      } catch {
+      }
+    };
     const raw = await run(
       [
         "-N",
@@ -79169,10 +79362,15 @@ function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () =
         ].map(shellEscape).join(" ")
       ],
       AbortSignal.timeout(2e3)
-    );
+    ).catch((error) => {
+      tell("unanswered");
+      throw error;
+    });
     assertOpen();
     const rows = /* @__PURE__ */ new Map();
-    const lines = raw.trim() === "tmux-ide-empty-catalog-v1" ? [] : raw.trim().split("\n");
+    const empty2 = raw.trim() === "tmux-ide-empty-catalog-v1";
+    if (empty2) tell("no-sessions");
+    const lines = empty2 ? [] : raw.trim().split("\n");
     for (const line of lines) {
       const [pid, id2, created, name, pane, window2, activity, ...pathParts] = line.split("	");
       const dir = pathParts.join("	");
@@ -79243,6 +79441,11 @@ async function createNativeTmuxServerOwner(options) {
     authority2,
     nativeServerIdentity
   );
+  const orphanWatch = createOrphanedControlClientWatch({
+    selector: authority2.socketSelector,
+    serverId: options.serverId
+  });
+  void orphanWatch.onOwnership();
   const multiplexer = new WorkspaceMultiplexerAuthority({
     daemonInstanceId: generation,
     registry: workspaceRegistry,
@@ -79518,7 +79721,12 @@ async function createNativeTmuxServerOwner(options) {
     registry: sessionRuntimeRegistry,
     resolveSession: (name) => workspaceRegistry.get(name)?.sessionName ?? null
   });
-  const catalog = createNativeTmuxServerCatalog(workspaceRegistry, generationRunAsync, assertOpen);
+  const catalog = createNativeTmuxServerCatalog(
+    workspaceRegistry,
+    generationRunAsync,
+    assertOpen,
+    orphanWatch.onTrouble
+  );
   const sessionCreator = createNativeTmuxSessionCreator({
     generation,
     registry: workspaceRegistry,
@@ -79754,6 +79962,7 @@ var init_tmux_server_owner = __esm({
     init_registry2();
     init_multiplexer_backend();
     init_tmux_external_interaction_observer();
+    init_orphaned_control_clients();
     init_interaction_receipt_journal();
     init_interaction_observation_status();
     init_interaction_evidence_authority();
@@ -80209,7 +80418,7 @@ var init_tmux_server_owners = __esm({
 });
 
 // packages/daemon/src/lib/tmux-server-registration.ts
-import { execFile as execFile11 } from "node:child_process";
+import { execFile as execFile12 } from "node:child_process";
 import { promisify as promisify2 } from "node:util";
 import { createHash as createHash26, randomUUID as randomUUID39 } from "node:crypto";
 import {
@@ -80368,7 +80577,7 @@ var init_tmux_server_registration = __esm({
     init_tmux_client_execution();
     init_unix_socket_authority();
     init_tmux_server_owners();
-    exec = promisify2(execFile11);
+    exec = promisify2(execFile12);
     FileSchema2 = z125.object({
       version: z125.literal(1),
       servers: z125.array(TmuxServerRegistrationSchemaZ).max(MAX_TMUX_SERVER_OWNERS)
@@ -81390,7 +81599,7 @@ var init_runtime_trace_writer = __esm({
 });
 
 // packages/daemon/src/lib/tmux-authority-replacement.ts
-import { execFile as execFile12 } from "node:child_process";
+import { execFile as execFile13 } from "node:child_process";
 import { lstatSync as lstatSync13 } from "node:fs";
 import { dirname as dirname33 } from "node:path";
 import { promisify as promisify3 } from "node:util";
@@ -81479,7 +81688,7 @@ var init_tmux_authority_replacement = __esm({
     "use strict";
     init_unix_socket_authority();
     init_tmux_named_socket_fence();
-    execFileAsync = promisify3(execFile12);
+    execFileAsync = promisify3(execFile13);
     SERVER_FORMAT = "#{socket_path}|#{pid}";
   }
 });
@@ -81578,7 +81787,7 @@ var init_session_monitor = __esm({
 });
 
 // packages/daemon/src/lib/daemon-session-monitor.ts
-import { execFile as execFile13 } from "node:child_process";
+import { execFile as execFile14 } from "node:child_process";
 function parseDaemonMonitorPanes(raw) {
   if (!raw) return [];
   return raw.split("\n").map((line) => {
@@ -81596,7 +81805,7 @@ function parseDaemonMonitorPanes(raw) {
 }
 function execMonitorCommandAsync(executable, args, signal) {
   return new Promise((resolve47, reject) => {
-    execFile13(
+    execFile14(
       executable,
       [...args],
       { encoding: "utf8", maxBuffer: 1024 * 1024, signal },
@@ -91341,6 +91550,14 @@ function failure(c, error) {
     return c.json({ error: { code: error.code } }, 409);
   if (error instanceof z136.ZodError || error instanceof SyntaxError || error instanceof TypeError)
     return c.json({ error: { code: "invalid-request" } }, 400);
+  const code2 = error?.code;
+  logger.warn("tmux-server-routes", "request failed as server-unavailable", {
+    method: c.req.method,
+    route: c.req.routePath,
+    errorName: error instanceof Error ? error.name : typeof error,
+    ...typeof code2 === "string" ? { errorCode: code2.slice(0, 80) } : {},
+    error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+  });
   return c.json({ error: { code: "server-unavailable" } }, 503);
 }
 function mountTmuxServerRoutes(app, options) {
@@ -91856,6 +92073,7 @@ var init_tmux_servers = __esm({
     init_workspace_multiplexer_verbs();
     init_workspace_pane_creation2();
     init_owner_authority();
+    init_log();
     init_pane_stream_issue();
     init_terminal_runtime_inventory2();
     SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES = 512 * 1024;
@@ -99547,7 +99765,7 @@ __export(server_exports2, {
   getCompatibilityMetrics: () => getCompatibilityMetrics,
   getSseMetrics: () => getSseMetrics
 });
-import { execFile as execFile14 } from "node:child_process";
+import { execFile as execFile15 } from "node:child_process";
 import { promisify as promisify4 } from "node:util";
 import { existsSync as existsSync38, readdirSync as readdirSync12 } from "node:fs";
 import { join as join59, dirname as dirname46, basename as basename24 } from "node:path";
@@ -100525,7 +100743,7 @@ function createApp(options = {}) {
       return c.json({ error: "Failed to write workspace config", detail: message }, 500);
     }
   });
-  const execFileAsync2 = promisify4(execFile14);
+  const execFileAsync2 = promisify4(execFile15);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
     const sessions = discoverSessions();
@@ -101711,6 +101929,11 @@ async function startEmbeddedDaemonGeneration(opts) {
       initialNativeServerIdentity ? createServerGenerationFencedTmuxRunner(tmuxAuthority, initialNativeServerIdentity) : catalogTmuxRunner
     );
     const fleetFactsTmuxRunner = initialNativeServerIdentity ? createServerGenerationFencedTmuxAsyncRunner(tmuxAuthority, initialNativeServerIdentity) : createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
+    const defaultServerOrphanWatch = createOrphanedControlClientWatch({
+      selector: tmuxAuthority.socketSelector,
+      serverId: null
+    });
+    void defaultServerOrphanWatch.onOwnership();
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner
@@ -102369,7 +102592,12 @@ async function startEmbeddedDaemonGeneration(opts) {
           resolveNativeSurfaceContext: createNativeSurfaceContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            ),
             inventory: terminalInventoryRuntime,
             run: (args, signal) => fleetFactsTmuxRunner(args, signal),
             assertOpen: () => {
@@ -102380,7 +102608,12 @@ async function startEmbeddedDaemonGeneration(opts) {
           resolvePaneEditorContext: createPaneEditorContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (defaultEditorContextRetired || serverOwners?.defaultRetired || !initialNativeServerIdentity || terminalInventoryRuntime?.lifecycleState() !== "ready")
@@ -102391,7 +102624,12 @@ async function startEmbeddedDaemonGeneration(opts) {
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (defaultEditorContextRetired || serverOwners?.defaultRetired || !initialNativeServerIdentity || terminalInventoryRuntime?.lifecycleState() !== "ready")
@@ -102402,19 +102640,31 @@ async function startEmbeddedDaemonGeneration(opts) {
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (defaultEditorContextRetired || serverOwners?.defaultRetired || !initialNativeServerIdentity || terminalInventoryRuntime?.lifecycleState() !== "ready")
                 throw new Error("Default reader owner is unavailable");
             }
           }),
-          catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+          catalog: createNativeTmuxServerCatalog(
+            workspaceRegistry,
+            fleetFactsTmuxRunner,
+            void 0,
+            defaultServerOrphanWatch.onTrouble
+          ),
           readWindowSplitLayout: async (workspaceName, input) => {
             const target = WindowLinkTargetSchemaZ.parse(input);
             const sessions = await createNativeTmuxServerCatalog(
               workspaceRegistry,
-              fleetFactsTmuxRunner
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
             )();
             const sessionName2 = workspaceRegistry.get(workspaceName)?.sessionName;
             if (!sessionName2 || !sessions.some(
@@ -102426,7 +102676,12 @@ async function startEmbeddedDaemonGeneration(opts) {
           },
           openAgent: async (liveSessionId, observed) => {
             const target = observedAgentSchema.parse(observed);
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            )();
             try {
               return await defaultSessionOpener.openAgent(liveSessionId, target);
             } finally {
@@ -102434,7 +102689,12 @@ async function startEmbeddedDaemonGeneration(opts) {
             }
           },
           openSession: async (liveSessionId) => {
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              void 0,
+              defaultServerOrphanWatch.onTrouble
+            )();
             const result2 = await defaultSessionOpener.openSession(liveSessionId);
             terminalInventoryRuntime.invalidate();
             return result2;
@@ -103067,6 +103327,7 @@ var init_daemon_embed = __esm({
     init_app_window_mutation2();
     init_workspace_multiplexer_verbs();
     init_tmux_external_interaction_observer();
+    init_orphaned_control_clients();
     init_tmux_interaction_observation_handler();
     init_interaction_receipt_journal();
     init_interaction_observation_status();
@@ -104300,7 +104561,7 @@ var init_attach = __esm({
 });
 
 // packages/daemon/src/lib/daemon-service-manager.ts
-import { execFile as execFile15 } from "node:child_process";
+import { execFile as execFile16 } from "node:child_process";
 function createDaemonServiceManager(plan, run = runCommand) {
   const launchd = plan.manager === "launchd";
   const file = launchd ? "/bin/launchctl" : "systemctl";
@@ -104397,7 +104658,7 @@ var init_daemon_service_manager = __esm({
   "packages/daemon/src/lib/daemon-service-manager.ts"() {
     "use strict";
     runCommand = (file, args) => new Promise((resolve47) => {
-      execFile15(
+      execFile16(
         file,
         [...args],
         {

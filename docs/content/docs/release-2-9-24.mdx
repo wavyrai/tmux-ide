@@ -1,0 +1,79 @@
+---
+title: tmux-ide 2.9.24
+metaTitle: "What's new in 2.9.24"
+description: "A killed daemon can no longer leave a tmux server that cannot exit, and a click on an agent that has just appeared works the first time."
+---
+
+`2.9.24` is a CLI/daemon release with more connection fixes. It adds no commands
+and needs no Mac app update.
+
+## A killed daemon no longer leaves a dead tmux server
+
+A daemon that dies without a clean stop, for example after `kill -9`, leaves its
+control clients attached to the tmux server. Nothing reads their output any
+more, and tmux cannot finish `kill-server` while they stay. The server kept its
+socket with no sessions, no new server could start there, and the next daemon
+answered 503 to every read of that server. In the one-hour run that found it,
+that lasted 16 minutes, until the daemon was stopped.
+
+A daemon now ends tmux-ide control clients whose daemon is gone. It does so when
+it takes over a tmux server, and again when the server lists no sessions or does
+not answer, at most once every 10 s. It never ends its own clients, another
+running daemon's, or another program's control-mode clients (`-CC`).
+
+The reproduction, on a separate daemon and a private tmux socket:
+
+| A dead daemon's client is present | 2.9.23                         | 2.9.24                                                    |
+| --------------------------------- | ------------------------------ | --------------------------------------------------------- |
+| before the next daemon starts     | `kill-server` never finishes   | the server exits in 100 ms                                |
+| while the daemon runs             | 503 for 15 s and no new server | the server exits in 600 ms; a new one is served 6 s later |
+
+## A click on an agent that has just appeared
+
+In the TUI, a click on an agent right after its pane appeared did nothing, or
+said "That agent changed or disappeared. Select it again on Home." A second
+click worked. Two causes are fixed:
+
+- The agent list re-reads a session whenever an agent appears or changes, and a
+  click during that read was refused as stale. The TUI now waits for the read,
+  up to 3 s, and shows "Waiting for agent…".
+- The daemon refuses to select a pane it has not taken into its inventory yet,
+  which is the state right after a pane is created. The TUI now sends the
+  selection again for about 3 s. When the pane still cannot be selected, it
+  says so.
+
+The release journey's step for this failed in 1 to 6 of 20 runs before. We have
+not yet shown with a full set of runs that it no longer fails.
+
+## Also in 2.9.24
+
+- A daemon that started while another tmux client changed panes could exit with
+  "Trusted semantic pane discovery failed". It now reads the inventory again,
+  up to four times.
+- Opening a session while another tmux client split or closed a pane answered 503. The daemon now checks again, up to three times, before it refuses.
+- The daemon's hook check read a `show-hooks` call that timed out or could not
+  start as replaced hooks: it logged `hooks-replaced`, removed its hooks and
+  installed them again. It now repairs only hooks that a successful check shows
+  to be missing.
+- The hook check slows down while a tmux server keeps failing it. On a server
+  that was shutting down but could not exit, the repairs cost about 400 tmux
+  calls a minute.
+- A window that tmux renames after its running command no longer counts as a
+  change to the terminal inventory.
+
+## New log lines
+
+- Why a read of a tmux server answered 503 `server-unavailable`.
+- A warning once a minute while a tmux server lists no sessions or does not
+  answer.
+- The control clients the daemon ended, by process id.
+- Each client request the daemon refused, with its reason.
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. A running older daemon
+restarts on 2.9.24 by itself; your tmux sessions keep running. Update remote
+machines too: the fixes are in the daemon on the machine that runs tmux.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
