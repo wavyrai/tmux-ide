@@ -308,6 +308,7 @@ impl Active {
                 generation: self.generation.clone(),
                 presence_revision: metadata_key.1,
                 layouts: topology.layouts().values().cloned().collect(),
+                issued: self.controller.panes_in_place(),
             });
         }
         if self.catalog_only {

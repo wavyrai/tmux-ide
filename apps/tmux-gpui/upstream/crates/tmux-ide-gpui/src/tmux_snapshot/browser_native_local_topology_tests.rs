@@ -57,7 +57,133 @@ fn notice(local: &Local, layouts: Vec<Layout>) -> Command {
             .clone(),
         presence_revision: 3,
         layouts,
+        issued: None,
     }
+}
+/// The notice of a stream that follows pane changes in place: `panes` is its
+/// whole set, `selected` its selected pane.
+fn in_place(local: &Local, layouts: Vec<Layout>, panes: &[&str], selected: &str) -> Command {
+    let Command::NativeTerminalCatalog {
+        version,
+        id,
+        request,
+        live_session_id,
+        generation,
+        presence_revision,
+        layouts,
+        ..
+    } = notice(local, layouts)
+    else {
+        unreachable!()
+    };
+    Command::NativeTerminalCatalog {
+        version,
+        id,
+        request,
+        pane: selected.into(),
+        live_session_id,
+        generation,
+        presence_revision,
+        layouts,
+        issued: Some(panes.iter().map(|pane| (*pane).to_owned()).collect()),
+    }
+}
+fn layout_of(panes: &[(&str, &str)]) -> Layout {
+    let rows: Vec<serde_json::Value> = (panes.iter().enumerate())
+        .map(|(index, (pane, name))| serde_json::json!({"pane":pane,"displayName":name,"left":index * 10,"top":0,"width":9,"height":24,"active":index == 0}))
+        .collect();
+    serde_json::from_value(
+        serde_json::json!({"type":"layout","semanticWindowId":"window","windowName":"Editor",
+        "currentWindow":true,"cols":80,"rows":24,"zoomed":false,"panes":rows}),
+    )
+    .unwrap()
+}
+fn ids(local: &Local) -> Vec<&str> {
+    local.state.panes.iter().map(|p| p.id.as_str()).collect()
+}
+
+/// #723: another client split a pane in and the stream stayed open. The
+/// catalog's pane list (the pane choices, and the panes of the next lease)
+/// follows the stream. Without this the notice was dropped as "not the
+/// issued set" and the list went stale.
+#[test]
+fn a_stream_that_followed_a_split_brings_its_new_pane_to_the_catalog() {
+    let (mut local, events) = attached();
+    let layout = layout_of(&[("left", "Shell"), ("right", "Build"), ("third", "Logs")]);
+    let command = in_place(&local, vec![layout], &["left", "right", "third"], "left");
+    local.command(command).unwrap();
+    assert_eq!(ids(&local), ["left", "right", "third"]);
+    assert_eq!(local.state.panes[2].label, "Logs");
+    assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
+    assert!(events.try_recv().is_ok());
+}
+
+#[test]
+fn a_stream_that_followed_a_close_drops_the_pane_and_moves_a_lost_selection() {
+    // The pane that is not selected closed.
+    let (mut local, _events) = attached();
+    let command = in_place(
+        &local,
+        vec![layout_of(&[("left", "Shell")])],
+        &["left"],
+        "left",
+    );
+    local.command(command).unwrap();
+    assert_eq!(ids(&local), ["left"]);
+    assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
+    // The selected pane closed: the stream's selected pane takes over.
+    let (mut local, _events) = attached();
+    let command = in_place(
+        &local,
+        vec![layout_of(&[("right", "Build")])],
+        &["right"],
+        "right",
+    );
+    local.command(command).unwrap();
+    assert_eq!(ids(&local), ["right"]);
+    assert_eq!(local.state.selected_pane.as_deref(), Some("right"));
+}
+
+/// A selection the user made arrives by its own acknowledgement. A notice
+/// that merely names another pane of the same set does not move it.
+#[test]
+fn a_notice_naming_another_selected_pane_of_the_same_set_changes_nothing() {
+    let (mut local, events) = attached();
+    let command = in_place(&local, vec![layout()], &["left", "right"], "right");
+    local.command(command).unwrap();
+    assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
+    assert_eq!(local.state.panes[0].label, "left", "labels were taken");
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn a_pane_set_no_stream_can_have_is_not_taken() {
+    let many: Vec<String> = (0..25).map(|n| format!("pane{n}")).collect();
+    let many: Vec<&str> = many.iter().map(String::as_str).collect();
+    for (panes, selected) in [
+        (vec![], "left"),
+        (vec!["left", "left"], "left"),
+        (vec!["left", "third"], "right"),
+        (many, "pane0"),
+    ] {
+        let (mut local, events) = attached();
+        let command = in_place(&local, vec![layout()], &panes, selected);
+        local.command(command).unwrap();
+        assert_eq!(ids(&local), ["left", "right"], "{panes:?}");
+        assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
+        assert!(events.try_recv().is_err());
+    }
+}
+
+/// A stream whose set is the lease's (a daemon without 119) is judged as
+/// before: a layout with another pane set is dropped.
+#[test]
+fn without_the_capability_a_layout_with_another_pane_set_is_still_dropped() {
+    let (mut local, events) = attached();
+    let layout = layout_of(&[("left", "Shell"), ("right", "Build"), ("third", "Logs")]);
+    local.command(notice(&local, vec![layout])).unwrap();
+    assert_eq!(ids(&local), ["left", "right"]);
+    assert!(events.try_recv().is_err());
 }
 #[test]
 fn native_topology_updates_labels_and_order_without_changing_selection() {

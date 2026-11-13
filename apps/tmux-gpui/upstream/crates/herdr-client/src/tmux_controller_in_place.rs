@@ -67,6 +67,11 @@ impl Controller {
         self.presentation.reset();
         Ok(inputs)
     }
+    /// The stream's whole pane set as it is now, when the stream follows
+    /// pane changes in place; `None` for a stream whose set is the lease's.
+    pub fn panes_in_place(&self) -> Option<Vec<String>> {
+        (self.in_place.enabled).then(|| self.topology.issued().iter().cloned().collect())
+    }
     /// After the controls of one poll: when the layout snapshot of the last
     /// frame's epoch is in, the window may be presented again, and a removed
     /// selected pane is replaced. Whether that happened now.

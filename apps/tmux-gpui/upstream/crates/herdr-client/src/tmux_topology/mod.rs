@@ -71,6 +71,10 @@ impl Topology {
     pub fn epoch(&self) -> Option<u64> {
         self.epoch
     }
+    /// The panes this stream carries.
+    pub fn issued(&self) -> &BTreeSet<String> {
+        &self.issued
+    }
     pub fn awaiting_authority(&self) -> bool {
         self.awaiting_authority
     }

@@ -81,7 +81,7 @@ fn surface_source_requests_only_read_only_binary_cells() {
                     assert_eq!(body["stream"]["panes"], serde_json::json!(["pane.first"]));
                     assert_eq!(
                         body["stream"]["terminalDelivery"]["protocolVersions"],
-                        serde_json::json!([1, 109])
+                        serde_json::json!([1, 109, 119])
                     );
                     serde_json::json!({"status":"issued","descriptor":{
                         "protocolVersion":2,"webSocketUrl":format!("ws://127.0.0.1:{port}/v2/terminal/pane-streams/redeem"),

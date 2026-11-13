@@ -97,3 +97,36 @@ fn refusal_preserves_code_without_peer_text() {
     ));
     assert!(!format!("{error:?}").contains("private-material"));
 }
+
+/// #723. The daemon's schema allows nine numbers; one more and no stream can
+/// be issued at all, by any daemon. 119 is offered wherever it fits.
+#[test]
+fn topology_in_place_is_offered_wherever_the_nine_number_bound_allows() {
+    for graphics in [false, true] {
+        for local_images in [false, true] {
+            for native_surfaces in [false, true] {
+                for interactive in [false, true] {
+                    let offer =
+                        offered_versions(graphics, local_images, native_surfaces, interactive);
+                    let case = (graphics, local_images, native_surfaces, interactive);
+                    assert!(offer.len() <= 9, "{case:?}: {offer:?}");
+                    let unique: std::collections::BTreeSet<_> = offer.iter().collect();
+                    assert_eq!(unique.len(), offer.len(), "{case:?}");
+                    // The one offer that is already full: graphics, native
+                    // surfaces and input.
+                    let full = graphics && native_surfaces && interactive;
+                    assert_eq!(offer.contains(&119), !full, "{case:?}: {offer:?}");
+                    assert_eq!(offer.contains(&118), graphics, "{case:?}");
+                }
+            }
+        }
+    }
+    assert_eq!(
+        offered_versions(true, false, false, true),
+        [1, 101, 113, 118, 103, 104, 105, 106, 119]
+    );
+    assert_eq!(
+        offered_versions(true, true, true, true),
+        [1, 101, 114, 118, 103, 104, 116, 105, 106]
+    );
+}
