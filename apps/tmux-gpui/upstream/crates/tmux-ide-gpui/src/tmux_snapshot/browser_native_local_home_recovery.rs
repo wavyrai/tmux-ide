@@ -110,6 +110,8 @@ pub(super) struct Recovery {
     active: Option<Attempt>,
     /// Set when Home stopped on a failure that won't recover by itself.
     fault: Option<&'static str>,
+    /// A Home that failed to load keeps looking for its daemon.
+    pub(super) quiet: quiet::Quiet,
 }
 struct Attempt {
     attempts: u32,
@@ -215,6 +217,7 @@ impl Local {
                 self.home = Recovery {
                     active: None,
                     fault: Some(message),
+                    ..Recovery::default()
                 };
                 self.state.status = message.into();
             }
@@ -225,9 +228,12 @@ impl Local {
     /// None in the background or off Home: nothing runs there, so a due retry
     /// must not keep the actor awake.
     pub(super) fn home_recovery_wait(&self) -> Option<Duration> {
-        self.home_visible()
-            .then(|| self.home.wait(Instant::now()))
+        let quiet = self.home.quiet.wait(Instant::now());
+        (self.home_visible().then(|| self.home.wait(Instant::now())))
             .flatten()
+            .into_iter()
+            .chain(quiet)
+            .min()
     }
     pub(super) fn home_recovery_tick(&mut self) -> Result<(), Error> {
         if self.stage.is_some() || !self.home_visible() || !self.home.due(Instant::now()) {
@@ -257,8 +263,8 @@ impl Local {
     /// row by row, and keeps row ids only for the same daemon identity
     /// (`receive_catalog`), so Home doesn't repaint after a drop.
     pub(super) fn home_recovered(&mut self) {
-        self.home.active = None;
-        self.home.fault = None;
+        self.quiet_found();
+        self.home = Recovery::default();
     }
     /// Opening a session waits for Home to reconnect, and is refused with the
     /// reason after a failure that won't recover by itself.

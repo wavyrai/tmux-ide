@@ -7,6 +7,7 @@ fn catalog(environment: &str, generation: &str, rows: usize) -> FleetCatalog {
         generation: uuid::Uuid::new_v4().to_string(),
     };
     FleetCatalog {
+        service_version: None,
         identity: CatalogIdentity {
             instance_id: generation.into(),
             environment_id: Some(environment.into()),

@@ -254,3 +254,57 @@ fn fleet_agent_redraw_does_not_rebind_removed_unavailable_or_new_scope(cx: &mut 
         assert!(receiver.try_recv().is_err());
     }
 }
+
+/// Two machines each have a session with the same live id. On Home, the
+/// agent observed on one of them is listed under that machine's project
+/// only, and only that project counts its attention.
+#[test]
+fn home_lists_an_agent_under_its_own_machines_namesake_only() {
+    use crate::tmux_snapshot::browser_ui::sidebar::hierarchy;
+    let group = |id: &str| {
+        serde_json::json!({"id":id,"label":id,"state":"ready","conflict":false,
+            "omittedSessions":0,"sessions":[{"id":format!("{id}-a"),"name":"Alpha",
+            "paneCount":1,"sessionId":"same-live-id",
+            "selection":uuid::Uuid::new_v4().to_string()}]})
+    };
+    for (machine, expected) in [(Some("local"), 1), (Some("remote"), 1), (None, 2)] {
+        let mut agent = serde_json::json!({"key":"agent","sessionId":"same-live-id",
+            "paneId":"pane-a","name":"Claude","sessionLabel":"Alpha",
+            "status":"BLOCKED","attention":true,"available":true});
+        if let Some(machine) = machine {
+            agent["machine"] = machine.into();
+        }
+        let state = browser::State {
+            surface: browser::Surface::Home,
+            fleet: Some(
+                serde_json::from_value(serde_json::json!({
+                    "groups":[group("local"), group("remote")],"omittedGroups":0}))
+                .unwrap(),
+            ),
+            home_agents: Some(
+                serde_json::from_value(serde_json::json!({"revision":1,"phase":"live",
+                    "rows":[agent],"observedSessions":1,"totalSessions":1,
+                    "truncatedSessions":0,"truncatedRows":0,"note":null}))
+                .unwrap(),
+            ),
+            ..Default::default()
+        };
+        let rows = hierarchy::rows(
+            &state,
+            state.fleet.as_ref().unwrap(),
+            std::time::Instant::now(),
+        );
+        let agents = rows.iter().filter(|r| r.agent.is_some()).count();
+        let counted = rows.iter().filter(|r| r.attention > 0).count();
+        assert_eq!((agents, counted), (expected, expected), "{machine:?}");
+        if let Some(machine) = machine {
+            // The agent row follows its own machine's project row.
+            let at = rows.iter().position(|r| r.agent.is_some()).unwrap();
+            assert!(
+                matches!(&rows[at - 1].target,
+                    Some(Target::FleetSession { machine: m, .. }) if m == machine),
+                "{machine}"
+            );
+        }
+    }
+}

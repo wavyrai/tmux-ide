@@ -42,12 +42,17 @@ export async function captureAgentAdmission(
           id !== session.id ||
           !/^@\d+$/.test(window!) ||
           !/^%\d+$/.test(pane!) ||
-          !/^[1-9]\d*$/.test(birth!)
+          !/^(?:[1-9]\d*)?$/.test(birth!)
         )
           throw new Error("Agent native identity is unavailable");
         return { window: window!, pane: pane!, birth: birth!, stamp: stamp! };
       });
     if (rows.length > 512) throw new Error("Agent inventory exceeds admission bounds");
+    // A stock tmux server has no pane birth id: every row reads empty. Its pane
+    // ids are never reused while it runs, and each command already checks the
+    // session id and creation time, so the pane and window ids fence the lifetime.
+    if (rows.some((row) => row.birth === "") && rows.some((row) => row.birth !== ""))
+      throw new Error("Agent native identity is unavailable");
     return rows;
   };
   const initial = await scan();

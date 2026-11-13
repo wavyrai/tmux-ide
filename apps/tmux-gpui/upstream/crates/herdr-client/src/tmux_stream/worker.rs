@@ -199,11 +199,16 @@ fn validate_headers(options: &ConnectOptions) -> Result<(), Error> {
 struct Stream {
     socket: TcpStream,
     boundary: super::boundary::Boundary,
+    /// When the peer last sent any bytes: a frame, part of one, or a ping.
+    heard: Instant,
 }
 
 impl Read for Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let read = self.socket.read(buf)?;
+        if read > 0 {
+            self.heard = Instant::now();
+        }
         self.boundary.observe(&buf[..read]);
         if self.boundary.binary_oversized() {
             return Err(io::Error::new(
@@ -281,6 +286,7 @@ fn run(
     let stream = Stream {
         socket,
         boundary: super::boundary::Boundary::default(),
+        heard: Instant::now(),
     };
     let deadline = Instant::now() + READY_TIMEOUT;
     let mut handshake = tungstenite::client::client_with_config(request, stream, Some(config));
@@ -306,6 +312,9 @@ fn run(
     {
         return Err(Error::Identity);
     }
+    // Only a daemon that says it pings may be judged by its silence.
+    let silence = crate::tmux_heartbeat::Heartbeat::advertised(&response)
+        .map(|heartbeat| heartbeat.silence());
     socket.get_mut().socket.set_nonblocking(false)?;
     socket.get_mut().socket.set_read_timeout(Some(POLL))?;
     socket
@@ -347,7 +356,14 @@ fn run(
                 if matches!(
                     error.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
+                ) =>
+            {
+                // Checked only after a read that found nothing, so bytes that
+                // waited in the buffer (the app was suspended) count first.
+                if silence.is_some_and(|limit| socket.get_ref().heard.elapsed() >= limit) {
+                    return Err(Error::Silent);
+                }
+            }
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
                 return Err(Error::Disconnected);
             }

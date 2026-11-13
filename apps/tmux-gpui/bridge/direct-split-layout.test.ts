@@ -57,6 +57,43 @@ test("reads exact window and server, never creates a subscription or retries", a
   assert.equal(events[0].status, "ok");
   assert.ok(!JSON.stringify(events).includes(config.ownerToken));
 });
+test("a read the binding cannot serve is answered failed, never left without an answer", async () => {
+  const events: SplitLayoutResult[] = [];
+  const reader = createDirectSplitLayout((e) => events.push(e), (async () => {
+    throw Error("unexpected");
+  }) as typeof fetch);
+  const failed = (request: number, sequence: number) => ({
+    type: "native-split-layout-result",
+    version: 1,
+    id: binding.id,
+    request,
+    sequence,
+    status: "failed",
+  });
+  // Not bound yet.
+  assert.equal(await reader.handle(command), false);
+  assert.deepEqual(events, [failed(1, 1)]);
+  // Bound to an older request than the app's.
+  reader.bind(binding);
+  assert.equal(await reader.handle({ ...command, request: 2, sequence: 7 }), false);
+  assert.deepEqual(events[1], failed(2, 7));
+  // Another session's window, and a read-only binding.
+  assert.equal(
+    await reader.handle({
+      ...command,
+      sequence: 8,
+      window: { ...window, liveSessionId: `live-session.${"d".repeat(20)}` },
+    }),
+    false,
+  );
+  assert.deepEqual(events[2], failed(1, 8));
+  reader.bind({ ...binding, catalogOnly: true });
+  assert.equal(await reader.handle({ ...command, sequence: 9 }), false);
+  assert.deepEqual(events[3], failed(1, 9));
+  // Something that is not a layout read is not answered at all.
+  assert.equal(await reader.handle({ type: "other" }), false);
+  assert.equal(events.length, 4);
+});
 test("scope mismatch and read-only catalog never dispatch", async () => {
   let calls = 0;
   const reader = createDirectSplitLayout(() => {}, (async () => {

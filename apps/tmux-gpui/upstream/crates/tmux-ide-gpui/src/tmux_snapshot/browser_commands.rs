@@ -1,4 +1,37 @@
 use super::*;
+/// Why a terminal stream ended, as far as the peer said. The catalog picks the
+/// first step of the reconnect from it; every cause reconnects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tmux_snapshot) enum Cause {
+    /// No close frame: a reset, an I/O error, a timeout, a failed command.
+    #[default]
+    Lost,
+    /// The daemon closed the stream and was there to say so. Any reason this
+    /// app does not know, and 1001 "daemon-shutdown", which a 2.9.22 daemon
+    /// sends for every close while it stays up.
+    Closed,
+    /// 1012 "tmux-server-retired": the daemon stays up, the server has a new
+    /// generation. The old lease cannot be renewed, so the catalog is read.
+    ServerRetired,
+    /// 1012 "daemon-restarting": the daemon comes back in place, perhaps on a
+    /// new port. Its record is read again.
+    DaemonRestarting,
+    /// 1000 "panes-closed": the session's last pane exited.
+    PanesClosed,
+    /// The ready frame was not the lease's (the owner was rebuilt in between).
+    Identity,
+    /// The daemon advertised a heartbeat and then sent nothing for its limit.
+    Silent,
+}
+impl Cause {
+    /// The daemon sent a close frame, so it was reachable a moment ago.
+    pub(in crate::tmux_snapshot) fn daemon_spoke(self) -> bool {
+        matches!(
+            self,
+            Self::Closed | Self::ServerRetired | Self::DaemonRestarting | Self::PanesClosed
+        )
+    }
+}
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(in crate::tmux_snapshot) enum Command {
@@ -34,6 +67,9 @@ pub(in crate::tmux_snapshot) enum Command {
         live_session_id: String,
         generation: String,
         presence_revision: u64,
+        /// In-process only: the pipe protocol has no such field.
+        #[serde(skip)]
+        cause: Cause,
     },
     #[serde(rename = "native-terminal-ready", rename_all = "camelCase")]
     NativeTerminalReady {

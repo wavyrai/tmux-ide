@@ -639,6 +639,130 @@ mod live {
         c.retire();
         peer.join().unwrap();
     }
+
+    /// A gesture whose resize tmux applied: the receipt named `successor`,
+    /// and only the read of the new layout is outstanding.
+    fn applied(state: &DividerState) -> Gesture {
+        let window = state.scope.as_ref().unwrap().window.clone();
+        let mut applied = gesture();
+        applied.target.window = window.clone();
+        applied.successor = Some(SplitSuccessor {
+            resource: resource(window),
+            split_id: gesture().target.split_id,
+        });
+        applied.deadline = 5_000;
+        applied
+    }
+
+    /// #740: tmux applied the resize and the receipt said so. The read of the
+    /// new layout fails once, as it does while the daemon's own view of the
+    /// window is still settling. That is not a failed drag: the read is tried
+    /// again inside the gesture's deadline, and the drag settles.
+    #[test]
+    fn an_applied_resize_survives_a_failed_read_of_its_new_layout() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        let window = state.scope.as_ref().unwrap().window.clone();
+        state.active = Some(applied(&state));
+        state.read_failed(first);
+        assert!(state.busy(), "tmux applied it: one lost read is not Failed");
+        assert_eq!(read_at(&mut c, &mut state, 1), None, "no tight retry");
+        assert!(state.busy());
+        let second = read_at(&mut c, &mut state, 502).unwrap();
+        assert_eq!(second, first + 1);
+        assert!(
+            state
+                .accept_resource(&mut c, second, resource(window))
+                .unwrap()
+        );
+        state.observe(&mut c, &update(), 600).unwrap();
+        assert!(!state.busy());
+        let settled = state.publication().unwrap();
+        assert_eq!(settled.phase, SplitPhase::Settled);
+        assert_eq!(settled.boundary, 4);
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    /// The same wait is bounded: reads that keep failing end the gesture as
+    /// Failed at its deadline, and a gesture tmux never acknowledged still
+    /// fails on the first lost read.
+    #[test]
+    fn an_applied_resize_whose_layout_is_never_read_fails_at_its_deadline() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.active = Some(applied(&state));
+        let mut sequence = first;
+        let mut reads = 0;
+        let mut out = true;
+        for now in (0..5_000).step_by(50) {
+            if std::mem::take(&mut out) {
+                state.read_failed(sequence);
+            }
+            if let Some(next) = read_at(&mut c, &mut state, now) {
+                sequence = next;
+                reads += 1;
+                out = true;
+            }
+            assert!(state.busy(), "{now}");
+        }
+        assert_eq!(reads, 3, "500 ms, 1 s and 2 s after each loss");
+        state.observe(&mut c, &update(), 5_000).unwrap();
+        assert!(!state.busy());
+        assert_eq!(
+            state.publication().map(|p| p.phase),
+            Some(SplitPhase::Failed)
+        );
+        // No receipt: the read was the gesture's only way forward.
+        let mut waiting = gesture();
+        waiting.id = uuid::Uuid::new_v4().to_string();
+        waiting.deadline = u64::MAX;
+        state.active = Some(waiting);
+        state.read_failed(sequence);
+        assert!(!state.busy());
+        assert_eq!(
+            state.publication().map(|p| p.phase),
+            Some(SplitPhase::Failed)
+        );
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    /// #734 (review of #333): a due retry waits while an advisory layout
+    /// disagrees with the last authoritative snapshot.
+    #[test]
+    fn a_due_retry_waits_for_layout_authority() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        assert_eq!(read_at(&mut c, &mut state, 1), None);
+        c.topology.apply_control(&serde_json::value::to_raw_value(&json!({
+            "type":"layout","semanticWindowId":"window.one","currentWindow":true,
+            "cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off",
+            "panes":[{"pane":"left","left":0,"top":0,"width":5,"height":2,"active":true},{"pane":"right","left":6,"top":0,"width":3,"height":2,"active":false}]
+        })).unwrap()).unwrap();
+        assert!(c.topology.awaiting_authority());
+        assert_eq!(
+            read_at(&mut c, &mut state, 5_000),
+            None,
+            "no read of a layout that is about to be replaced"
+        );
+        c.retire();
+        peer.join().unwrap();
+    }
+
+    /// #734 (review of #333): a read issued for another reason (the request
+    /// advanced) replaces the lost one. The loss is then settled: no second
+    /// read follows it 500 ms later while the new one is still out.
+    #[test]
+    fn a_newly_issued_read_clears_the_loss_it_replaces() {
+        let (mut c, _response, peer, mut state, first) = scoped();
+        state.read_failed(first);
+        state.rebind_request().unwrap();
+        assert_eq!(state.take_read().map(|r| r.sequence), Some(first + 1));
+        for now in [1, 501, 2_000, 30_000] {
+            assert_eq!(read_at(&mut c, &mut state, now), None, "{now}");
+        }
+        c.retire();
+        peer.join().unwrap();
+    }
 }
 
 #[test]

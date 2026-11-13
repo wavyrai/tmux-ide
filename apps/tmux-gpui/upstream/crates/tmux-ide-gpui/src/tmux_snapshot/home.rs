@@ -467,13 +467,18 @@ impl SnapshotView {
         }
         // The pane-limit notice is always loud: it shows beside a card too.
         let notice = self.browser_state.home_notice.as_ref().filter(|_| is_live);
-        if (act.is_some() && notice.is_some())
+        let status_shown = (act.is_some() && notice.is_some())
             || (act.is_none()
                 && ((connected && setup_phase.is_some())
                     || (!is_live && !waiting && !self.browser_state.status.is_empty())
                     || (is_live && self.browser_state.home_fault)
-                    || notice.is_some()))
-        {
+                    || notice.is_some()));
+        // #693: the status line above already says why the list failed, so
+        // the list's own strip would be a second one under it.
+        let list_failure_said = status_shown
+            && connected
+            && self.browser_state.home_phase == browser::HomePhase::Unavailable;
+        if status_shown {
             let status = match notice.filter(|_| act.is_some()) {
                 Some(notice) => crate::notifications::safe_text(notice, 480),
                 None => status_message(&self.browser_state, connected),
@@ -598,7 +603,11 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if (!connected || setup_phase.is_none()) && !waiting && act.is_none() {
+        } else if (!connected || setup_phase.is_none())
+            && !waiting
+            && act.is_none()
+            && !list_failure_said
+        {
             let guidance = if !connected {
                 bezel
                     .error_strip(CONNECTION_LOST)

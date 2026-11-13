@@ -189,3 +189,35 @@ fn a_live_home_reconnects_quietly_and_shows_a_fatal_reason(cx: &mut TestAppConte
     });
     assert_eq!(shown(cx), ["home-status-warning", "tmux-home-session-0"]);
 }
+
+/// #693: an unavailable list is said once. The status line carries the
+/// reason, so the list's own strip stays out; with no reason to show, the
+/// list's strip is the one that says it.
+#[gpui::test]
+fn an_unavailable_list_shows_one_strip_not_two(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| home_view(window, cx, sender));
+    cx.simulate_resize(size(px(900.), px(800.)));
+    receiver.try_iter().for_each(drop);
+    let strips = |cx: &mut VisualTestContext| {
+        [
+            "home-status-warning",
+            "home-status-error",
+            "home-guidance-warning",
+            "home-guidance-error",
+        ]
+        .into_iter()
+        .filter(|key| cx.debug_bounds(key).is_some())
+        .collect::<Vec<_>>()
+    };
+    draw(&view, cx, |v| {
+        v.browser_state.sessions.clear();
+        v.browser_state.local_setup = None;
+        v.browser_state.home_phase = browser::HomePhase::Unavailable;
+        v.browser_state.status = "No online tmux servers".into();
+    });
+    assert_eq!(strips(cx), ["home-status-warning"]);
+    // The normal case: nothing above says it, so the list's strip does.
+    draw(&view, cx, |v| v.browser_state.status.clear());
+    assert_eq!(strips(cx), ["home-guidance-warning"]);
+}

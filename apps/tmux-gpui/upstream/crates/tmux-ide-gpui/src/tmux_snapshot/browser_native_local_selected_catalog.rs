@@ -20,11 +20,26 @@ pub(super) struct Gate {
     held: bool,
     /// Re-armed after a drop: report `Resumed` once the lane is live.
     recovering: bool,
+    /// When the kept catalog is read again because a server in it is away,
+    /// and how often it was ([`Gate::recheck_due`]).
+    recheck: Option<(Instant, u32)>,
     /// Tests: a change the detached lane takes right after the next read is
     /// submitted, so a test sees which side of the submit the cursor was
     /// sampled on.
     #[cfg(test)]
     advance_after_submit: Option<u64>,
+}
+/// A catalog with a registered server offline, or with no server online, is
+/// read again by itself: first after 5 s, then doubling to once a minute. A
+/// 2.9.22 daemon looks for an offline server only when it is asked, and says
+/// nothing when one comes back, so Home showed "Create a local session to
+/// begin" for a tmux server that was running again until someone refreshed
+/// (soak, 12 Nov 2026).
+const RECHECK_FIRST: Duration = Duration::from_secs(5);
+const RECHECK_CAP: Duration = Duration::from_secs(60);
+fn server_away(catalog: &FleetCatalog) -> bool {
+    let online = |server: &ServerRegistration| matches!(server, ServerRegistration::Online { .. });
+    !catalog.servers.iter().all(online) || !catalog.servers.iter().any(online)
 }
 enum Notice {
     Changed(FleetCatalog),
@@ -35,6 +50,32 @@ enum Notice {
 impl Gate {
     pub(super) fn reset(&mut self) {
         *self = Self::default();
+    }
+    /// Whether the kept catalog is due to be read again for a server that
+    /// is away. Each due read doubles the wait; a catalog with every server
+    /// online, or none kept, ends it.
+    fn recheck_due(&mut self, now: Instant) -> bool {
+        if !self.last.as_ref().is_some_and(server_away) {
+            self.recheck = None;
+            return false;
+        }
+        let (due, reads) = *self.recheck.get_or_insert((now + RECHECK_FIRST, 0));
+        if now < due {
+            return false;
+        }
+        let wait = RECHECK_FIRST
+            .saturating_mul(1u32.checked_shl(reads + 1).unwrap_or(u32::MAX))
+            .min(RECHECK_CAP);
+        self.recheck = Some((now + wait, reads.saturating_add(1)));
+        true
+    }
+    /// How long until the kept catalog is read again, for the actor's wait.
+    fn recheck_wait(&self, now: Instant) -> Option<Duration> {
+        let (due, _) = self.recheck?;
+        Some(
+            due.saturating_duration_since(now)
+                .max(Duration::from_millis(50)),
+        )
     }
     fn cancel_read(&mut self) {
         if self.reader.take().is_some() {
@@ -103,6 +144,8 @@ impl Gate {
                 self.read_completed();
                 if self.last.as_ref() != Some(&snapshot) {
                     self.last = Some(snapshot.clone());
+                    // What is away now starts its own count.
+                    self.recheck = None;
                     return Ok(Some(Notice::Changed(snapshot)));
                 }
                 Ok(None)
@@ -120,6 +163,7 @@ impl Gate {
         if !visible {
             self.cancel_read();
             self.watch.take();
+            self.recheck = None;
             return Ok(None);
         }
         if !eligible {
@@ -181,6 +225,9 @@ impl Gate {
         {
             self.reader.take();
             return self.on_read(result);
+        }
+        if self.reader.is_none() && self.recheck_due(Instant::now()) {
+            self.dirty = true;
         }
         if self.dirty && self.reader.is_none() && self.last.is_some() {
             // Sampled before the read is submitted: the read then reflects at
@@ -278,6 +325,12 @@ impl Owner {
             .as_ref()
             .is_some_and(CatalogWatchWorker::fleet_push);
         Ok((push, std::mem::take(&mut catalog.notified)))
+    }
+    /// How long until the selected catalog reads itself again for a server
+    /// that is away; `None` when nothing is.
+    pub(in crate::tmux_snapshot) fn catalog_recheck_wait(&self) -> Option<Duration> {
+        let owned = self.0.lock().ok()?;
+        owned.catalog.recheck_wait(Instant::now())
     }
     fn poll_catalog(&self, visible: bool, eligible: bool) -> Result<Option<Notice>, Error> {
         let mut owned = self

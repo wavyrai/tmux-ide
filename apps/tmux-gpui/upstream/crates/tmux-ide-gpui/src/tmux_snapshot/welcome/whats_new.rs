@@ -11,10 +11,10 @@ pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
     (
         "0.1.17",
         &[
+            "Terminals reconnect by themselves when the connection to the background service or tmux drops.",
             "A welcome screen sets Tmux IDE up in one click.",
             "Setup and connection problems say what happened in plain words.",
             "About Tmux IDE, in the Tmux IDE menu, shows the versions of the app, the background service and tmux.",
-            "What's new shows once after each update, like this.",
         ],
     ),
     (

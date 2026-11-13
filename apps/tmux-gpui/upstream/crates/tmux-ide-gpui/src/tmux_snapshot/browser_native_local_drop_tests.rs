@@ -38,6 +38,7 @@ fn catalog(instance: &str) -> FleetCatalog {
         favicon: None,
     };
     FleetCatalog {
+        service_version: None,
         identity: CatalogIdentity {
             instance_id: instance.into(),
             environment_id: None,
@@ -252,4 +253,51 @@ fn a_long_recovery_publishes_last_known_and_a_reset_clears_it() {
     drained(&events);
     assert!(!local.state.agents_last_known);
     assert!(local.state.workspace_agents.is_none());
+}
+
+fn published(events: &mpsc::Receiver<Incoming>) -> Option<State> {
+    let mut last = None;
+    while let Ok(event) = events.try_recv() {
+        if let Incoming::Catalog(state) = event {
+            last = Some(*state);
+        }
+    }
+    last
+}
+
+/// #831: Home learns the service's version from its session list, with no
+/// terminal open, and stops showing it once that list is no longer live.
+#[test]
+fn home_publishes_the_service_version_only_while_its_catalog_is_live() {
+    let (mut local, events) = fixture();
+    local.state.surface = Surface::Home;
+    let mut snapshot = catalog("instance-a");
+    snapshot.service_version = Some("2.9.22".into());
+    local.receive_catalog(snapshot, true).unwrap();
+    let state = published(&events).unwrap();
+    assert_eq!(state.home_phase, HomePhase::Live);
+    assert_eq!(state.service_version.as_deref(), Some("2.9.22"));
+    // A version that is not a plain release string is never shown or exported.
+    let mut odd = catalog("instance-a");
+    odd.service_version = Some("2.9.22 /Users/secret".into());
+    local.receive_catalog(odd, false).unwrap();
+    assert_eq!(published(&events).unwrap().service_version, None);
+    let mut snapshot = catalog("instance-a");
+    snapshot.service_version = Some("2.9.22".into());
+    local.receive_catalog(snapshot, false).unwrap();
+    assert!(published(&events).unwrap().service_version.is_some());
+    // An open terminal reports its own service: Home's is not lent to it.
+    local.state.surface = Surface::Workspace;
+    local.publish().unwrap();
+    assert_eq!(published(&events).unwrap().service_version, None);
+    local.state.surface = Surface::Home;
+    local.publish().unwrap();
+    assert!(published(&events).unwrap().service_version.is_some());
+    // The list is lost: the version goes with it.
+    local.unavailable("No online tmux servers").unwrap();
+    assert_eq!(published(&events).unwrap().service_version, None);
+    // A fresh discovery forgets the old service before the new one answers.
+    local.home(1).unwrap();
+    assert_eq!(local.service_version, None);
+    assert_eq!(published(&events).unwrap().service_version, None);
 }
