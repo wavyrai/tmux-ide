@@ -148,6 +148,9 @@ mod render;
 #[path = "tests/fleet.rs"]
 mod fleet;
 
+#[path = "tests/rows_window.rs"]
+mod rows_window;
+
 #[path = "tests/preferences.rs"]
 mod preferences;
 
@@ -188,3 +191,5 @@ mod pane_limit;
 
 #[path = "tests/away.rs"]
 mod away;
+#[path = "tests/plain_words.rs"]
+mod plain_words;

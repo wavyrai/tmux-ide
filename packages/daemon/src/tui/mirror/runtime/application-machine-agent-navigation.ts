@@ -1,3 +1,4 @@
+import type { AdmittedPaneSelectionOutcome } from "./application-terminal-interaction-controller.ts";
 import { retainsAgentControl } from "./application-retained-agent.ts";
 import {
   createApplicationHomeAgentNavigator,
@@ -14,9 +15,34 @@ import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.t
 
 type HomeNavigatorOptions = Parameters<typeof createApplicationHomeAgentNavigator>[0];
 
+/**
+ * The two checks the navigator asks of the machines' agent roster: is a row
+ * current, and is it current once a re-read in progress has finished.
+ */
+export function machineAgentRosterChecks(roster: {
+  isCurrentTarget(machineId: string, row: never): boolean;
+  whenCurrentTarget(machineId: string, row: never, signal: AbortSignal): Promise<boolean>;
+}) {
+  return {
+    isCurrentTarget: (machineId: string, row: HomeAgentNavigationTarget): boolean =>
+      roster.isCurrentTarget(machineId, row as never),
+    waitForCurrentTarget: (
+      machineId: string,
+      row: HomeAgentNavigationTarget,
+      signal: AbortSignal,
+    ): Promise<boolean> => roster.whenCurrentTarget(machineId, row as never, signal),
+  };
+}
+
 /** Machine identity fences the existing exact-agent admission owner. No independent input path. */
 export function createApplicationMachineAgentNavigator(options: {
   readonly isCurrentTarget: (machineId: string, target: HomeAgentNavigationTarget) => boolean;
+  /** `isCurrentTarget` once the machine's roster has finished a re-read in progress. */
+  readonly waitForCurrentTarget?: (
+    machineId: string,
+    target: HomeAgentNavigationTarget,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   readonly selectedMachineId: () => string | null;
   /** Identity of the attached generation, never inferred from the selected machine. */
   readonly generationMachineId: () => string | null;
@@ -24,7 +50,10 @@ export function createApplicationMachineAgentNavigator(options: {
   readonly sessionName: () => string | null;
   readonly startGeneration: HomeNavigatorOptions["startGeneration"];
   /** The interaction controller's selectPane: `admission` must reach it (#764). */
-  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
+  readonly selectPane: (
+    paneId: string,
+    admission?: Promise<boolean>,
+  ) => void | Promise<AdmittedPaneSelectionOutcome>;
   readonly showTerminals: HomeNavigatorOptions["showTerminals"];
   readonly setNote: HomeNavigatorOptions["setNote"];
 }) {
@@ -81,6 +110,14 @@ export function createApplicationMachineAgentNavigator(options: {
             agents: semantic.sidebar.agents,
           };
         },
+        ...(options.waitForCurrentTarget
+          ? {
+              waitForCurrentTarget: (row: HomeAgentNavigationTarget, signal: AbortSignal) =>
+                selected()
+                  ? options.waitForCurrentTarget!(machineId, row, signal)
+                  : Promise.resolve(false),
+            }
+          : {}),
         waitForGeneration: (key, signal) => waitForHomeAgentSemantic(generation, key, signal),
         waitForAgent: (key, listed, signal) =>
           waitForHomeAgentListed(generation, key, listed, signal),

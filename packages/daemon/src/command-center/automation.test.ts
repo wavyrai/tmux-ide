@@ -114,7 +114,7 @@ function fixture(options: { capacity?: number; retentionMs?: number } = {}) {
   };
   const owners = {
     current,
-    refresh: async () =>
+    observe: async () =>
       records
         .filter((record) => record.valid())
         .map((record) => ({ ...record.scope, state: "online" })),

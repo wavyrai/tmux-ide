@@ -40,7 +40,7 @@ pub(super) enum Kind {
 }
 
 /// What the slot shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Stage {
     Quiet,
     Spinner,
@@ -93,7 +93,7 @@ pub(super) enum Act {
     SshIdentity,
 }
 /// The one card Home shows for it, and the slot's short label.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Card {
     pub slot: &'static str,
     pub title: String,
@@ -108,7 +108,29 @@ pub(super) const KEEP_RUNNING: &str = "Your sessions keep running.";
 pub(super) const UPDATE_NEEDED: &str = "Update needed";
 pub(super) const SETUP_NEEDED: &str = "Set up needed";
 pub(super) const COULDNT_RECONNECT: &str = "Couldn't reconnect";
-pub(super) const CREDENTIALS_DETAIL: &str = "The daemon refused this app's credentials. Refresh reads them again from the daemon's record; if it is still refused, restart the tmux-ide daemon.";
+pub(super) const CREDENTIALS_DETAIL: &str = "The background service refused this app's credentials. Refresh reads them again; if it still refuses, run tmux-ide doctor in Terminal.";
+
+/// The words a user should never have to read (onboarding A0): the
+/// implementation's names for the background service, the command-line tool
+/// and the machine list, and a function key.
+#[cfg(test)]
+pub(in crate::tmux_snapshot) fn jargon(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    ["daemon", "fleet", "catalog"]
+        .into_iter()
+        .find(|w| lower.contains(w))
+        .or_else(|| words.contains(&"CLI").then_some("CLI"))
+        .or_else(|| {
+            words
+                .iter()
+                .any(|w| w.eq_ignore_ascii_case("F5"))
+                .then_some("F5")
+        })
+}
 
 /// The card for `state`, if anything needs the user: this Mac's daemon or
 /// recovery first, then local setup, then the first remote machine.
@@ -126,13 +148,13 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
         return Some(match act {
             Act::DaemonUpdate => card(
                 UPDATE_NEEDED,
-                "tmux-ide needs an update",
+                "Tmux IDE needs an update",
                 &detail,
                 "Refresh",
             ),
             Act::Record => card(
                 SETUP_NEEDED,
-                "The daemon record can't be read",
+                "The background service's details can't be read",
                 &detail,
                 "Refresh",
             ),
@@ -140,19 +162,19 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
             // which is what fixes a rotated token; the text says so.
             Act::Credentials => card(
                 SETUP_NEEDED,
-                "The daemon refused this app",
+                "The background service refused this app",
                 CREDENTIALS_DETAIL,
                 "Refresh",
             ),
             Act::Platform => card(
                 SETUP_NEEDED,
-                "This Mac can't verify the daemon",
+                "This Mac can't verify the background service",
                 &detail,
                 "Refresh",
             ),
             Act::Unreadable => card(
                 SETUP_NEEDED,
-                "The daemon's answer can't be read",
+                "The background service's answer can't be read",
                 &detail,
                 "Refresh",
             ),
@@ -183,11 +205,11 @@ pub(super) fn card(state: &browser::State, connected: bool) -> Option<Card> {
         };
         let title = match setup.phase {
             P::Running => return None,
-            P::Available => "Set up local sessions",
-            P::Missing => "The tmux-ide CLI is missing",
-            P::Unsupported => "This CLI version can't be set up",
-            P::Unrecognized => "The CLI installation wasn't recognized",
-            P::Failed | P::StoppedWaiting => "Local setup didn't finish",
+            P::Available => "Set up Tmux IDE",
+            P::Missing => "The command-line tool is missing",
+            P::Unsupported => "The command-line tool doesn't match the app",
+            P::Unrecognized => "The command-line tool wasn't recognized",
+            P::Failed | P::StoppedWaiting => "Setup didn't finish",
         };
         return Some(card(
             slot,
@@ -265,6 +287,10 @@ pub(super) struct Watch {
     /// it until the agent lane's re-read clears the flag, even once the link
     /// is back and the connection's words are gone.
     pub(super) agents_marked: std::cell::Cell<bool>,
+    /// The input latch was set only by keys typed while reconnecting. Those
+    /// keys were refused and said so; the latch then lifts by itself once the
+    /// stream is back, so typing needs no click (`release_refused_keys`).
+    pub(super) keys_refused: bool,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -275,6 +301,7 @@ impl Default for Watch {
             _wake: None,
             _away_wake: None,
             agents_marked: std::cell::Cell::new(false),
+            keys_refused: false,
         }
     }
 }
@@ -364,6 +391,23 @@ impl SnapshotView {
     /// A key typed while the stream is down was refused (#702: never queued).
     fn key_refused(&self) -> bool {
         self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
+    }
+
+    /// How long the open session's stream has been reconnecting, by the
+    /// watch's clock; `None` when it is not.
+    pub(super) fn session_reconnecting_for(&self) -> Option<Duration> {
+        let (Kind::Session, since, _) = self.connection.since? else {
+            return None;
+        };
+        let (now, _) = (self.connection.clock)();
+        Some(now.saturating_duration_since(since))
+    }
+    /// Moves the start of the wait back, as time passing would.
+    #[cfg(test)]
+    pub(super) fn age_connection_wait(&mut self, by: Duration) {
+        if let Some((_, since, _)) = &mut self.connection.since {
+            *since -= by;
+        }
     }
 
     /// The slot's stage now, by the watch's clock.

@@ -163,6 +163,7 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
     use herdr_client::tmux_daemon::{FleetCatalogSessions, Session};
     let c = context();
     let catalog = FleetCatalog {
+        service_version: None,
         identity: c.catalog_identity.clone(),
         servers: vec![],
         sessions: vec![FleetCatalogSessions {

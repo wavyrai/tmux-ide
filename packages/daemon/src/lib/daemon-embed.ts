@@ -37,6 +37,12 @@ import {
 } from "./tmux-server-generation-runner.ts";
 import { createNativeTmuxServerCatalog } from "./tmux-server-owner.ts";
 import { createEmbeddedTmuxServerOwners } from "./embedded-tmux-server-owners.ts";
+import type { TmuxServerOwnerRetirement } from "./tmux-server-owners.ts";
+import {
+  PANE_STREAM_DAEMON_RESTARTING_CLOSE,
+  paneStreamCloseForRetirement,
+  type PaneStreamShutdownClose,
+} from "../terminal/pane-stream/pane-stream-websocket.ts";
 import {
   captureTmuxServerProofAsync,
   captureTmuxServerProof,
@@ -94,6 +100,7 @@ import { handlePtyWebSocket, shutdownPtyBridges } from "../server/ws-route.ts";
 import {
   broadcastInteractionReceipt,
   broadcastResourceChanged,
+  broadcastTerminalsChanged,
   handleWsEventsConnection,
   setFleetFactsObserverDiagnostics,
   setFleetFactsTmuxRunner,
@@ -120,7 +127,7 @@ import {
   WorkspacePaneCreationAuthority,
 } from "./workspace-pane-creation.ts";
 import {
-  discoverLiveSessionSummaries,
+  readLiveSessionSummaries,
   readAdoptedFleet,
   type FleetSessionFacts,
 } from "../command-center/discovery.ts";
@@ -132,6 +139,7 @@ import { FleetLifecycleAuthority } from "./fleet-lifecycle-authority.ts";
 import { AppWindowMutationAuthority } from "./app-window-mutation.ts";
 import { WorkspaceMultiplexerAuthority } from "./workspace-multiplexer-verbs.ts";
 import { TmuxExternalInteractionObserver } from "./tmux-external-interaction-observer.ts";
+import { createOrphanedControlClientWatch } from "./orphaned-control-clients.ts";
 import {
   createTmuxInteractionObservationHandler,
   externalTmuxInteractionDraft,
@@ -154,6 +162,7 @@ import {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
 } from "../server/pane-stream-upgrade.ts";
+import { daemonWebSocketHeartbeat } from "../server/websocket-heartbeat.ts";
 import {
   createPaneStreamRuntime,
   type PaneStreamRuntime,
@@ -168,7 +177,9 @@ import {
 import { setActivationBackend, type ProjectActivationOptions } from "./active-projects.ts";
 import { readOrMintEnvironmentId } from "./environment-identity.ts";
 import { captureDaemonProvenance } from "./daemon-provenance.ts";
-import { registerLogSecret, setLogIdentity } from "./log.ts";
+import { logger, registerLogSecret, setLogIdentity } from "./log.ts";
+import { createStopProgress, type DaemonStopProgress } from "./daemon-stop-progress.ts";
+export type { DaemonStopProgress } from "./daemon-stop-progress.ts";
 import { createDaemonPluginSupervisor, pluginsEnabled } from "../plugins/daemon-plugins.ts";
 import type { PluginSupervisor } from "../plugins/supervisor.ts";
 import {
@@ -276,7 +287,15 @@ export interface EmbeddedDaemonHandle {
     projectName: string,
     options?: ProjectActivationOptions,
   ): Promise<{ stop: () => Promise<void> }>;
-  stop(opts?: { gracefulMs?: number }): Promise<void>;
+  /** `restarting`: a new generation follows in this process; streams are told to reconnect. */
+  stop(opts?: { gracefulMs?: number; restarting?: boolean }): Promise<void>;
+  /** Where a stop is right now; lets a deadline say what was still open (#839). */
+  stopDiagnostics?(): DaemonStopProgress;
+  /**
+   * Last resort for a stop that will not finish: synchronously withdraw
+   * daemon.json and the startup claim so the forced exit leaves no stale owner.
+   */
+  abandon?(): void;
 }
 
 function tmux(...args: string[]): string {
@@ -459,6 +478,8 @@ function attachWebSockets(
   closeServers: () => Promise<void>;
 } {
   const eventsWss = new WebSocketServer({ noServer: true });
+  const heartbeat = daemonWebSocketHeartbeat();
+  eventsWss.on("headers", (headers) => heartbeat.advertise(headers));
   const ptyWss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
 
@@ -485,6 +506,7 @@ function attachWebSockets(
     if (pathname === "/ws/events") {
       eventsWss.handleUpgrade(req, socket, head, (ws) => {
         track(ws);
+        heartbeat.watch(ws, "ws-events");
         const requestUrl = new URL(req.url ?? "/ws/events", "http://daemon.local");
         handleWsEventsConnection(ws, opts.daemonIdentity, {
           mode: requestUrl.searchParams.get("mode") === "semantic" ? "semantic" : "legacy",
@@ -874,11 +896,13 @@ async function startHttpServer({
   getTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime;
   peekTerminalAttachmentRuntime: () => NativeTerminalAttachmentRuntime | null;
   paneStreamRuntime: PaneStreamRuntime;
-  catalogLiveSessions: () => readonly {
-    readonly liveSessionId: `live-session.${string}`;
-    readonly sessionName: string;
-    readonly paneCount: number;
-  }[];
+  catalogLiveSessions: () =>
+    | readonly {
+        readonly liveSessionId: `live-session.${string}`;
+        readonly sessionName: string;
+        readonly paneCount: number;
+      }[]
+    | null;
   catalogFleet: () =>
     | ReturnType<typeof readAdoptedFleet>
     | Promise<ReturnType<typeof readAdoptedFleet>>;
@@ -1210,6 +1234,13 @@ async function startEmbeddedDaemonGeneration(
     const fleetFactsTmuxRunner = initialNativeServerIdentity
       ? createServerGenerationFencedTmuxAsyncRunner(tmuxAuthority, initialNativeServerIdentity)
       : createPinnedWorkspaceTmuxAsyncRunner(tmuxAuthority);
+    // The daemon's own server: a predecessor killed without a stop may have
+    // left control clients attached to it.
+    const defaultServerOrphanWatch = createOrphanedControlClientWatch({
+      selector: tmuxAuthority.socketSelector,
+      serverId: null,
+    });
+    void defaultServerOrphanWatch.onOwnership();
     const tmuxAuthorityReplaced = createTmuxAuthorityReplacementProbe(
       tmuxAuthority,
       catalogTmuxRunner,
@@ -1440,6 +1471,8 @@ async function startEmbeddedDaemonGeneration(
     };
     let terminalAttachmentRuntime: NativeTerminalAttachmentRuntime | null = null;
     let paneStreamRuntime: PaneStreamRuntime | null = null;
+    // Declared before the owners so their teardown steps can report into it.
+    const stopProgress = createStopProgress();
     let localImages: LocalImageOwner | undefined;
     let serverOwners: Awaited<ReturnType<typeof createEmbeddedTmuxServerOwners>> | null = null;
     let defaultEditorContextRetired = false;
@@ -1555,6 +1588,9 @@ async function startEmbeddedDaemonGeneration(
             { processId: `daemon:${process.pid}`, daemonInstanceId: instanceId },
           )
         : null;
+      let windowOwnershipDiagnostic:
+        | ((phase: string, details?: Record<string, unknown>) => void)
+        | undefined;
       const runtimeObservability = runtimeTracePath
         ? createSessionRuntimeObservability({
             // The JSONL stream is the qualifying record. Keep only a small
@@ -1587,11 +1623,20 @@ async function startEmbeddedDaemonGeneration(
         };
         externalInteractionObserver.setDiagnostics(diagnostics);
         setFleetFactsObserverDiagnostics(diagnostics);
+        windowOwnershipDiagnostic = (phase, details = {}) =>
+          publishObserverDiagnostic({
+            operation: "window-ownership",
+            phase,
+            atMicros: Math.floor(performance.now() * 1_000),
+            ...details,
+          });
       }
       const nativeSurfaces =
         process.platform === "darwin" ? new NativeSurfaceProviderRegistry(instanceId) : undefined;
       sessionRuntimeRegistry = new SessionRuntimeRegistry({
         generation: instanceId,
+        // An idle client that met the 503 re-reads when the inventory is trusted again.
+        onInventoryRecovered: (session) => broadcastTerminalsChanged(session),
         ...(runtimeObservability ? { observability: runtimeObservability } : {}),
         semanticMutations: {
           captureInteractionContext: (intent) => {
@@ -1625,6 +1670,10 @@ async function startEmbeddedDaemonGeneration(
           publishResourceChange: (change) => broadcastResourceChanged(change, instanceId),
         },
         mirror: {
+          // #764 diagnostics (draft only): the window-ownership guard.
+          ...(windowOwnershipDiagnostic
+            ? { onWindowOwnershipDiagnostic: windowOwnershipDiagnostic }
+            : {}),
           onNativeClientPresence: (session, present) =>
             nativeSurfaces?.demand.presence(session, present),
           splitLayoutEpoch: () => observationSelector?.nativeServerEpoch ?? null,
@@ -1858,6 +1907,16 @@ async function startEmbeddedDaemonGeneration(
       });
       await externalInteractionObserver.start();
       serverOwners = await createEmbeddedTmuxServerOwners({
+        trackTeardown: stopProgress.track,
+        // The background sweep, not a client's request, now notices a server
+        // that came back or was replaced; subscribed clients must hear of it.
+        onServersChanged: () => {
+          broadcastResourceChanged({ workspaceName: null, resource: "fleet-catalog" }, instanceId);
+          broadcastResourceChanged(
+            { workspaceName: null, resource: "workspace-catalog" },
+            instanceId,
+          );
+        },
         localImages,
         environmentId,
         onDefaultScope: async (scope) => {
@@ -1953,7 +2012,12 @@ async function startEmbeddedDaemonGeneration(
           resolveNativeSurfaceContext: createNativeSurfaceContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             run: (args, signal) => fleetFactsTmuxRunner(args, signal),
             assertOpen: () => {
@@ -1969,7 +2033,12 @@ async function startEmbeddedDaemonGeneration(
           resolvePaneEditorContext: createPaneEditorContextResolver({
             generation: instanceId,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -1985,7 +2054,12 @@ async function startEmbeddedDaemonGeneration(
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -2001,7 +2075,12 @@ async function startEmbeddedDaemonGeneration(
             generation: instanceId,
             run: fleetFactsTmuxRunner,
             registry: workspaceRegistry,
-            catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+            catalog: createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            ),
             inventory: terminalInventoryRuntime,
             assertOpen: () => {
               if (
@@ -2013,12 +2092,19 @@ async function startEmbeddedDaemonGeneration(
                 throw new Error("Default reader owner is unavailable");
             },
           }),
-          catalog: createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner),
+          catalog: createNativeTmuxServerCatalog(
+            workspaceRegistry,
+            fleetFactsTmuxRunner,
+            undefined,
+            defaultServerOrphanWatch.onTrouble,
+          ),
           readWindowSplitLayout: async (workspaceName, input) => {
             const target = WindowLinkTargetSchemaZ.parse(input);
             const sessions = await createNativeTmuxServerCatalog(
               workspaceRegistry,
               fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
             )();
             const sessionName = workspaceRegistry.get(workspaceName)?.sessionName;
             if (
@@ -2034,7 +2120,12 @@ async function startEmbeddedDaemonGeneration(
           },
           openAgent: async (liveSessionId, observed) => {
             const target = observedAgentSchema.parse(observed);
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            )();
             try {
               return await defaultSessionOpener.openAgent(liveSessionId, target);
             } finally {
@@ -2042,7 +2133,12 @@ async function startEmbeddedDaemonGeneration(
             }
           },
           openSession: async (liveSessionId) => {
-            await createNativeTmuxServerCatalog(workspaceRegistry, fleetFactsTmuxRunner)();
+            await createNativeTmuxServerCatalog(
+              workspaceRegistry,
+              fleetFactsTmuxRunner,
+              undefined,
+              defaultServerOrphanWatch.onTrouble,
+            )();
             const result = await defaultSessionOpener.openSession(liveSessionId);
             terminalInventoryRuntime!.invalidate();
             return result;
@@ -2085,33 +2181,38 @@ async function startEmbeddedDaemonGeneration(
           sessionRuntimeRegistry,
           terminalInventoryRuntime,
           paneStreamRuntime,
-          dispose: async () => {
+          dispose: async (retirement?: TmuxServerOwnerRetirement) => {
             defaultEditorContextRetired = true;
             defaultDiagnosticsLifetime.abort();
             sessionMonitor?.stop();
             paneSourceCredentials.dispose();
+            // Named steps: a hung stop then reports which of these never settled (#839).
+            const step = <T>(name: string, work: () => T | Promise<T>): Promise<T> =>
+              stopProgress.track(`default-owner:${name}`, work);
             const transportResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalAttachmentRuntime?.dispose()),
-              Promise.resolve().then(() => paneStreamRuntime!.dispose()),
+              step("terminal-attachments", () => terminalAttachmentRuntime?.dispose()),
+              step("pane-streams", () =>
+                paneStreamRuntime!.dispose(paneStreamCloseForRetirement(retirement)),
+              ),
             ]);
             const authorityResults = await Promise.allSettled([
-              Promise.resolve().then(() => terminalInventoryRuntime!.dispose()),
-              Promise.resolve().then(() => workspacePaneCreation.dispose()),
-              Promise.resolve().then(() => workspaceOpen.dispose()),
-              Promise.resolve().then(() => workspaceOpenHandoff?.dispose()),
-              Promise.resolve().then(() =>
+              step("terminal-inventory", () => terminalInventoryRuntime!.dispose()),
+              step("pane-creation", () => workspacePaneCreation.dispose()),
+              step("workspace-open", () => workspaceOpen.dispose()),
+              step("workspace-open-handoff", () => workspaceOpenHandoff?.dispose()),
+              step("session-backends", () =>
                 Promise.all([
                   workspacePromotion.dispose(),
                   defaultSessionOpener.dispose(),
                   defaultSessionCreator.dispose(),
                 ]).then(() => {}),
               ),
-              Promise.resolve().then(() => appWindowMutation.dispose()),
-              Promise.resolve().then(() => workspaceMultiplexer.dispose()),
-              Promise.resolve().then(() => disposeInteractionObservation()),
+              step("app-window-mutation", () => appWindowMutation.dispose()),
+              step("multiplexer", () => workspaceMultiplexer.dispose()),
+              step("interaction-observation", () => disposeInteractionObservation()),
             ]);
             try {
-              await sessionRuntimeRegistry!.dispose();
+              await step("session-runtimes", () => sessionRuntimeRegistry!.dispose());
             } finally {
               interactionReceipts.dispose();
               interactionEvidence?.dispose();
@@ -2161,7 +2262,7 @@ async function startEmbeddedDaemonGeneration(
         getTerminalAttachmentRuntime,
         peekTerminalAttachmentRuntime,
         paneStreamRuntime,
-        catalogLiveSessions: () => discoverLiveSessionSummaries(catalogTmuxRunner),
+        catalogLiveSessions: () => readLiveSessionSummaries(catalogTmuxRunner),
         catalogFleet: async () => {
           const endpoint = (sessionName: string, pane: FleetSessionFacts["panes"][number]) =>
             pane.semanticPaneId
@@ -2249,9 +2350,11 @@ async function startEmbeddedDaemonGeneration(
       terminalAttachmentBoundary,
       paneStreamBoundary,
     } = startedServer;
-    const retirePaneStreamTransport = async (): Promise<readonly unknown[]> => {
+    const retirePaneStreamTransport = async (
+      close?: PaneStreamShutdownClose,
+    ): Promise<readonly unknown[]> => {
       const transportResults = await Promise.allSettled([
-        Promise.resolve().then(() => paneStreamRuntime!.dispose()),
+        Promise.resolve().then(() => paneStreamRuntime!.dispose(close)),
         Promise.resolve().then(() => paneStreamBoundary.close()),
       ]);
       const runtimeResults = await Promise.allSettled([
@@ -2375,6 +2478,14 @@ async function startEmbeddedDaemonGeneration(
 
     let stopped = false;
     let stopping: Promise<void> | null = null;
+    // Idempotent: the normal stop and a deadline-forced exit may both reach it.
+    const releaseCanonicalPublication = (): void => {
+      try {
+        clearCanonicalDaemonInfoIfOwned(instanceId, claim);
+      } finally {
+        releaseCanonicalDaemonClaim(claim);
+      }
+    };
     let stopSelf: (() => void) | null = null;
     const activeProjectStops = new Map<string, { stop: () => void }>();
 
@@ -2518,50 +2629,68 @@ async function startEmbeddedDaemonGeneration(
       wsUrl,
       localBypassToken,
       compatibilityTerminalAttachmentRuntimeConstructed: () => terminalAttachmentRuntime !== null,
-      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS } = {}) => {
+      stopDiagnostics: () => stopProgress.snapshot(),
+      abandon: () => releaseCanonicalPublication(),
+      stop: async ({ gracefulMs = DEFAULT_GRACEFUL_MS, restarting = false } = {}) => {
         if (stopping) return stopping;
         if (stopped) return;
         stopping = (async () => {
           const failures: unknown[] = [];
-          const capture = async (operation: () => void | Promise<void>): Promise<void> => {
+          const capture = async (
+            stage: string,
+            operation: () => void | Promise<void>,
+          ): Promise<void> => {
             try {
-              await operation();
+              await stopProgress.run(stage, operation);
             } catch (error) {
               failures.push(error);
             }
           };
           try {
             stopped = true;
-            await capture(() => pluginSupervisor?.stop());
-            await capture(() => setActivationBackend(null));
-            await capture(() => sessionMonitor?.stop());
+            stopProgress.begin();
+            await capture("plugins", () => pluginSupervisor?.stop());
+            await capture("activation-backend", () => setActivationBackend(null));
+            await capture("session-monitor", () => sessionMonitor?.stop());
             paneSourceCredentials.dispose();
-            await capture(() => serverOwners?.dispose());
+            // A generation restarting in place tells its streams to reconnect
+            // now; only a real shutdown says "daemon-shutdown" (#840).
+            await capture("tmux-server-owners", () =>
+              serverOwners?.dispose(restarting ? "generation-restart" : "shutdown"),
+            );
 
             // Retire direct-ticket admission, live PTYs, and the direct upgrade
             // listener before touching the legacy WS or HTTP surfaces.
-            failures.push(
-              ...(await retireTerminalAttachmentTransport(
-                terminalAttachmentRuntime,
-                terminalAttachmentBoundary,
-              )),
-            );
-            failures.push(...(await retirePaneStreamTransport()));
-            await capture(() => localImages?.dispose());
-            await capture(() => terminalInventoryRuntime.dispose());
-            await capture(() => workspacePaneCreation.dispose());
-            await capture(() => workspaceOpen.dispose());
-            await capture(() => workspaceOpenHandoff?.dispose());
-            await capture(() =>
+            await capture("terminal-attachments", async () => {
+              failures.push(
+                ...(await retireTerminalAttachmentTransport(
+                  terminalAttachmentRuntime,
+                  terminalAttachmentBoundary,
+                )),
+              );
+            });
+            await capture("pane-streams", async () => {
+              failures.push(
+                ...(await retirePaneStreamTransport(
+                  restarting ? PANE_STREAM_DAEMON_RESTARTING_CLOSE : undefined,
+                )),
+              );
+            });
+            await capture("local-images", () => localImages?.dispose());
+            await capture("terminal-inventory", () => terminalInventoryRuntime.dispose());
+            await capture("pane-creation", () => workspacePaneCreation.dispose());
+            await capture("workspace-open", () => workspaceOpen.dispose());
+            await capture("workspace-open-handoff", () => workspaceOpenHandoff?.dispose());
+            await capture("session-backends", () =>
               Promise.all([
                 workspacePromotion.dispose(),
                 defaultSessionOpener.dispose(),
                 defaultSessionCreator.dispose(),
               ]).then(() => {}),
             );
-            await capture(() => appWindowMutation.dispose());
-            await capture(() => workspaceMultiplexer.dispose());
-            await capture(() => disposeInteractionObservation());
+            await capture("app-window-mutation", () => appWindowMutation.dispose());
+            await capture("workspace-multiplexer", () => workspaceMultiplexer.dispose());
+            await capture("interaction-observation", () => disposeInteractionObservation());
 
             let closePromise: Promise<void>;
             try {
@@ -2570,26 +2699,28 @@ async function startEmbeddedDaemonGeneration(
               failures.push(error);
               closePromise = Promise.resolve();
             }
-            await capture(() => closeClients());
+            await capture("http-clients", () => closeClients());
             for (const stop of activeProjectStops.values()) {
-              await capture(() => stop.stop());
+              await capture("active-projects", () => stop.stop());
             }
             activeProjectStops.clear();
-            await capture(() => shutdownPtyBridges());
-            await capture(() => Promise.race([closePromise, delay(gracefulMs)]));
+            await capture("pty-bridges", () => shutdownPtyBridges());
+            await capture("http-close-grace", () =>
+              Promise.race([closePromise, delay(gracefulMs)]),
+            );
             for (const socket of sockets) {
-              await capture(() => {
+              await capture("http-sockets", () => {
                 socket.destroy();
               });
             }
-            await capture(() => Promise.race([closePromise, delay(100)]));
-            await capture(() => closeWsServers());
-            await capture(() => shutdownWsEventObservation());
-            await capture(() => setFleetFactsTmuxRunner(null));
-            await capture(() => closeRuntimeTraceStream());
-            await capture(() => setRemoteAccessRestartBackend(null));
-            await capture(() => setDaemonShutdownBackend(null));
-            await capture(() => setDaemonRestartBackend(null));
+            await capture("http-close-final", () => Promise.race([closePromise, delay(100)]));
+            await capture("ws-servers", () => closeWsServers());
+            await capture("ws-event-observation", () => shutdownWsEventObservation());
+            await capture("fleet-facts-runner", () => setFleetFactsTmuxRunner(null));
+            await capture("runtime-trace", () => closeRuntimeTraceStream());
+            await capture("remote-access-backend", () => setRemoteAccessRestartBackend(null));
+            await capture("shutdown-backend", () => setDaemonShutdownBackend(null));
+            await capture("restart-backend", () => setDaemonRestartBackend(null));
 
             if (failures.length > 0) {
               const cause =
@@ -2599,11 +2730,20 @@ async function startEmbeddedDaemonGeneration(
               throw new DaemonShutdownError("Daemon shutdown failed", { cause: cause as Error });
             }
           } finally {
-            try {
-              clearCanonicalDaemonInfoIfOwned(instanceId, claim);
-            } finally {
-              releaseCanonicalDaemonClaim(claim);
-            }
+            const progress = stopProgress.finish();
+            // A quick clean stop is routine (debug); a restart, a slow stop or a
+            // failing one is what the next investigation needs (info).
+            const notable = restarting || failures.length > 0 || progress.elapsedMs >= 1_000;
+            logger[notable ? "info" : "debug"]("daemon-lifecycle", "generation stopped", {
+              generationInstanceId: instanceId,
+              port,
+              stopMs: progress.elapsedMs,
+              failures: failures.length,
+              slowestStages: [...progress.completed]
+                .sort((left, right) => right.ms - left.ms)
+                .slice(0, 5),
+            });
+            releaseCanonicalPublication();
           }
         })();
         return stopping;

@@ -10,6 +10,7 @@ import {
   ownedHookInstalled,
   parseTmuxInputHookRecords,
   type ExternalTmuxInteractionObserverIo,
+  waitForBlockingTmuxClient,
 } from "./tmux-external-interaction-observer.ts";
 import {
   createAuthenticatedInternalReadOperation,
@@ -790,7 +791,85 @@ describe("tmux external interaction observer", () => {
     expect(nextHookHealthcheckDelay(Number.NaN, "healthy", schedule)).toBe(2_000);
     expect(nextHookHealthcheckDelay(-5, "healthy", schedule)).toBe(2_000);
     expect(nextHookHealthcheckDelay(5, "healthy", { baseMs: 0, maxMs: 0 })).toBe(1);
-    expect(DEFAULT_HOOK_HEALTHCHECK_SCHEDULE).toEqual({ baseMs: 1_000, maxMs: 30_000 });
+    expect(DEFAULT_HOOK_HEALTHCHECK_SCHEDULE).toEqual({ baseMs: 1_000, maxMs: 300_000 });
+    // Steady state on a healthy server: one check per five minutes, 12 an hour.
+    let delay = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.baseMs;
+    let checksInFirstHour = 0;
+    for (let at = 0; at < 3_600_000; at += delay) {
+      checksInFirstHour += 1;
+      delay = nextHookHealthcheckDelay(delay, "healthy");
+    }
+    expect(checksInFirstHour).toBe(19); // 9 while backing off, then 10 at the cap
+    expect(delay).toBe(300_000);
+  });
+
+  // Soak, 12 Nov: on a tmux server that was shutting down but could not exit,
+  // every repair "succeeded" and was gone a second later: about 400 tmux calls
+  // a minute for 16 minutes.
+  it("backs off when one unhealthy check follows another", () => {
+    const schedule = { baseMs: 1_000, maxMs: 30_000 };
+    expect(nextHookHealthcheckDelay(8_000, "repaired", schedule, 1)).toBe(1_000);
+    expect(nextHookHealthcheckDelay(1_000, "repaired", schedule, 2)).toBe(2_000);
+    expect(nextHookHealthcheckDelay(2_000, "failed", schedule, 3)).toBe(4_000);
+    expect(nextHookHealthcheckDelay(4_000, "repaired", schedule, 9)).toBe(30_000);
+    expect(nextHookHealthcheckDelay(4_000, "repaired", schedule, 1_000)).toBe(30_000);
+    // A healthy check ends the streak; the caller passes 0 or 1 again.
+    expect(nextHookHealthcheckDelay(30_000, "repaired", schedule)).toBe(1_000);
+    expect(nextHookHealthcheckDelay(30_000, "repaired", schedule, Number.NaN)).toBe(1_000);
+  });
+
+  it("repairs hooks that keep vanishing at a falling rate, and promptly again after a healthy check", async () => {
+    vi.useFakeTimers();
+    const hooks = new Map<string, string>();
+    let vanish = true;
+    let installs = 0;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      healthcheck: { baseMs: 1_000, maxMs: 60_000 },
+      onObserved: () => false,
+      onGap: () => undefined,
+      io: {
+        runTmux: async (args) => {
+          if (args.includes("if-shell")) return "tmux-ide-drain-consumed";
+          if (args[0] === "show-hooks") return vanish ? "" : showHooks(args, hooks);
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            if (args[2] === "after-send-keys") installs += 1;
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          return "";
+        },
+        waitForSignal: async (_channel, signal) =>
+          new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          }),
+        delay: async () => undefined,
+      },
+    });
+    try {
+      await observer.start();
+      const afterStart = installs;
+      // Repairs at 1 s, 2 s, 4 s, 8 s and 16 s: five in 16 s, not sixteen.
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(installs - afterStart).toBe(5);
+      expect(observer.healthcheckDelayMs).toBe(16_000);
+      // The hooks hold again: the next check is healthy and the streak ends.
+      vanish = false;
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(installs - afterStart).toBe(5);
+      vanish = true;
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(observer.healthcheckDelayMs).toBe(1_000);
+    } finally {
+      await observer.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("verifies each hook array by its own lines in combined show-hooks output", () => {
@@ -886,6 +965,93 @@ describe("tmux external interaction observer", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(healthchecks()).toBe(afterRepair + 1);
       expect(observer.healthcheckDelayMs).toBe(2_000);
+    } finally {
+      await observer.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  // A check that could not be made says nothing about the hooks. Before, a
+  // timed-out or failed `show-hooks` (a loaded machine, a failed fork) was
+  // logged as "hooks-replaced" and the hooks were removed and installed again.
+  it("does not call the hooks replaced when the check itself fails", async () => {
+    vi.useFakeTimers();
+    const hooks = new Map<string, string>();
+    const calls: string[] = [];
+    const gaps = vi.fn();
+    let failChecks = 0;
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: DAEMON,
+      tmuxAuthority: {
+        executablePath: "/usr/bin/tmux",
+        socketSelector: { kind: "name", name: "default" },
+      },
+      registry: registry(),
+      healthcheck: { baseMs: 1_000, maxMs: 4_000 },
+      onObserved: () => false,
+      onGap: gaps,
+      io: {
+        runTmux: async (args) => {
+          calls.push(args[0] === "set-hook" ? `set-hook ${String(args[1])}` : String(args[0]));
+          if (args.includes("if-shell")) return "tmux-ide-drain-consumed";
+          if (args[0] === "show-hooks") {
+            if (failChecks > 0) {
+              failChecks -= 1;
+              throw new Error("tmux timed out");
+            }
+            return showHooks(args, hooks);
+          }
+          if (args[0] === "list-buffers") return "";
+          if (args[0] === "set-hook" && args[1] === "-ag") {
+            hooks.set(args[2]!, `${args[2]}[0] ${args[3]}`);
+          }
+          if (args[0] === "set-hook" && args[1] === "-gu") {
+            hooks.delete(args[2]!.replace(/\[[0-9]+\]$/u, ""));
+          }
+          return "";
+        },
+        waitForSignal: async (_channel, signal) =>
+          new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          }),
+        delay: async () => undefined,
+      },
+    });
+    const count = (operation: string) => calls.filter((call) => call === operation).length;
+    try {
+      await observer.start();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(observer.healthcheckDelayMs).toBe(2_000);
+      const installs = count("set-hook -ag");
+      const removals = count("set-hook -gu");
+      const checks = count("show-hooks");
+
+      // The next check cannot be made.
+      failChecks = 1;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(count("show-hooks")).toBe(checks + 1);
+      expect(gaps).not.toHaveBeenCalled();
+      expect(observer.available).toBe(true);
+      // The hooks are left as they are: nothing removed, nothing installed again.
+      expect(count("set-hook -ag")).toBe(installs);
+      expect(count("set-hook -gu")).toBe(removals);
+      // It is asked again soon, and that answer is believed.
+      expect(observer.healthcheckDelayMs).toBe(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(count("show-hooks")).toBe(checks + 2);
+      expect(gaps).not.toHaveBeenCalled();
+      expect(observer.healthcheckDelayMs).toBe(2_000);
+
+      // Hooks that a check shows to be gone are still reported and repaired.
+      hooks.clear();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(gaps).toHaveBeenCalledTimes(1);
+      expect(gaps).toHaveBeenCalledWith({
+        reason: "hooks-replaced",
+        recovery: "future-observations-only",
+      });
+      expect(hooks.get("after-send-keys")).toContain(`tmux-ide-interaction-v3-${DAEMON}`);
     } finally {
       await observer.dispose();
       vi.useRealTimers();
@@ -1067,4 +1233,235 @@ it("backs off persistent consume failures and aborts the backoff on disposal", a
     await observer.dispose();
   }
   expect(attempts).toBe(2);
+});
+
+// #839: observer disposal, and with it every daemon stop, awaits this client.
+describe("blocking wait client cancellation", () => {
+  it("settles after an abort even when the client ignores SIGTERM", async () => {
+    const abort = new AbortController();
+    const started = performance.now();
+    const waiting = waitForBlockingTmuxClient(
+      "/bin/sh",
+      ["-c", "trap '' TERM; while :; do sleep 1; done"],
+      abort.signal,
+      50,
+    );
+    setTimeout(() => abort.abort(), 100);
+    await expect(waiting).resolves.toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(3_000);
+  }, 10_000);
+
+  it("resolves on a signalled wait, rejects a client that fails on its own, and skips a spawn once aborted", async () => {
+    const live = new AbortController();
+    await expect(
+      waitForBlockingTmuxClient("/bin/sh", ["-c", "exit 0"], live.signal),
+    ).resolves.toBeUndefined();
+    await expect(
+      waitForBlockingTmuxClient("/bin/sh", ["-c", "exit 1"], live.signal),
+    ).rejects.toThrow();
+    await expect(waitForBlockingTmuxClient("/nonexistent/tmux", [], live.signal)).rejects.toThrow();
+    const aborted = AbortSignal.abort();
+    await expect(
+      waitForBlockingTmuxClient("/nonexistent/tmux", [], aborted),
+    ).resolves.toBeUndefined();
+  }, 10_000);
+});
+
+// Two tmux-ide daemons on one tmux server (an upgrade overlap, a development
+// instance, a test daemon) must not take each other's hooks away.
+describe("interaction hooks of several daemons on one tmux server", () => {
+  const A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+  const B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+  const C = "cccccccc-3333-4333-8333-cccccccccccc";
+
+  /** Just enough of a tmux server: global hook arrays, paste buffers, options. */
+  function sharedServer() {
+    const hooks = new Map<string, Map<number, string>>(HOOK_NAMES.map((name) => [name, new Map()]));
+    const buffers = new Map<string, string>();
+    const options = new Map<string, string>();
+    let failListBuffers = false;
+    const runTmux = async (args: readonly string[]): Promise<string> => {
+      if (args[0] === "show-hooks")
+        return HOOK_NAMES.filter((name) => args.includes(name))
+          .map((name) => {
+            const array = hooks.get(name)!;
+            return array.size === 0
+              ? name
+              : [...array].map(([index, body]) => `${name}[${index}] ${body}`).join("\n");
+          })
+          .join("\n");
+      if (args[0] === "set-hook" && args[1] === "-ag") {
+        const array = hooks.get(args[2]!)!;
+        array.set(Math.max(-1, ...array.keys()) + 1, args[3]!);
+        return "";
+      }
+      if (args[0] === "set-hook" && args[1] === "-gu") {
+        const match = /^(.+)\[(\d+)\]$/u.exec(args[2]!)!;
+        hooks.get(match[1]!)!.delete(Number(match[2]));
+        return "";
+      }
+      if (args[0] === "list-buffers") {
+        if (failListBuffers) throw new Error("server busy");
+        return [...buffers.keys()].join("\n");
+      }
+      if (args[0] === "set-buffer") {
+        buffers.set(args[2]!, args[3]!);
+        return "";
+      }
+      if (args[0] === "show-buffer") {
+        const value = buffers.get(args[2]!);
+        if (value === undefined) throw new Error("no buffer");
+        return value;
+      }
+      if (args[0] === "delete-buffer") {
+        buffers.delete(args[2]!);
+        return "";
+      }
+      if (args[0] === "set-option" && args[1] === "-gu") {
+        options.delete(args[2]!);
+        return "";
+      }
+      return "";
+    };
+    const owners = () =>
+      [
+        ...new Set(
+          [...hooks.values()]
+            .flatMap((array) => [...array.values()])
+            .map((body) => /tmux-ide-interaction-v3-([0-9a-f-]{36})/u.exec(body)?.[1] ?? "legacy"),
+        ),
+      ].sort();
+    return {
+      hooks,
+      buffers,
+      options,
+      runTmux,
+      owners,
+      failListBuffers: (fail: boolean) => (failListBuffers = fail),
+    };
+  }
+
+  function daemon(
+    server: ReturnType<typeof sharedServer>,
+    id: string,
+    pid: number,
+    alive: ReadonlySet<number>,
+  ) {
+    const gaps: string[] = [];
+    const observer = new TmuxExternalInteractionObserver({
+      daemonInstanceId: id,
+      tmuxAuthority: {
+        executablePath: process.execPath,
+        socketSelector: { kind: "name", name: "shared" },
+      },
+      registry: registry(),
+      onObserved: () => false,
+      onGap: (gap) => gaps.push(gap.reason),
+      ownerProcess: { pid, isAlive: (candidate) => alive.has(candidate) },
+      io: {
+        runTmux: server.runTmux,
+        waitForSignal: (_channel, signal) =>
+          new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve())),
+        delay: async () => undefined,
+      },
+    });
+    return { observer, gaps };
+  }
+
+  it("a second daemon's install leaves the first daemon's hooks, buffer and options alone", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    const b = daemon(server, B, 200, alive);
+    await a.observer.install();
+    server.options.set(`@tmux-ide-interaction-v3-${A}`, "pending records of A");
+    await b.observer.install();
+    expect(server.owners()).toEqual([A, B]);
+    expect([...server.buffers.keys()].sort()).toEqual([
+      `tmux-ide-interaction-v3-${A}`,
+      `tmux-ide-interaction-v3-${B}`,
+    ]);
+    expect(server.options.has(`@tmux-ide-interaction-v3-${A}`)).toBe(true);
+    // Neither health check finds anything to repair, however often they alternate.
+    for (let round = 0; round < 5; round += 1) {
+      await a.observer.reconcileHooks({ allowInactive: true });
+      await b.observer.reconcileHooks({ allowInactive: true });
+    }
+    expect(a.gaps).toEqual([]);
+    expect(b.gaps).toEqual([]);
+    expect(server.owners()).toEqual([A, B]);
+  });
+
+  it("a daemon that leaves removes only its own hooks", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    const b = daemon(server, B, 200, alive);
+    await a.observer.start();
+    await b.observer.start();
+    await b.observer.dispose();
+    expect(server.owners()).toEqual([A]);
+    expect([...server.buffers.keys()]).toEqual([`tmux-ide-interaction-v3-${A}`]);
+    await a.observer.reconcileHooks();
+    expect(a.gaps).toEqual([]);
+    await a.observer.dispose();
+    expect(server.owners()).toEqual([]);
+    expect(server.buffers.size).toBe(0);
+  });
+
+  it("still clears what a dead daemon left behind, and legacy hooks", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const crashed = daemon(server, A, 100, alive);
+    await crashed.observer.install(); // then its process dies without disposing
+    alive.delete(100);
+    server.hooks.get("after-send-keys")!.set(40, "run-shell tmux-ide-interaction-v1-stale");
+    // A hook whose owner left no marker buffer at all.
+    server.hooks.get("after-capture-pane")!.set(41, `run-shell tmux-ide-interaction-v3-${C}-ready`);
+    server.options.set(`@tmux-ide-interaction-v3-${A}`, "orphaned");
+    const b = daemon(server, B, 200, alive);
+    await b.observer.install();
+    expect(server.owners()).toEqual([B]);
+    expect([...server.buffers.keys()]).toEqual([`tmux-ide-interaction-v3-${B}`]);
+    expect(server.options.has(`@tmux-ide-interaction-v3-${A}`)).toBe(false);
+  });
+
+  it("tells its own process's live observers from ones it already disposed", async () => {
+    const server = sharedServer();
+    const alive = new Set([100]);
+    // One daemon process, two owner generations in a row plus one still running.
+    const first = daemon(server, A, 100, alive);
+    const second = daemon(server, B, 100, alive);
+    await first.observer.start();
+    await second.observer.start();
+    expect(server.owners()).toEqual([A, B]);
+    // A generation of this process whose teardown never removed its hooks.
+    await first.observer.dispose();
+    server.hooks.get("after-send-keys")!.set(50, `run-shell tmux-ide-interaction-v3-${A}-ready`);
+    server.buffers.set(`tmux-ide-interaction-v3-${A}`, "retention-owner pid=100");
+    const third = daemon(server, C, 100, alive);
+    await third.observer.install();
+    expect(server.owners()).toEqual([B, C]);
+    await second.observer.dispose();
+    await third.observer.dispose();
+  });
+
+  it("touches nothing foreign when it cannot tell who is alive", async () => {
+    const server = sharedServer();
+    const alive = new Set([100, 200]);
+    const a = daemon(server, A, 100, alive);
+    await a.observer.install();
+    server.hooks.get("after-send-keys")!.set(40, "run-shell tmux-ide-interaction-v1-stale");
+    server.failListBuffers(true);
+    const b = daemon(server, B, 200, alive);
+    await b.observer.install();
+    expect(server.owners()).toEqual([A, B, "legacy"]);
+  });
+
+  it("writes its process id into its marker, the only thing another daemon can check", async () => {
+    const server = sharedServer();
+    const a = daemon(server, A, 4242, new Set([4242]));
+    await a.observer.install();
+    expect(server.buffers.get(`tmux-ide-interaction-v3-${A}`)).toBe("retention-owner pid=4242");
+  });
 });

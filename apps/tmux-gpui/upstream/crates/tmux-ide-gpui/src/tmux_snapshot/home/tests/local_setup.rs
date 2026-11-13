@@ -104,10 +104,7 @@ fn setup_queue_failure_shows_retry_without_automatic_submission(cx: &mut TestApp
                 status_message(&view.browser_state, true),
                 Phase::Failed.guidance()
             );
-            assert_eq!(
-                view.browser_state.status,
-                "Local setup request could not be sent. Try again."
-            );
+            assert_eq!(view.browser_state.status, SETUP_NOT_SENT);
             let queued: Vec<_> = receiver.try_iter().collect();
             assert_eq!(queued.len(), 64);
             assert!(

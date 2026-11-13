@@ -15,7 +15,7 @@ impl SnapshotView {
     pub(in crate::tmux_snapshot) fn cancel_tab_focus_restore(&mut self) {
         self.session_tabs.focus.restore = false;
     }
-    pub(super) fn remember_tab_focus(&mut self, window: &Window) {
+    pub(in crate::tmux_snapshot) fn remember_tab_focus(&mut self, window: &Window) {
         self.cancel_tab_focus_restore();
         let Some(tabs) = self.browser_state.session_tabs.as_ref() else {
             return;
@@ -47,6 +47,7 @@ impl SnapshotView {
             || self.picker.is_some()
             || self.pane_actions.is_some()
             || self.new_session.is_some()
+            || self.about.is_some()
             || !self.marked.is_empty()
         {
             self.cancel_tab_focus_restore();

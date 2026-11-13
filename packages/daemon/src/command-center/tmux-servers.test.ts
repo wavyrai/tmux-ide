@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TmuxServerOwners } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
+import { logger } from "../lib/log.ts";
 
 const base = "/api/v1/tmux-servers";
 const token = "private-owner-token";
@@ -184,6 +185,36 @@ describe("owner-only scoped tmux server routes", () => {
     const text = await response.text();
     expect(text).not.toMatch(/selector|private\/tmux|fingerprint/);
     expect(JSON.parse(text).servers).toHaveLength(2);
+  });
+  // #840: a read route must not be able to close a stream.
+  it("lists servers without probing, retiring or rebuilding an online owner", async () => {
+    const probe = vi.fn(
+      async (selector: { kind: "path"; path: string } | { kind: "name"; name: string }) => ({
+        fingerprint: JSON.stringify(selector),
+        authority: { executablePath: "/private/tmux", socketSelector: selector },
+        valid: () => true,
+      }),
+    );
+    const dispose = vi.fn(async () => {});
+    const create = vi.fn(async () => ({ dispose }) as unknown as NativeTmuxServerOwner);
+    const manager = new TmuxServerOwners<NativeTmuxServerOwner>({ probe, create });
+    const app = new Hono();
+    mountTmuxServerRoutes(app, { owners: manager, ownerToken: token });
+    const online = await manager.register({ label: "A", selector: { kind: "name", name: "a" } });
+    expect(probe).toHaveBeenCalledTimes(1);
+    // From here on tmux would answer nothing at all.
+    probe.mockImplementation(async () => {
+      throw new Error("a read route probed tmux");
+    });
+    for (let i = 0; i < 25; i += 1) {
+      const response = await app.request(base, { headers: { Authorization: `Bearer ${token}` } });
+      expect(response.status).toBe(200);
+      expect((await response.json()).servers).toEqual([online]);
+    }
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(dispose).not.toHaveBeenCalled();
+    await manager.dispose();
   });
   it("returns an authoritative workspace alias with the live session", async () => {
     const f = await fixture();
@@ -452,4 +483,45 @@ it("native browser operations require owner auth and current scope before dispat
   const failed = await f.request(path, "POST", body);
   expect(failed.status).toBe(503);
   expect(await failed.text()).not.toContain("private credential");
+});
+
+// A client that gets 503 retries blindly; the cause existed only in the thrown
+// error and was dropped. The daemon's own log now names the route and the error.
+it("logs why a scoped route answered server-unavailable, and nothing for an expected refusal", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+  try {
+    const f = await fixture();
+    const body = {
+      target: {
+        generation: f.a.generation,
+        workspaceName: "same",
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        semanticPaneId: "pane.same",
+      },
+      command: null,
+    };
+    // 409 for a retired scope: the client is told the cause, no log line.
+    expect(
+      (await f.request(`/${f.a.serverId}/${randomUUID()}/native-browser`, "POST", body)).status,
+    ).toBe(409);
+    expect(warn).not.toHaveBeenCalled();
+    const cause = Object.assign(new RangeError(`inventory stale ${"x".repeat(400)}`), {
+      code: "inventory-stale",
+    });
+    f.ownersCreated[0]!.nativeBrowser.mockRejectedValue(cause);
+    expect((await f.request(f.scope(f.a) + "/native-browser", "POST", body)).status).toBe(503);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "tmux-server-routes",
+      "request failed as server-unavailable",
+      {
+        method: "POST",
+        route: expect.stringMatching(/\/:serverId\/:generation\/native-browser$/u),
+        errorName: "RangeError",
+        errorCode: "inventory-stale",
+        error: expect.stringMatching(/^inventory stale x{180,286}$/u),
+      },
+    );
+  } finally {
+    warn.mockRestore();
+  }
 });

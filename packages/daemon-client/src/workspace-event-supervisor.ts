@@ -143,6 +143,18 @@ function deferred(): {
 }
 
 /**
+ * After the fast retries, a read that keeps failing (the daemon answering 503
+ * while it re-qualifies a session, #764) is retried on this slow backoff while
+ * the sink is attached; the last step repeats until the budget is spent.
+ */
+const TERMINAL_REFRESH_BACKOFF_MS = [250, 500, 1_000] as const;
+const TERMINAL_REFRESH_BACKOFF_LAST_MS = 1_000;
+/** Past this much backoff the stale authority is retired, not shown on. */
+const TERMINAL_REFRESH_BACKOFF_BUDGET_MS = 15_000;
+/** The delay between a sink-requeued or fast-retried refresh and the next. */
+const TERMINAL_REFRESH_STEP_MS = 25;
+
+/**
  * One permanent parser and physical event socket for a WorkspaceClient generation.
  * Logical resource barriers are independent; a socket hello never makes a resource live.
  */
@@ -209,6 +221,13 @@ export function createWorkspaceEventSupervisor(
   let terminalRefreshCoalesced = 0;
   let terminalRefreshDelayed = false;
   let terminalRefreshRetryAttempt = 0;
+  // The slow backoff after the fast retries (#764): its next step, how much
+  // of the budget it has spent, the delay before the next run, and whether
+  // the pending timer is a backoff a new request may cut short.
+  let terminalRefreshBackoffStep = 0;
+  let terminalRefreshBackoffSpent = 0;
+  let terminalRefreshNextDelay: number = TERMINAL_REFRESH_STEP_MS;
+  let terminalRefreshBackingOff = false;
   let applicationShellHandlers: ApplicationShellEventHandlers | null = null;
   let workspaceCatalogInvalidate: (() => void) | null = null;
   let retirementNotified = false;
@@ -346,6 +365,20 @@ export function createWorkspaceEventSupervisor(
     reason: "event" | "gap" | "snapshot" | "consumer" = "consumer",
     continuation = false,
   ): void => {
+    if (!continuation) {
+      // A daemon event starts a fresh budget; any new request reads now
+      // rather than waiting out a backoff.
+      if (reason !== "consumer") {
+        terminalRefreshBackoffStep = 0;
+        terminalRefreshBackoffSpent = 0;
+      }
+      if (terminalRefreshBackingOff && terminalRefreshTimer !== null) {
+        refreshClock.clearTimeout(terminalRefreshTimer);
+        terminalRefreshTimer = null;
+        terminalRefreshBackingOff = false;
+        terminalRefreshQueued = false;
+      }
+    }
     if (!continuation && !terminalRefreshQueued && !terminalRefreshRunning)
       terminalRefreshRetryAttempt = 0;
     if (!continuation && reason !== "consumer") {
@@ -376,7 +409,8 @@ export function createWorkspaceEventSupervisor(
         terminalRefreshDelayed = false;
         const controller = new AbortController();
         terminalRefreshController = controller;
-        let outcome: "success" | "retry" | "exhausted" | "aborted" = "success";
+        let outcome: "success" | "retry" | "backoff" | "exhausted" | "aborted" = "success";
+        let retire = false;
         let failure: "read-failed" | "stale-revision" | null = null;
         try {
           const resource = await readTerminal(controller.signal, false);
@@ -388,6 +422,8 @@ export function createWorkspaceEventSupervisor(
             terminalSink(resource);
           }
           terminalRefreshRetryAttempt = 0;
+          terminalRefreshBackoffStep = 0;
+          terminalRefreshBackoffSpent = 0;
         } catch {
           if (failure === null && !controller.signal.aborted) failure = "read-failed";
           const recoverable = !controller.signal.aborted && !disposed && terminalSink !== null;
@@ -398,9 +434,26 @@ export function createWorkspaceEventSupervisor(
             terminalRefreshRetryAttempt += 1;
             terminalRefreshQueued = true;
             outcome = "retry";
+          } else if (
+            recoverable &&
+            failure === "read-failed" &&
+            terminalRefreshBackoffSpent < TERMINAL_REFRESH_BACKOFF_BUDGET_MS
+          ) {
+            // Nothing else will ask again: the daemon publishes no event once
+            // it can answer (#764). Keep asking, slowly, within a budget.
+            const delay =
+              TERMINAL_REFRESH_BACKOFF_MS[terminalRefreshBackoffStep] ??
+              TERMINAL_REFRESH_BACKOFF_LAST_MS;
+            terminalRefreshBackoffStep += 1;
+            terminalRefreshBackoffSpent += delay;
+            terminalRefreshNextDelay = delay;
+            terminalRefreshQueued = true;
+            outcome = "backoff";
           } else {
             terminalRefreshQueued = false;
             outcome = controller.signal.aborted ? "aborted" : "exhausted";
+            // A budget spent on failed reads: the terminal on screen is stale.
+            retire = outcome === "exhausted" && failure === "read-failed" && recoverable;
           }
         } finally {
           const discardedCoalesced =
@@ -413,9 +466,11 @@ export function createWorkspaceEventSupervisor(
             attempt,
             outcome,
             failure,
+            ...(outcome === "backoff" ? { delayMs: terminalRefreshNextDelay } : {}),
           });
           if (terminalRefreshController === controller) terminalRefreshController = null;
         }
+        if (retire) notifyRetired();
       };
       void run().finally(() => {
         terminalRefreshRunning = false;
@@ -424,11 +479,15 @@ export function createWorkspaceEventSupervisor(
         // just-read snapshot. Keep that recovery live, but never let it form a
         // microtask spin loop against a stale same-revision authority.
         terminalRefreshDelayed = true;
+        const delay = terminalRefreshNextDelay;
+        terminalRefreshNextDelay = TERMINAL_REFRESH_STEP_MS;
+        terminalRefreshBackingOff = delay > TERMINAL_REFRESH_STEP_MS;
         terminalRefreshTimer = refreshClock.setTimeout(() => {
           terminalRefreshTimer = null;
+          terminalRefreshBackingOff = false;
           terminalRefreshQueued = false;
           refreshTerminalAuthority(terminalRefreshReason, true);
-        }, 25);
+        }, delay);
       });
     });
   };
@@ -683,6 +742,7 @@ export function createWorkspaceEventSupervisor(
       terminalRefreshQueued = false;
       if (terminalRefreshTimer !== null) refreshClock.clearTimeout(terminalRefreshTimer);
       terminalRefreshTimer = null;
+      terminalRefreshBackingOff = false;
       terminalRefreshDelayed = false;
       terminalRefreshController?.abort();
       terminalRefreshController = null;
@@ -698,6 +758,7 @@ export function createWorkspaceEventSupervisor(
       disposed = true;
       if (terminalRefreshTimer !== null) refreshClock.clearTimeout(terminalRefreshTimer);
       terminalRefreshTimer = null;
+      terminalRefreshBackingOff = false;
       terminalRefreshQueued = false;
       terminalRefreshDelayed = false;
       terminalRefreshController?.abort();

@@ -31,23 +31,8 @@ pub(super) fn code(error: &NativeError) -> &'static str {
 /// reason. Only tokens the wire already validated, never terminal content.
 pub(super) fn detail(error: &NativeError) -> String {
     let mut text = code(error).to_owned();
-    let session = match error {
-        NativeError::Controller(tmux_controller::Error::Session(error)) => Some(error),
-        NativeError::Controller(tmux_controller::Error::Stopped(error)) => Some(error.as_ref()),
-        _ => None,
-    };
-    let close = match (error, session) {
-        (
-            NativeError::Controller(tmux_controller::Error::Transport(tmux_stream::Error::Closed(
-                close,
-            ))),
-            _,
-        )
-        | (_, Some(tmux_native_session::Error::Transport(tmux_stream::Error::Closed(close)))) => {
-            Some(close)
-        }
-        _ => None,
-    };
+    let session = session_error(error);
+    let close = close(error);
     if let Some(tmux_native_session::Error::Terminal(source, failure)) = session {
         text.push(':');
         text.push_str(source.code());
@@ -68,6 +53,48 @@ pub(super) fn detail(error: &NativeError) -> String {
         }
     }
     text
+}
+fn session_error(error: &NativeError) -> Option<&tmux_native_session::Error> {
+    match error {
+        NativeError::Controller(tmux_controller::Error::Session(error)) => Some(error),
+        NativeError::Controller(tmux_controller::Error::Stopped(error)) => Some(error.as_ref()),
+        _ => None,
+    }
+}
+/// The peer's close frame, when the stream ended with one.
+fn close(error: &NativeError) -> Option<&tmux_stream::Close> {
+    match (error, session_error(error)) {
+        (
+            NativeError::Controller(tmux_controller::Error::Transport(tmux_stream::Error::Closed(
+                close,
+            ))),
+            _,
+        )
+        | (_, Some(tmux_native_session::Error::Transport(tmux_stream::Error::Closed(close)))) => {
+            Some(close)
+        }
+        _ => None,
+    }
+}
+/// Why the stream ended, for the catalog's reconnect policy. The reason
+/// decides, not the code. A reason this app does not know is a plain close:
+/// reconnect. So is 1001 "daemon-shutdown", which a 2.9.22 daemon sends for
+/// every close while it stays up.
+pub(super) fn cause(error: &NativeError) -> super::Cause {
+    use super::Cause;
+    if let Some(close) = close(error) {
+        return match close.reason.as_deref() {
+            Some("tmux-server-retired") => Cause::ServerRetired,
+            Some("daemon-restarting") => Cause::DaemonRestarting,
+            Some("panes-closed") => Cause::PanesClosed,
+            _ => Cause::Closed,
+        };
+    }
+    match code(error) {
+        "stream-identity" => Cause::Identity,
+        "stream-silent" => Cause::Silent,
+        _ => Cause::Lost,
+    }
 }
 fn token(value: &str) -> bool {
     !value.is_empty()
@@ -101,10 +128,11 @@ impl Stop {
     pub(super) fn new(error: &NativeError, request: u64, version: Option<&str>) -> Option<Self> {
         let status = match code(error) {
             "stream-daemon-too-old" => daemon_too_old(version),
-            // A peer that fails identity is not the daemon we issued against.
-            "stream-identity" | "stream-remote-identity" => {
-                "Couldn't reconnect. Refresh sessions to try again.".into()
-            }
+            // Over SSH a peer that fails identity may be another machine. A
+            // local "stream-identity" (a ready frame that is not the lease's,
+            // as after the daemon rebuilt the server owner) is recovered like
+            // any drop: the catalog proves the daemon again before a new lease.
+            "stream-remote-identity" => "Couldn't reconnect. Refresh sessions to try again.".into(),
             _ => return None,
         };
         Some(Self { request, status })
@@ -157,6 +185,7 @@ fn transport(error: &tmux_stream::Error) -> &'static str {
         Error::Disconnected | Error::Closed(_) => "stream-disconnected",
         Error::Cancelled => "stream-cancelled",
         Error::ReadyTimeout => "stream-ready-timeout",
+        Error::Silent => "stream-silent",
     }
 }
 

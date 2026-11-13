@@ -396,7 +396,9 @@ impl SnapshotView {
         self.open_picker_mode(Mode::Navigation, window, cx);
     }
     pub(super) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.browser_state.appearance.is_some() {
+        // About keeps the keyboard: the menu bar's item waits, as its other
+        // items do (`picker_key`'s About guard).
+        if self.browser_state.appearance.is_some() && self.about.is_none() {
             self.open_picker_mode(Mode::Theme, window, cx);
         }
     }
@@ -405,18 +407,36 @@ impl SnapshotView {
             return;
         }
         let mut state = self.browser_state.clone();
-        if self.browser_commands.is_none()
-            || self.browser_state.request != self.browser_request
-            || !self.presence.ready()
-            || self.frame.is_none()
-            || !state.input_ready
-            || state.retained_preview
-            || state.surface != browser::Surface::Workspace
-        {
+        if !self.diagnostics_live() {
             state.diagnostics = None;
+        }
+        if !self.service_version_live() {
+            state.service_version = None;
         }
         let report = super::diagnostics::build(&state, self.developer_mode.enabled);
         self.present_diagnostics(report, window, cx);
+    }
+    /// Whether the reported CLI, daemon and tmux versions belong to the
+    /// connection the window shows now; otherwise they may be stale.
+    pub(super) fn diagnostics_live(&self) -> bool {
+        self.browser_commands.is_some()
+            && self.browser_state.request == self.browser_request
+            && self.presence.ready()
+            && self.frame.is_some()
+            && self.browser_state.input_ready
+            && !self.browser_state.retained_preview
+            && self.browser_state.surface == browser::Surface::Workspace
+    }
+    /// Whether the service version belongs to the connection shown now.
+    pub(super) fn service_version_live(&self) -> bool {
+        self.browser_commands.is_some()
+            && self.browser_state.request == self.browser_request
+            && self.presence.ready()
+    }
+    /// Commands → What's new: from About's link and What's new's card
+    /// (onboarding A5).
+    pub(super) fn open_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_picker_mode(Mode::WhatsNew, window, cx);
     }
     fn present_diagnostics(
         &mut self,
@@ -725,6 +745,8 @@ impl SnapshotView {
                 Action::Shortcuts => self.open_picker_mode(Mode::Reference, window, cx),
                 Action::Help => self.open_picker_mode(Mode::Help, window, cx),
                 Action::WhatsNew => self.open_picker_mode(Mode::WhatsNew, window, cx),
+                Action::Welcome => self.open_welcome(window, cx),
+                Action::About => self.open_about(window, cx),
                 Action::ToggleSidebar => self.toggle_sidebar(cx),
                 Action::SavedMachines => self.open_saved_machines(window, cx),
                 Action::ManageMachines => self.open_machine_management(window, cx),

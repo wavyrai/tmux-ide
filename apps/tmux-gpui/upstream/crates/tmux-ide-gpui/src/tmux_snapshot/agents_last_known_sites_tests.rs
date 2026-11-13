@@ -642,9 +642,14 @@ fn home_rows_join_their_own_machine(cx: &mut TestAppContext) {
             .filter(|(k, _)| k.starts_with("fleet-session-asks-"))
             .map(|(_, v)| v.clone())
             .collect();
-        // The agent is listed on every row with its live id; each of its
-        // chips follows its own machine.
-        assert!(!chips.is_empty(), "{machine}");
+        // The agent is listed on its own machine's row only, not on the
+        // namesake session of the other machine.
+        assert_eq!(chips.len(), 1, "{machine}: {chips:?}");
+        let badges = probes
+            .keys()
+            .filter(|k| k.starts_with("sidebar-badge-"))
+            .count();
+        assert_eq!(badges, 1, "{machine}: the sidebar counts it on one project");
         assert!(
             chips.iter().all(|c| *c == tag("· Needs input")),
             "{machine}: {chips:?}"

@@ -69,6 +69,11 @@ impl SnapshotView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The dialog is part of Home, which the welcome takes the place of:
+        // starting a session leaves the welcome, as its own Start new does.
+        if self.welcome.open {
+            self.close_welcome(cx);
+        }
         self.pending_session_open = None;
         self.cancel_attention();
         self.picker = None;

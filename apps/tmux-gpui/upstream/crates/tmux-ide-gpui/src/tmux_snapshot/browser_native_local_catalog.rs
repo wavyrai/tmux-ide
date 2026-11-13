@@ -19,7 +19,15 @@ impl Local {
         }
         self.state.sessions.clear();
         self.catalog_identity = Some(snapshot.identity);
+        self.service_version =
+            crate::tmux_snapshot::diagnostics::service_version(snapshot.service_version);
         let servers = self.catalog_servers(snapshot.servers);
+        if servers.is_empty() && self.recovery.is_some() {
+            // No server is online right now. Recovery decides: the open
+            // session's server may only be out of the daemon's sight.
+            self.reconnect_catalog()?;
+            return Ok(());
+        }
         if servers.is_empty() {
             self.local_creation.offer = None;
             if self.machine_id == "local"
@@ -33,7 +41,7 @@ impl Local {
                 self.stage = Some(Stage::LocalProve);
                 return self.publish();
             }
-            return self.unavailable("No online tmux servers");
+            return self.unavailable_retrying("No online tmux servers");
         }
         self.local_creation.offer = None;
         self.state.local_session_create = None;

@@ -49,27 +49,29 @@ const HELP: &[&str] = &[
     "Appearance · Commands includes Appearance and Terminal font. Your font family and size are saved for the next launch.",
     "Safety · Unavailable or stale targets cannot receive input. Refresh or reselect the intended target after a connection changes.",
 ];
-const CHANGES: &[&str] = &[
-    "Home and fleet · Agent search, machine filters, observation retry and load more, plus saved-machine management.",
-    "Workspace · New terminal windows and named Claude or Codex agents; pane rename, split, zoom and confirmed close.",
-    "Native controls · Pane header menus, sidebar visibility, searchable Commands and keyboard reference popovers.",
-    "Terminal font · Installed family selection, size controls and automatic symbol fallbacks, saved for the next launch.",
-];
 pub(super) fn heading(mode: Mode) -> &'static str {
     match mode {
         Mode::Help => "Using tmux-ide · Esc to Commands",
-        Mode::WhatsNew => "Native preview changes · Esc to Commands",
+        Mode::WhatsNew => "What's new · Esc to Commands",
         _ => "Keyboard shortcuts · Esc to Commands",
     }
 }
+/// Every version's notes, each line led by its version (onboarding A5).
+fn changes() -> Vec<String> {
+    crate::tmux_snapshot::welcome::whats_new::RELEASES
+        .iter()
+        .flat_map(|(version, notes)| notes.iter().map(move |note| format!("{version} · {note}")))
+        .collect()
+}
 pub(super) fn rows(mode: Mode, query: &str) -> Vec<Row> {
     let query = query.to_lowercase();
+    let changes = changes();
     match mode {
-        Mode::Help => HELP,
-        Mode::WhatsNew => CHANGES,
-        _ => SHORTCUTS,
+        Mode::Help => HELP.to_vec(),
+        Mode::WhatsNew => changes.iter().map(String::as_str).collect(),
+        _ => SHORTCUTS.to_vec(),
     }
-    .iter()
+    .into_iter()
     .filter(|label| {
         query
             .split_whitespace()
@@ -77,7 +79,7 @@ pub(super) fn rows(mode: Mode, query: &str) -> Vec<Row> {
     })
     .map(|label| Row {
         target: Target::Command(Action::Shortcuts),
-        label: (*label).into(),
+        label: label.into(),
     })
     .collect()
 }

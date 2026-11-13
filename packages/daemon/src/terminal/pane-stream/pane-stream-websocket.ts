@@ -31,6 +31,7 @@ import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
 import { z } from "zod";
 import { logger } from "../../lib/log.ts";
+import type { TmuxServerOwnerRetirement } from "../../lib/tmux-server-owners.ts";
 import {
   PANE_STREAM_MAX_HELD_DELTAS,
   PANE_STREAM_MAX_OUTPUT_BYTES,
@@ -132,6 +133,44 @@ import {
 export { PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL };
 export const PANE_STREAM_MAX_REDEMPTION_BYTES = 4 * 1024;
 export const PANE_STREAM_MAX_CONTROL_BYTES = 4 * 1024;
+
+export interface PaneStreamShutdownClose {
+  readonly code: number;
+  readonly reason: "daemon-shutdown" | "tmux-server-retired" | "daemon-restarting";
+}
+/** The daemon process (or its whole generation) is going away. */
+export const PANE_STREAM_DAEMON_SHUTDOWN_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1001,
+  reason: "daemon-shutdown",
+});
+/**
+ * Only this tmux server owner was retired; the daemon is still up. 1012
+ * (service restart) asks the client to list the servers again and reconnect
+ * now, without the backoff a vanished daemon deserves (#840).
+ */
+export const PANE_STREAM_OWNER_RETIRED_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1012,
+  reason: "tmux-server-retired",
+});
+/**
+ * The process restarts its daemon generation in place (tmux server replaced,
+ * settings restart). A new generation follows at once, possibly on another
+ * port: read daemon.json again and reconnect now.
+ */
+export const PANE_STREAM_DAEMON_RESTARTING_CLOSE: PaneStreamShutdownClose = Object.freeze({
+  code: 1012,
+  reason: "daemon-restarting",
+});
+/** What an owner's streams are told when it is disposed for this reason. */
+export function paneStreamCloseForRetirement(
+  retirement: TmuxServerOwnerRetirement | undefined,
+): PaneStreamShutdownClose {
+  if (retirement === undefined || retirement === "shutdown")
+    return PANE_STREAM_DAEMON_SHUTDOWN_CLOSE;
+  return retirement === "generation-restart"
+    ? PANE_STREAM_DAEMON_RESTARTING_CLOSE
+    : PANE_STREAM_OWNER_RETIRED_CLOSE;
+}
 export const PANE_STREAM_MAX_REDEMPTION_MS = 1_000;
 
 const WS_OPEN = 1;
@@ -731,17 +770,33 @@ export class PaneStreamAdmissionCoordinator {
     return this.#ledger.snapshot();
   }
 
-  shutdown(): Promise<void> {
+  /**
+   * Close every stream and refuse new ones. The first caller decides what the
+   * clients are told: the daemon going away, or only this tmux server owner
+   * being retired while the daemon stays up (reconnect now).
+   */
+  shutdown(close: PaneStreamShutdownClose = PANE_STREAM_DAEMON_SHUTDOWN_CLOSE): Promise<void> {
     if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shuttingDown = true;
-    this.#shutdownPromise = this.#finishShutdown();
+    // An idle daemon stopping is routine and stays out of the default log:
+    // `--headless --json` promises one status line on stdout. Streams that
+    // are actually closed, or an owner retired under a live daemon, are not.
+    const routine =
+      close.reason === "daemon-shutdown" && this.#live.size === 0 && this.#preAuth.size === 0;
+    logger[routine ? "debug" : "info"]("pane-stream", "coordinator shutdown", {
+      code: close.code,
+      reason: close.reason,
+      liveStreams: this.#live.size,
+      unredeemed: this.#preAuth.size,
+    });
+    this.#shutdownPromise = this.#finishShutdown(close);
     return this.#shutdownPromise;
   }
 
-  async #finishShutdown(): Promise<void> {
-    for (const admission of [...this.#preAuth]) admission.close(1001, "daemon-shutdown");
+  async #finishShutdown(close: PaneStreamShutdownClose): Promise<void> {
+    for (const admission of [...this.#preAuth]) admission.close(close.code, close.reason);
     await this.#exclusive(async () => {
-      for (const connection of [...this.#live]) connection.close(1001, "daemon-shutdown");
+      for (const connection of [...this.#live]) connection.close(close.code, close.reason);
       for (const pending of [...this.#pending.values()]) await this.#retirePending(pending);
     });
     await Promise.all([...this.#retiringReleases]);
@@ -1205,6 +1260,8 @@ export class PaneStreamLiveConnection {
   #legacyInputActivated = false;
   #legacyGeometryActivated = false;
   #closed = false;
+  #closeCause: { readonly cause: string; readonly error?: string } | null = null;
+  #heldInput: boolean | null = null;
   #releasePromise: Promise<unknown> | null = null;
   #stopAuthoritySnapshots: (() => void) | null = null;
   #sharedClockOriginMicros: number | null = null;
@@ -1241,6 +1298,8 @@ export class PaneStreamLiveConnection {
         "panes-closed",
         "peer-closed",
         "daemon-shutdown",
+        "tmux-server-retired",
+        "daemon-restarting",
         "redemption-rejected",
         "unknown",
       ]).has(closeReason ?? "")
@@ -1258,6 +1317,8 @@ export class PaneStreamLiveConnection {
       | "panes-closed"
       | "peer-closed"
       | "daemon-shutdown"
+      | "tmux-server-retired"
+      | "daemon-restarting"
       | "redemption-rejected"
       | "unknown";
     this.#observability.recordSpan(
@@ -1391,14 +1452,34 @@ export class PaneStreamLiveConnection {
     void this.#subscribeAll();
   }
 
+  /**
+   * 1011 "stream-unavailable" has ten different origins and the client is told
+   * none of them. The log says which one, with the error text, so a stream
+   * that "just closed" can be traced without a reproduction.
+   */
+  #fail(cause: string, error?: unknown): void {
+    if (this.#closed) return;
+    this.#closeCause = {
+      cause,
+      ...(error === undefined
+        ? {}
+        : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }),
+    };
+    this.close(1011, "stream-unavailable");
+  }
+
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
     this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
     logger.info("pane-stream", "stream closed", {
       code,
       reason,
+      ...(this.#closeCause ?? {}),
       session: this.#descriptor.sessionName,
       clientId: this.#clientId,
+      // Whether this connection held input when it went: the next stream of
+      // the same client can only be granted input once that is released.
+      ...(this.#heldInput === null ? {} : { heldInput: this.#heldInput }),
     });
     this.#closed = true;
     for (const demand of this.#surfaceDemands.values()) demand.close();
@@ -1468,8 +1549,8 @@ export class PaneStreamLiveConnection {
     let described: MirrorSessionDescription;
     try {
       described = await this.#mirror.describeSession(this.#descriptor.sessionName);
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("describe-session-failed", error);
       return;
     }
     if (this.#closed) return;
@@ -1489,8 +1570,8 @@ export class PaneStreamLiveConnection {
           return;
         }
         this.#layoutSubscription = layoutSubscription;
-      } catch {
-        this.close(1011, "stream-unavailable");
+      } catch (error) {
+        this.#fail("layout-subscribe-failed", error);
         return;
       }
     }
@@ -1514,8 +1595,8 @@ export class PaneStreamLiveConnection {
           continue;
         }
         channel.sub = sub;
-      } catch {
-        this.close(1011, "stream-unavailable");
+      } catch (error) {
+        this.#fail("pane-subscribe-failed", error);
         return;
       }
     }
@@ -1526,7 +1607,7 @@ export class PaneStreamLiveConnection {
     const binding = this.#sessionRuntimeBinding;
     const offer = this.#descriptor.terminalDelivery;
     if (!binding || !offer) {
-      this.close(1011, "stream-unavailable");
+      this.#fail("no-session-runtime-binding");
       return;
     }
     // Layout authority covers the whole session, while content leases may select
@@ -1594,7 +1675,7 @@ export class PaneStreamLiveConnection {
         this.#failTopologyChanged();
         return;
       }
-      this.close(1011, "stream-unavailable");
+      this.#fail("semantic-layout-subscribe-failed", cause);
       return;
     }
 
@@ -1652,7 +1733,13 @@ export class PaneStreamLiveConnection {
       )
     ) {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
-      if (!this.#closed) this.close(1011, "stream-unavailable");
+      if (!this.#closed) {
+        const rejected = settled.find((result) => result.status === "rejected");
+        this.#fail(
+          "delivery-negotiation-failed",
+          rejected?.status === "rejected" ? rejected.reason : "a pane's delivery offer was refused",
+        );
+      }
       return;
     }
 
@@ -2536,8 +2623,8 @@ export class PaneStreamLiveConnection {
     this.#sentBytesTotal += bytes;
     try {
       this.#socket.send(encoded, { binary });
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("socket-send-failed", error);
       return;
     }
     // Stall is judged on the drain tick, never synchronously at send: the
@@ -2579,7 +2666,7 @@ export class PaneStreamLiveConnection {
     if (this.#closed) return;
     const buffered = this.#socket.bufferedAmount ?? 0;
     if (!Number.isSafeInteger(buffered) || buffered < 0) {
-      this.close(1011, "stream-unavailable");
+      this.#fail("socket-buffer-invalid");
       return;
     }
     if (buffered > this.#maxSocketBufferedBytes) {
@@ -3039,6 +3126,23 @@ export class PaneStreamLiveConnection {
   }
 
   #sendAuthoritySnapshot(snapshot: SessionRuntimeAuthoritySnapshot): void {
+    // One line when this connection gains or loses input, and one for its
+    // first snapshot: a stream that paints but never accepts keys shows up
+    // here as "holdsInput false" with the client that holds it instead.
+    const self = this.#sessionRuntimeBinding?.clientId ?? null;
+    const holdsInput = self !== null && snapshot.owners.input === self;
+    if (this.#heldInput !== holdsInput) {
+      logger.info("pane-stream", "stream input authority", {
+        session: this.#descriptor.sessionName,
+        clientId: this.#clientId,
+        connectionClientId: self,
+        holdsInput,
+        inputOwner: snapshot.owners.input,
+        clients: snapshot.clients.length,
+        revision: snapshot.revision,
+      });
+      this.#heldInput = holdsInput;
+    }
     this.#sendFrame(null, { type: "authority-snapshot", snapshot });
   }
 
@@ -3134,6 +3238,14 @@ export class PaneStreamLiveConnection {
         ].includes(rawCode)
           ? rawCode
           : "stream-unavailable";
+        // A refused intent is answered to the client only; without this line a
+        // click that did nothing leaves no trace in either log (#764).
+        logger.info("pane-stream", "intent rejected", {
+          session: this.#descriptor.sessionName,
+          clientId: this.#clientId,
+          verb: intent.verb,
+          code,
+        });
         this.#sendFrame(null, {
           type: "semantic-intent-ack",
           operationId,
@@ -3377,8 +3489,8 @@ export class PaneStreamLiveConnection {
           }
         }
       }
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("control-frame-handler-failed", error);
     }
   }
 
@@ -3390,8 +3502,8 @@ export class PaneStreamLiveConnection {
         code,
         retryable: false,
       });
-    } catch {
-      this.close(1011, "stream-unavailable");
+    } catch (error) {
+      this.#fail("error-frame-send-failed", error);
       return;
     }
     this.close(1008, code);

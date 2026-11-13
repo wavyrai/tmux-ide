@@ -36,17 +36,18 @@ fn integrate_home(state: &browser::State, rows: Vec<Row>) -> Vec<Row> {
             Some(Target::FleetSession { machine, id, .. }) => sessions
                 .iter()
                 .find(|(m, s)| m == machine && &s.id == id)
-                .and_then(|(_, s)| s.session_id.clone()),
+                .and_then(|(m, s)| Some((m, s.session_id.clone()?))),
             _ => None,
         };
-        let Some(live) = live else {
+        let Some((machine, live)) = live else {
             out.push(row);
             continue;
         };
+        // As Home's table: a namesake session on another machine gets none.
         let mut agents: Vec<_> = roster
             .rows
             .iter()
-            .filter(|a| a.session_id == live)
+            .filter(|a| a.session_id == live && a.observed_on(machine))
             .collect();
         // Activity changes must not move a project's rows under the pointer.
         agents.sort_by(|a, b| a.key.cmp(&b.key));

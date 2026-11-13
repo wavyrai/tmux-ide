@@ -68,7 +68,7 @@ impl LocalDaemon {
         target: &NativeSurfaceLocation,
     ) -> Result<NativeSurfaceContext, Error> {
         let mut scopes = self
-            .list_servers()?
+            .known_servers()?
             .into_iter()
             .filter_map(|server| match server {
                 ServerRegistration::Online { scope, .. }

@@ -32,6 +32,17 @@ export const TERMINAL_BROWSER_LAUNCHER = [
   'ELECTRON_RUN_AS_NODE=1 "$staging/terminal-browser.app/Contents/MacOS/terminal-browser" "$root/browser-launch.mjs" "$@"',
   "",
 ].join("\n");
+/**
+ * Whether a prepared source's diff is the pinned integration patch. Git's
+ * `index` lines hash whole files, and two patched Cargo.toml files contain the
+ * tmux-ide checkout path, so those lines differ from one checkout to the next.
+ * They are left out: the content lines, compared in full, prove the same (#722).
+ */
+export function sameIntegrationPatch(expected, actual) {
+  const content = (patch) =>
+    patch.replace(/^index [0-9a-f]{7,64}\.\.[0-9a-f]{7,64}(?: [0-7]{6})?\n/gmu, "");
+  return content(expected) === content(actual);
+}
 export async function browserPayloadInventory(root) {
   const files = {};
   let total = 0;

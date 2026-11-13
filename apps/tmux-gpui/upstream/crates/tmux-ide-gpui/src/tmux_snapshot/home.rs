@@ -9,9 +9,12 @@ pub(super) mod filters;
 pub(super) mod fleet;
 pub(super) mod fleet_nav;
 pub(super) mod fleet_rows;
+pub(super) mod fleet_view;
 pub(super) mod machine_filter;
 mod preferences;
 pub(super) mod recovery;
+mod row_root;
+pub(super) mod rows_window;
 
 const SPACE: f32 = bezel_theme::Theme::SPACE;
 /// The page column's width: the table's (#746), with the filter row over
@@ -22,6 +25,15 @@ const PAGE_MAX: f32 = fleet::TABLE_MAX + 2. * PAGE_SIDE;
 const PAGE_SIDE: f32 = 24.;
 /// The Browse sessions field's width in the header (#746 v3).
 const BROWSE_WIDTH: f32 = 260.;
+/// Home's own words for its states (onboarding A0: plain words).
+pub(super) const CONNECTION_LOST: &str = "Connection lost. Reopen Tmux IDE to reconnect.";
+pub(super) const LIST_FAILED: &str = "Tmux IDE couldn't list your sessions. Refresh to try again.";
+pub(super) const EMPTY_TITLE: &str = "No sessions yet";
+pub(super) const EMPTY_HINT: &str =
+    "Start a new session on this Mac, or choose another machine to start one there.";
+pub(super) const LOCAL_GUIDANCE: &str =
+    "Connect to tmux on this Mac below. If tmux isn't running, start it in Terminal first.";
+pub(super) const SETUP_NOT_SENT: &str = "Setup couldn't start. Try again.";
 /// The alpha of `popover::key_cap`'s fill.
 const KEY_CAP_FILL: f32 = 0.05;
 /// The alpha of the status strips' tinted fill.
@@ -71,6 +83,27 @@ pub(super) fn strip_plate(tone: Hsla, canvas: u32) -> u32 {
 /// rows sit. The 4.6 target leaves room for the 8-bit rounding of the plates,
 /// as the chrome's ink tiers do.
 pub(super) fn palette(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
+    thread_local! {
+        /// The last theme and canvas Home was inked for, and the result:
+        /// every row and chip asks, and the answer changes only with the
+        /// appearance (perf plan, finding 2).
+        static LAST: std::cell::RefCell<Option<(crate::config::Theme, u32, bezel_theme::Theme)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    if let Some(inked) = LAST.with(|last| {
+        last.borrow()
+            .as_ref()
+            .filter(|(source, plate, _)| source == theme && *plate == canvas)
+            .map(|(_, _, inked)| inked.clone())
+    }) {
+        return inked;
+    }
+    let inked = ink_home(theme, canvas);
+    LAST.with(|last| *last.borrow_mut() = Some((theme.clone(), canvas, inked.clone())));
+    inked
+}
+
+fn ink_home(theme: &crate::config::Theme, canvas: u32) -> bezel_theme::Theme {
     /// Foreground, muted, surface, background, high contrast, canvas.
     type Key = (u32, u32, u32, u32, bool, u32);
     thread_local! {
@@ -181,7 +214,13 @@ impl SnapshotView {
     pub(super) fn home_palette(&self) -> bezel_theme::Theme {
         palette(&self.theme(), self.canvas())
     }
-    fn home_select(&mut self, request: u64, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn home_select(
+        &mut self,
+        request: u64,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if current(
             &self.browser_state,
             self.browser_commands.is_some(),
@@ -232,8 +271,7 @@ impl SnapshotView {
                     self.browser_state.local_setup = Some(browser::local_setup::Setup {
                         phase: browser::local_setup::Phase::Failed,
                     });
-                    self.browser_state.status =
-                        "Local setup request could not be sent. Try again.".into();
+                    self.browser_state.status = SETUP_NOT_SENT.into();
                 }
                 cx.notify();
                 return;
@@ -248,11 +286,19 @@ impl SnapshotView {
     ) -> AnyElement {
         self.refresh_new_session(cx);
         self.prepare_home_filter(cx);
+        // First run: the welcome takes Home's place (onboarding A1).
+        self.observe_welcome(cx);
+        if self.welcome.open {
+            self.fleet_view_hidden();
+            return self.welcome_render(window, cx);
+        }
         let (now, reduced) = (cx.background_executor().now(), cx.reduce_motion());
+        let mut settling = false;
         if let Some(controls) = self.home_filter.as_mut() {
             let machines = super::motion::home_machines(&self.browser_state);
             controls.motion.observe(&machines, now);
-            if controls.motion.settle(now, reduced) {
+            settling = controls.motion.settle(now, reduced);
+            if settling {
                 window.request_animation_frame();
             }
         }
@@ -448,13 +494,18 @@ impl SnapshotView {
         }
         // The pane-limit notice is always loud: it shows beside a card too.
         let notice = self.browser_state.home_notice.as_ref().filter(|_| is_live);
-        if (act.is_some() && notice.is_some())
+        let status_shown = (act.is_some() && notice.is_some())
             || (act.is_none()
                 && ((connected && setup_phase.is_some())
                     || (!is_live && !waiting && !self.browser_state.status.is_empty())
                     || (is_live && self.browser_state.home_fault)
-                    || notice.is_some()))
-        {
+                    || notice.is_some()));
+        // #693: the status line above already says why the list failed, so
+        // the list's own strip would be a second one under it.
+        let list_failure_said = status_shown
+            && connected
+            && self.browser_state.home_phase == browser::HomePhase::Unavailable;
+        if status_shown {
             let status = match notice.filter(|_| act.is_some()) {
                 Some(notice) => crate::notifications::safe_text(notice, 480),
                 None => status_message(&self.browser_state, connected),
@@ -512,7 +563,7 @@ impl SnapshotView {
                     .text_style(TextStyle::Callout)
                     .text_color(bezel.text_muted)
                     .children(design::ink_probe(|| "home-local-guidance".into()))
-                    .child("Connect to a local tmux server below. If none is running, start tmux in Terminal first."),
+                    .child(LOCAL_GUIDANCE),
             );
         }
         body = body.child(div().w_full().child(self.new_session_controls(cx)));
@@ -525,7 +576,7 @@ impl SnapshotView {
             .flex_col()
             .gap(px(SPACE * 1.5));
         let nav = self.fleet_nav(cx);
-        if let Some(cards) = self.fleet_cards(window, cx) {
+        if let Some(cards) = self.fleet_element(settling, window, cx) {
             // The left list names the view; the table needs no heading.
             detail = detail.child(cards);
         } else if is_live && !self.browser_state.sessions.is_empty() {
@@ -579,25 +630,26 @@ impl SnapshotView {
             detail = detail
                 .child(div().text_style(TextStyle::Title3).child("Sessions"))
                 .child(bezel.group_box().min_w_0().children(rows));
-        } else if (!connected || setup_phase.is_none()) && !waiting && act.is_none() {
+        } else if (!connected || setup_phase.is_none())
+            && !waiting
+            && act.is_none()
+            && !list_failure_said
+        {
             let guidance = if !connected {
                 bezel
-                    .error_strip("Connection lost. Reopen tmux-ide to reconnect.")
+                    .error_strip(CONNECTION_LOST)
                     .text_color(bezel.danger_muted)
                     .debug_selector(|| "home-guidance-error".into())
                     .children(design::ink_probe(|| "home-guidance-error".into()))
             } else if self.browser_state.home_phase == browser::HomePhase::Unavailable {
                 bezel
-                    .warning_strip("The daemon could not list sessions. Refresh to try again.")
+                    .warning_strip(LIST_FAILED)
                     .text_color(bezel.warning_muted)
                     .debug_selector(|| "home-guidance-warning".into())
                     .children(design::ink_probe(|| "home-guidance-warning".into()))
             } else {
                 // Loading is the footer slot's (r5): this is only ever an empty list.
-                let (title, hint) = (
-                    "No live sessions",
-                    "Start a new local session, or select a fleet server to create a session there.",
-                );
+                let (title, hint) = (EMPTY_TITLE, EMPTY_HINT);
                 bezel
                     .empty_state(
                         bezel_ui::icons::Icon::asset("icons/terminal.svg"),
@@ -640,6 +692,7 @@ impl SnapshotView {
         if let Some(controls) = &self.home_filter {
             page = page.track_scroll(&controls.page_scroll);
         }
+        let whats_new = self.whats_new_card(cx);
         div()
             .id("tmux-home")
             .debug_selector(|| "tmux-home".into())
@@ -650,7 +703,9 @@ impl SnapshotView {
             .flex()
             .flex_col()
             .bg(rgb(canvas))
+            .relative()
             .child(page.fill())
+            .children(whats_new)
             .into_any_element()
     }
 }

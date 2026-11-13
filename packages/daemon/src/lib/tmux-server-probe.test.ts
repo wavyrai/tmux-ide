@@ -9,7 +9,11 @@ vi.mock("./unix-socket-authority.ts", () => ({
   captureUnixSocketIdentity: mocks.capture,
   revalidateUnixSocketIdentity: mocks.revalidate,
 }));
-import { createTmuxServerProbe } from "./tmux-server-registration.ts";
+import {
+  TMUX_SERVER_PROBE_TIMEOUT_MS,
+  createDiagnosedTmuxServerProbe,
+  createTmuxServerProbe,
+} from "./tmux-server-registration.ts";
 const socket = Object.freeze({
   path: "/private/test.sock",
   dev: 1,
@@ -93,4 +97,50 @@ describe("server probe ownership proof", () => {
       expect(mocks.execute).toHaveBeenCalledTimes(2);
     },
   );
+  // #840: the owner registry must be able to tell "tmux was slow" from "tmux says no server".
+  it.each([
+    [
+      "a timeout",
+      Object.assign(new Error("Command failed"), { killed: true, signal: "SIGTERM", code: null }),
+      "timeout",
+    ],
+    [
+      "a failed spawn",
+      Object.assign(new Error("spawn tmux EAGAIN"), { code: "EAGAIN", errno: -35 }),
+      "exec-error",
+    ],
+    [
+      "tmux reporting no server",
+      Object.assign(new Error("Command failed"), {
+        code: 1,
+        stderr: "no server running on /private/test.sock\n",
+      }),
+      "no-server",
+    ],
+  ])("says why a probe missed: %s", async (_label, error, failure) => {
+    mocks.execute.mockRejectedValue(error);
+    const result = await createDiagnosedTmuxServerProbe(process.execPath)({
+      kind: "path",
+      path: socket.path,
+    });
+    expect(result).toMatchObject({ failure });
+    expect(await createTmuxServerProbe(process.execPath)({ kind: "path", path: socket.path })).toBe(
+      null,
+    );
+    expect(mocks.execute.mock.calls[0]?.[2]).toMatchObject({
+      timeout: TMUX_SERVER_PROBE_TIMEOUT_MS,
+    });
+  });
+  it("reports unparsable output and a foreign socket as misses with a reason", async () => {
+    const probe = createDiagnosedTmuxServerProbe(process.execPath);
+    mocks.execute.mockResolvedValue({ stdout: "" });
+    expect(await probe({ kind: "path", path: socket.path })).toMatchObject({
+      failure: "unparsable",
+    });
+    mocks.execute.mockResolvedValue({ stdout: `${socket.path}|41|100\n` });
+    mocks.capture.mockReturnValueOnce(socket).mockReturnValue({ ...socket, ino: 3 });
+    expect(await probe({ kind: "path", path: socket.path })).toMatchObject({
+      failure: "socket-mismatch",
+    });
+  });
 });

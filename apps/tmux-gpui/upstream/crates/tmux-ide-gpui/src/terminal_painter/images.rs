@@ -274,6 +274,8 @@ pub(crate) struct ImageCache {
     last: HashMap<Slot, (u64, Arc<RenderImage>)>,
     /// Which rectangle each in-flight decode was started for.
     decoding_for: HashMap<u64, Slot>,
+    /// This frame's placement rectangles, reused from frame to frame.
+    slots: Vec<Slot>,
 }
 
 type Slot = (u16, u16, u32, u32);
@@ -405,19 +407,21 @@ impl ImageCache {
     /// starting background decodes for images not yet decoded. Placements
     /// whose texture is not ready are skipped this paint; a finished decode
     /// refreshes the window.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
         images: PlacedImages<'_>,
         origin: gpui::Point<Pixels>,
         cell: (f32, f32),
         grid: Bounds<Pixels>,
+        placed: &mut Vec<(i32, ImageGeometry, Arc<RenderImage>)>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Vec<(i32, ImageGeometry, Arc<RenderImage>)> {
+    ) {
         self.release_idle(window);
         let now = Instant::now();
-        let mut placed = Vec::new();
-        let mut slots = Vec::new();
+        let mut slots = std::mem::take(&mut self.slots);
+        slots.clear();
         for (placement, image) in images.resolved() {
             let Some(geometry) = geometry(placement, origin, cell, grid, images.cell_pixels) else {
                 continue;
@@ -442,9 +446,9 @@ impl ImageCache {
             }
         }
         self.last.retain(|slot, _| slots.contains(slot));
+        self.slots = slots;
         // Lower z paints first; equal z keeps the scene's order.
         placed.sort_by_key(|(z, ..)| *z);
-        placed
     }
 
     fn spawn(

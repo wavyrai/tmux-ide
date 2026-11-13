@@ -14,11 +14,16 @@ use herdr_client::tmux_daemon::{CatalogEventError, CatalogWatchError, Error as D
 const MAX_DELAY: Duration = Duration::from_secs(5);
 pub(super) const RECONNECTING: &str = "Reconnecting…";
 pub(super) const STILL_RECONNECTING: &str = "Still reconnecting…";
-const CREDENTIALS: &str = "The daemon refused this app's credentials. Restart tmux-ide.";
-const DAEMON_UPDATE: &str = "This daemon needs an update. Update tmux-ide, then refresh.";
-const RECORD: &str = "tmux-ide's daemon record is unreadable. Refresh after fixing it.";
-const PLATFORM: &str = "This platform can't verify the daemon. Refresh to try again.";
-const UNREADABLE: &str = "The daemon sent data this app can't read. Refresh to try again.";
+// What the act-needed card says (#360), in plain words (onboarding A0).
+pub(super) const CREDENTIALS: &str =
+    "The background service refused this app's credentials. Quit and reopen Tmux IDE.";
+pub(super) const DAEMON_UPDATE: &str =
+    "The background service needs an update. Update Tmux IDE, then refresh.";
+pub(super) const RECORD: &str = "Tmux IDE can't read the background service's details. Run tmux-ide doctor in Terminal, then refresh.";
+pub(super) const PLATFORM: &str =
+    "This Mac can't verify the background service. Refresh to try again.";
+pub(super) const UNREADABLE: &str =
+    "The background service sent something this app can't read. Refresh to try again.";
 /// Protocol failures in a row before Home stops and says so.
 const PROTOCOL_LIMIT: u8 = 3;
 
@@ -105,6 +110,8 @@ pub(super) struct Recovery {
     active: Option<Attempt>,
     /// Set when Home stopped on a failure that won't recover by itself.
     fault: Option<&'static str>,
+    /// A Home that failed to load keeps looking for its daemon.
+    pub(super) quiet: quiet::Quiet,
 }
 struct Attempt {
     attempts: u32,
@@ -210,6 +217,7 @@ impl Local {
                 self.home = Recovery {
                     active: None,
                     fault: Some(message),
+                    ..Recovery::default()
                 };
                 self.state.status = message.into();
             }
@@ -220,9 +228,12 @@ impl Local {
     /// None in the background or off Home: nothing runs there, so a due retry
     /// must not keep the actor awake.
     pub(super) fn home_recovery_wait(&self) -> Option<Duration> {
-        self.home_visible()
-            .then(|| self.home.wait(Instant::now()))
+        let quiet = self.home.quiet.wait(Instant::now());
+        (self.home_visible().then(|| self.home.wait(Instant::now())))
             .flatten()
+            .into_iter()
+            .chain(quiet)
+            .min()
     }
     pub(super) fn home_recovery_tick(&mut self) -> Result<(), Error> {
         if self.stage.is_some() || !self.home_visible() || !self.home.due(Instant::now()) {
@@ -252,8 +263,8 @@ impl Local {
     /// row by row, and keeps row ids only for the same daemon identity
     /// (`receive_catalog`), so Home doesn't repaint after a drop.
     pub(super) fn home_recovered(&mut self) {
-        self.home.active = None;
-        self.home.fault = None;
+        self.quiet_found();
+        self.home = Recovery::default();
     }
     /// Opening a session waits for Home to reconnect, and is refused with the
     /// reason after a failure that won't recover by itself.

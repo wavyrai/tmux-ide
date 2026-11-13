@@ -24,6 +24,9 @@ export default defineConfig({
   test: {
     css: true,
     environment: "node",
+    // No test may reach a live tmux server: private socket directory + guard.
+    globalSetup: ["./test-support/tmux-isolation-global.ts"],
+    setupFiles: ["./test-support/tmux-isolation-setup.ts"],
     // The hermetic suite still includes several subprocess-heavy compact-state
     // and takeover proofs. Keep two workers so those fixed lifecycle budgets
     // remain meaningful while a developer has the real GUI/TUI stack open.

@@ -117,6 +117,13 @@ impl Owner {
             awaiting_ack: false,
         });
     }
+    /// Ages the gesture as if nothing had moved it for `by`.
+    #[cfg(test)]
+    pub(super) fn test_idle_for(&mut self, by: Duration) {
+        if let Some(a) = self.active.as_mut() {
+            a.progress = a.progress.checked_sub(by).unwrap_or(a.progress);
+        }
+    }
     pub(super) fn offer(&mut self, cells: u16, release: bool) {
         if let Some(a) = self.active.as_mut()
             && !a.cancel
@@ -322,7 +329,8 @@ impl SnapshotView {
             self.divider = None;
             self.browser_commands = None;
             self.browser_state.input_ready = false;
-            self.browser_state.status = "Pane resize connection unavailable".into();
+            // The command channel is dropped with it: only a reopen reconnects.
+            self.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
             cx.notify();
         }
         if self.divider.as_ref().is_some_and(|d| d.gesture.is_some()) && !self.resize_gesture.busy()

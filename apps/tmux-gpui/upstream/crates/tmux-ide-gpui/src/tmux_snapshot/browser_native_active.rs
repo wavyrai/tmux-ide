@@ -385,8 +385,11 @@ impl Active {
         // Attachment acceptance concerns coherent live authority. Restored
         // scrollback intentionally disables UI typing, but must not prevent
         // session navigation/history from acknowledging the live attachment.
+        // An inactive window never gets input authority, so there a live frame
+        // alone says the stream is back (it ends a reconnect, not a visit).
+        let input_ready = self.controller.input_ready();
         let attachment_ready =
-            self.controller.input_ready() && state.frame.is_some() && !state.retained_preview;
+            (input_ready || !foreground) && state.frame.is_some() && !state.retained_preview;
         if attachment_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
             self.metadata_notice = Some(Command::NativeTerminalReady {
                 version: 1,
@@ -396,7 +399,7 @@ impl Active {
                 live_session_id: self.session.clone(),
                 generation: self.generation.clone(),
                 presence_revision: metadata_key.1,
-                input_ready: true,
+                input_ready,
                 coherent: true,
             });
             self.metadata_sent = Some(metadata_key);

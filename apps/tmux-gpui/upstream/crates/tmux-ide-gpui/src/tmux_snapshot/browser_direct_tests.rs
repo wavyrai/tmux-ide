@@ -612,3 +612,17 @@ fn foreground_change_alone_refreshes_the_cached_status() {
     assert!(adapter.apply(&mut s, &shown, false, false, 4, 1).unwrap());
     assert_eq!(s.status, "Window inactive — activate tmux-ide to type");
 }
+
+/// #649: while the frame and the pane layout disagree (a resize or a split
+/// in flight), the status says so in plain words.
+#[test]
+fn a_frame_out_of_step_with_the_layout_says_it_is_updating() {
+    let mut adapter = NativePresentation::new("scope", "workspace");
+    let mut s = state();
+    let mut shown = window(snapshot(), 1, "one");
+    shown.coherent = false;
+    adapter.apply(&mut s, &shown, true, true, 4, 0).unwrap();
+    assert_eq!(s.status, "Updating the terminal layout…");
+    assert!(!s.input_ready);
+    assert_eq!(crate::tmux_snapshot::connection::jargon(&s.status), None);
+}

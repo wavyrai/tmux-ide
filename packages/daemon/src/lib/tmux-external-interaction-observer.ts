@@ -23,6 +23,20 @@ import {
 
 const HOOK_MARKER = "tmux-ide-interaction-v3";
 const OWNED_HOOK_MARKER = "tmux-ide-interaction-v";
+/** The retention name of one observer: the marker plus its daemon id. */
+const OWNER_NAME =
+  /tmux-ide-interaction-v3-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/u;
+const OWNER_RECORD = /^retention-owner pid=([1-9][0-9]{0,9})$/u;
+/** Observers of THIS process that are installed and not yet disposed. */
+const liveLocalObservers = new Set<string>();
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
 const FIELD_SEPARATOR = "|tmux-ide-input-field-v1|";
 const EVENT_SEPARATOR = "|tmux-ide-input-event-v1|";
 export interface ExternalTmuxInteractionGap {
@@ -55,20 +69,34 @@ export interface HookHealthcheckSchedule {
 
 export const DEFAULT_HOOK_HEALTHCHECK_SCHEDULE: HookHealthcheckSchedule = Object.freeze({
   baseMs: 1_000,
-  maxMs: 30_000,
+  // A healthy idle server is checked 12 times an hour, not 120. Since daemons
+  // no longer remove each other's hooks, only a user action (a config reload,
+  // `set-hook -gu`) can take them away; that is then noticed within 5 minutes.
+  maxMs: 300_000,
 });
 
 export type HookHealthcheckOutcome = "healthy" | "repaired" | "failed";
 
-/** Pure cadence rule: healthy checks double the wait up to the cap; anything else resets it. */
+/**
+ * Pure cadence rule: healthy checks double the wait up to the cap; a repair or
+ * failure resets it to the base. A check that is unhealthy again right after
+ * one that was (`consecutiveUnhealthy` of 2 or more) backs off as well: on a
+ * tmux server that is shutting down but cannot exit, every repair "succeeds"
+ * and is gone at the next check, and the base cadence then cost about 400 tmux
+ * calls a minute for as long as the server lingered.
+ */
 export function nextHookHealthcheckDelay(
   previousMs: number,
   outcome: HookHealthcheckOutcome,
   schedule: HookHealthcheckSchedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE,
+  consecutiveUnhealthy = 1,
 ): number {
   const base = Math.max(1, Math.floor(schedule.baseMs));
   const max = Math.max(base, Math.floor(schedule.maxMs));
-  if (outcome !== "healthy") return base;
+  if (outcome !== "healthy") {
+    const streak = Math.max(1, Math.min(32, Math.floor(consecutiveUnhealthy) || 1));
+    return Math.min(base * 2 ** (streak - 1), max);
+  }
   const previous = Number.isFinite(previousMs) ? Math.max(base, Math.floor(previousMs)) : base;
   return Math.min(previous * 2, max);
 }
@@ -162,18 +190,66 @@ function defaultWaiter(
 ): ExternalTmuxInteractionObserverIo["waitForSignal"] {
   const prefix = socketArguments(authority);
   return (channel, signal) =>
-    new Promise<void>((resolve, reject) => {
-      execFile(
-        authority.executablePath,
-        [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
-        { signal, encoding: "utf8", windowsHide: true },
-        (error) => {
-          if (!error) resolve();
-          else if (signal.aborted) resolve();
-          else reject(error);
-        },
-      );
+    waitForBlockingTmuxClient(
+      authority.executablePath,
+      [...prefix, ...tmuxInteractionWaitCommand(bufferName, channel)],
+      signal,
+    );
+}
+
+export const BLOCKING_CLIENT_KILL_GRACE_MS = 250;
+
+/**
+ * Run a tmux client that blocks until signalled (`wait-for`). It has no
+ * deadline by design, so cancellation must not depend on the client's
+ * cooperation: TERM on abort, KILL after a grace, and settle when the process
+ * exits. Observer disposal awaits this, and with it every daemon stop (#839).
+ */
+export function waitForBlockingTmuxClient(
+  executable: string,
+  args: readonly string[],
+  signal: AbortSignal,
+  killGraceMs: number = BLOCKING_CLIENT_KILL_GRACE_MS,
+): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let failure: Error | null = null;
+    let escalation: ReturnType<typeof setTimeout> | null = null;
+    const child = execFile(
+      executable,
+      [...args],
+      { encoding: "utf8", windowsHide: true },
+      (error) => {
+        failure ??= error;
+      },
+    );
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      if (escalation) clearTimeout(escalation);
+      signal.removeEventListener("abort", cancel);
+      if (!failure || signal.aborted) resolve();
+      else reject(failure);
+    };
+    const cancel = (): void => {
+      if (escalation) return;
+      child.kill("SIGTERM");
+      escalation = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+    };
+    signal.addEventListener("abort", cancel, { once: true });
+    child.once("error", (error) => {
+      failure ??= error;
+      settle();
     });
+    // "exit", not "close": a lingering holder of the pipes must not keep the
+    // waiter, and so the stop, pending after the client itself is gone.
+    child.once("exit", (code, exitSignal) => {
+      if (code !== 0 && !failure)
+        failure = new Error(`tmux wait client ended with ${exitSignal ?? `code ${String(code)}`}`);
+      settle();
+    });
+  });
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -265,17 +341,19 @@ export function parseTmuxInputHookRecords(raw: string): readonly TmuxInputHookRe
   return records;
 }
 
-function hookIndexes(
+/** Every tmux-ide hook of this array, with the observer it belongs to (null: a legacy hook). */
+function ownedHooks(
   output: string,
   hookName: "after-send-keys" | "after-capture-pane",
-): readonly number[] {
+): readonly { readonly index: number; readonly owner: string | null }[] {
   const row = new RegExp(`^${hookName}\\[([0-9]+)\\]\\s+(.+)$`, "u");
-  const indexes: number[] = [];
+  const hooks: { index: number; owner: string | null }[] = [];
   for (const line of output.split("\n")) {
     const match = row.exec(line);
-    if (match && match[2]!.includes(OWNED_HOOK_MARKER)) indexes.push(Number(match[1]!));
+    if (match && match[2]!.includes(OWNED_HOOK_MARKER))
+      hooks.push({ index: Number(match[1]!), owner: OWNER_NAME.exec(match[2]!)?.[0] ?? null });
   }
-  return indexes;
+  return hooks;
 }
 
 /**
@@ -304,6 +382,8 @@ export class TmuxExternalInteractionObserver {
   readonly #healthcheckSchedule: HookHealthcheckSchedule;
   #healthcheckDelayMs: number;
   #lastHealthcheckOutcome: HookHealthcheckOutcome = "failed";
+  /** Scheduled checks in a row that did not find the hooks intact. */
+  #unhealthyChecks = 0;
   readonly #onAvailability: ((available: boolean) => void) | undefined;
   readonly #onGap: ((gap: ExternalTmuxInteractionGap) => void) | undefined;
   #tmuxWork: Promise<unknown> = Promise.resolve();
@@ -311,6 +391,7 @@ export class TmuxExternalInteractionObserver {
   #diagnostics: ExternalTmuxObserverDiagnostics | null;
   #diagnosticActiveOperations = 0;
   readonly #authenticatedInternalReads: AuthenticatedInternalReadVerifier;
+  readonly #ownerProcess: { readonly pid: number; readonly isAlive: (pid: number) => boolean };
 
   constructor(options: {
     daemonInstanceId: string;
@@ -334,7 +415,10 @@ export class TmuxExternalInteractionObserver {
     onGap?: (gap: ExternalTmuxInteractionGap) => void;
     /** Health-check cadence bounds. Tests inject small values; production uses the default. */
     healthcheck?: Partial<HookHealthcheckSchedule>;
+    /** This daemon's process and the liveness test for another's. Tests inject both. */
+    ownerProcess?: { readonly pid: number; readonly isAlive: (pid: number) => boolean };
   }) {
+    this.#ownerProcess = options.ownerProcess ?? { pid: process.pid, isAlive: processIsAlive };
     this.#daemonInstanceId = options.daemonInstanceId;
     this.#healthcheckSchedule = Object.freeze({
       baseMs: options.healthcheck?.baseMs ?? DEFAULT_HOOK_HEALTHCHECK_SCHEDULE.baseMs,
@@ -401,6 +485,7 @@ export class TmuxExternalInteractionObserver {
       });
       if (!isTmuxServerUnavailable(error)) {
         this.#active = false;
+        liveLocalObservers.delete(this.#bufferName);
         throw error;
       }
       // A configless first run legitimately has no tmux server yet. Keep the
@@ -414,6 +499,7 @@ export class TmuxExternalInteractionObserver {
         await this.#removeOwnedHooks();
         await this.#deleteRetention();
       });
+      liveLocalObservers.delete(this.#bufferName);
       throw new Error("tmux external interaction observer was disposed during startup");
     }
     this.#loop = this.#run();
@@ -447,12 +533,14 @@ export class TmuxExternalInteractionObserver {
       if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
       outcome = "failed";
     }
+    this.#unhealthyChecks = outcome === "healthy" ? 0 : this.#unhealthyChecks + 1;
     // A signal-path reset that landed during this check wins over the outcome.
     if (this.#healthcheckDelayMs === delayBefore) {
       this.#healthcheckDelayMs = nextHookHealthcheckDelay(
         delayBefore,
         outcome,
         this.#healthcheckSchedule,
+        this.#unhealthyChecks,
       );
     }
     if (this.#hookHealthcheck === null) this.#scheduleHealthcheck();
@@ -471,6 +559,8 @@ export class TmuxExternalInteractionObserver {
   }
 
   async dispose(): Promise<void> {
+    // From here on another observer of this process may clear what this one leaves.
+    liveLocalObservers.delete(this.#bufferName);
     if (!this.#active && !this.#loop && !this.#starting && !this.#installed) return;
     const starting = this.#starting;
     this.#active = false;
@@ -491,12 +581,24 @@ export class TmuxExternalInteractionObserver {
   }
 
   async #install(signal?: AbortSignal): Promise<void> {
-    await this.#removeOwnedHooks(signal);
-    await this.#deleteOwnedBuffers(signal);
+    const others = await this.#liveOtherObservers(signal);
+    await this.#removeOwnedHooks(signal, others);
+    await this.#deleteOwnedBuffers(signal, others);
     signal?.throwIfAborted();
-    // The small named buffer indexes retention options for crash cleanup;
-    // event data lives only in bounded options, never in this buffer.
-    await this.#io.runTmux(["set-buffer", "-b", this.#bufferName, "retention-owner"], signal);
+    liveLocalObservers.add(this.#bufferName);
+    // The small named buffer indexes retention options for crash cleanup and
+    // names the owning process: another daemon on this server leaves these
+    // hooks alone while that process lives, and clears them once it is gone.
+    // Event data lives only in bounded options, never in this buffer.
+    await this.#io.runTmux(
+      [
+        "set-buffer",
+        "-b",
+        this.#bufferName,
+        `retention-owner pid=${String(this.#ownerProcess.pid)}`,
+      ],
+      signal,
+    );
     const hook = (
       operationKind: ExternalTmuxInteraction["operationKind"],
       markerOption: string,
@@ -560,9 +662,18 @@ export class TmuxExternalInteractionObserver {
     const work = this.#serializeTmux(async () => {
       const finish = this.#beginDiagnostic("healthcheck");
       try {
-        if (await this.#ownedHooksPresent(this.#abort.signal)) {
+        const hooks = await this.#ownedHooksPresent(this.#abort.signal);
+        if (hooks === "present") {
           this.#lastHealthcheckOutcome = "healthy";
           finish(true);
+          return;
+        }
+        if (hooks === "unknown") {
+          // The check could not be made (tmux timed out or could not be
+          // started). That says nothing about the hooks: leave them, report
+          // no gap, and ask again at the base cadence.
+          this.#lastHealthcheckOutcome = "failed";
+          finish(false);
           return;
         }
         // Hooks that were installed and are now gone dropped every interaction
@@ -765,7 +876,51 @@ export class TmuxExternalInteractionObserver {
     });
   }
 
-  async #removeOwnedHooks(signal?: AbortSignal): Promise<void> {
+  /**
+   * The other observers on this tmux server whose owner is alive: another
+   * daemon process, or another owner generation of this one. Their hooks,
+   * buffers and options are not ours to remove. Null when the server would
+   * not say; then nothing foreign is touched at all.
+   */
+  async #liveOtherObservers(signal?: AbortSignal): Promise<ReadonlySet<string> | null> {
+    let output: string;
+    try {
+      output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
+    } catch {
+      return null;
+    }
+    const live = new Set<string>();
+    for (const name of output.split("\n")) {
+      if (name === this.#bufferName || OWNER_NAME.exec(name)?.[0] !== name) continue;
+      let record: string;
+      try {
+        record = (await this.#io.runTmux(["show-buffer", "-b", name], signal)).trim();
+      } catch {
+        continue;
+      }
+      const pid = Number(OWNER_RECORD.exec(record)?.[1]);
+      // A marker without a pid was written by an older daemon; as before, it is cleared.
+      if (!Number.isSafeInteger(pid)) continue;
+      if (
+        pid === this.#ownerProcess.pid
+          ? liveLocalObservers.has(name)
+          : this.#ownerProcess.isAlive(pid)
+      )
+        live.add(name);
+    }
+    return live;
+  }
+
+  /**
+   * Remove this observer's hooks, and those nobody alive owns (a crashed
+   * daemon's, legacy ones). Never another live observer's: two daemons on one
+   * tmux server would otherwise keep taking each other's hooks away.
+   */
+  async #removeOwnedHooks(
+    signal?: AbortSignal,
+    others?: ReadonlySet<string> | null,
+  ): Promise<void> {
+    const live = others === undefined ? await this.#liveOtherObservers(signal) : others;
     for (const hookName of ["after-send-keys", "after-capture-pane"] as const) {
       let output: string;
       try {
@@ -773,7 +928,9 @@ export class TmuxExternalInteractionObserver {
       } catch {
         continue;
       }
-      for (const index of hookIndexes(output, hookName)) {
+      for (const { index, owner } of ownedHooks(output, hookName)) {
+        if (owner !== this.#bufferName && (live === null || (owner !== null && live.has(owner))))
+          continue;
         try {
           await this.#io.runTmux(["set-hook", "-gu", `${hookName}[${index}]`], signal);
         } catch {
@@ -784,7 +941,7 @@ export class TmuxExternalInteractionObserver {
     this.#setInstalled(false);
   }
 
-  async #ownedHooksPresent(signal?: AbortSignal): Promise<boolean> {
+  async #ownedHooksPresent(signal?: AbortSignal): Promise<"present" | "missing" | "unknown"> {
     // One client verifies both hook arrays: tmux runs the `;`-separated list in
     // a single command queue and prints each array's lines in order.
     let output: string;
@@ -794,12 +951,12 @@ export class TmuxExternalInteractionObserver {
         signal,
       );
     } catch {
-      return false;
+      return "unknown";
     }
-    return (
-      ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
+    return ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
       ownedHookInstalled(output, "after-capture-pane", this.#bufferName)
-    );
+      ? "present"
+      : "missing";
   }
 
   get available(): boolean {
@@ -848,7 +1005,11 @@ export class TmuxExternalInteractionObserver {
     await this.#deleteBuffer(this.#bufferName);
   }
 
-  async #deleteOwnedBuffers(signal?: AbortSignal): Promise<void> {
+  async #deleteOwnedBuffers(
+    signal: AbortSignal | undefined,
+    live: ReadonlySet<string> | null,
+  ): Promise<void> {
+    if (live === null) return;
     let output: string;
     try {
       output = await this.#io.runTmux(["list-buffers", "-F", "#{buffer_name}"], signal);
@@ -857,6 +1018,7 @@ export class TmuxExternalInteractionObserver {
     }
     for (const name of output.split("\n")) {
       if (!name.startsWith(OWNED_HOOK_MARKER) || name === this.#bufferName) continue;
+      if (live.has(name)) continue;
       if (/^[A-Za-z0-9._-]{1,256}$/u.test(name)) {
         await this.#deleteOption(tmuxInteractionOption(name), signal);
         await this.#deleteOption(`${tmuxInteractionOption(name)}-drain`, signal);

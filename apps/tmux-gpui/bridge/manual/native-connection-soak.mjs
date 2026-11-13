@@ -1,0 +1,611 @@
+// Connection soak: the app without a window (the ignored Rust test
+// `connection_soak`) against an owned scratch daemon and tmux server, with
+// faults injected in a loop. Every disconnect, its time to recover, and every
+// state that did not recover by itself is recorded and summarised.
+//
+//   node --import tsx native-connection-soak.mjs ABS_GUI_TEST_BINARY
+//
+// Environment:
+//   SOAK_SECONDS=600          how long to inject faults
+//   SOAK_INACTIVE=1           the app window is not the active window
+//   SOAK_FAULTS=a,b,c         only these faults (names below), in this order
+//   SOAK_SETTLE_MS=12000      wait between faults
+//   SOAK_RECOVER_LIMIT_S=60   after this long without recovery it is "stuck"
+//   SOAK_CLI=/abs/bin/cli.js  a prebuilt daemon instead of this checkout's. Set
+//                             it for runs in parallel: each run without it
+//                             rebuilds bin/cli.js, and two builds collide
+//   SOAK_MODE=late-daemon     only: start the app before the daemon
+//   SOAK_MODE=requests        only: count the app's daemon requests for Home,
+//                             open a session, an idle minute in it
+//                             (SOAK_IDLE_SECONDS=60), create a session
+//   SOAK_CPU=1                also allow the cpu-starve fault (off by default:
+//                             it loads every core of the machine for 8 s)
+//   SOAK_REPORT=/abs/file.json  the full report; SOAK_TRANSCRIPT, SOAK_DAEMON_LOG
+//
+// Isolation: its own HOME, TMUX_IDE_HOME, daemon record, port, tmux socket (-S)
+// and TMUX_TMPDIR, all under the scratch root; TMUX is unset here and points at
+// the scratch socket for the daemon. Every tmux the daemon runs goes through a
+// wrapper that sets the private TMUX_TMPDIR and refuses the default socket
+// directory (/tmp/tmux-UID), so nothing can reach the user's own tmux server
+// even after the scratch server is killed. The same wrapper is first on the
+// daemon's PATH as `tmux`, for the calls that do not use the configured
+// binary. The run stops at once if the daemon
+// ever lists a session this harness did not create. It refuses port 56983 and
+// only signals processes it started.
+import assert from "node:assert/strict";
+import process from "node:process";
+import console from "node:console";
+import { spawn, execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
+import { cpus, homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { createScratchFleet } from "../../../../scripts/lib/product-fixtures/scratch-fleet.ts";
+import { startDaemon } from "../../../../scripts/lib/product-fixtures/daemon.ts";
+import { stopFixtureChild } from "../fixture-child.mjs";
+import { summarise, table } from "./native-connection-soak-report.mjs";
+const { AbortSignal, Buffer, clearInterval, fetch, setInterval } = globalThis;
+
+const [guiTestBinary] = process.argv.slice(2);
+assert(
+  guiTestBinary && isAbsolute(guiTestBinary),
+  "Usage: node --import tsx native-connection-soak.mjs ABS_GUI_TEST_BINARY",
+);
+assert((await stat(guiTestBinary)).isFile(), `not a file: ${guiTestBinary}`);
+// Before anything can start tmux: no inherited TMUX, and a private TMUX_TMPDIR.
+delete process.env.TMUX;
+delete process.env.TMUX_PANE;
+const seconds = Number(process.env.SOAK_SECONDS ?? 600);
+const settleMs = Number(process.env.SOAK_SETTLE_MS ?? 12_000);
+const inactive = process.env.SOAK_INACTIVE === "1";
+const recoverLimit = Number(process.env.SOAK_RECOVER_LIMIT_S ?? 60);
+
+const ownerHome = homedir();
+const scratch = await createScratchFleet({ sessions: 2, windowsPerSession: 1, slug: "soak" });
+const socket = realpathSync(scratch.socketPath);
+assert(!/^(\/private)?\/tmp\/tmux-\d+\//u.test(socket), `refusing tmux socket ${socket}`);
+assert.notEqual(scratch.environment.HOME, ownerHome, "refusing the owner's HOME");
+const signals = join(scratch.root, "signals");
+const tmuxDir = join(scratch.root, "tmux");
+await mkdir(signals, { recursive: true });
+await mkdir(tmuxDir, { recursive: true, mode: 0o700 });
+process.env.TMUX_TMPDIR = tmuxDir;
+
+// The daemon's tmux, wrapped. It pins TMUX_TMPDIR to the scratch root and
+// refuses the default socket directory. And while `slow-probe` exists, the
+// probe the daemon runs before it lists servers answers after 2 s instead of
+// at once: that is what a loaded machine does to it, and what made the daemon
+// rebuild the server owner and close every stream with 1001 "daemon-shutdown".
+//
+// It also writes one line per call to tmux-calls.log: the time, where the
+// call goes, and its arguments. "socket": an explicit -S naming the scratch
+// socket. "env": no socket argument, TMUX names the scratch socket.
+// "PINNED-DEFAULT": neither, so tmux would use its default socket, which the
+// pinned TMUX_TMPDIR keeps under the scratch root. "REFUSED": a socket
+// argument that is not the scratch socket, or anything naming
+// /tmp/tmux-UID; the call is not made (exit 97). The run fails if any call
+// was refused, and prints the counts.
+const realTmux = scratch.environment.TMUX_IDE_TMUX_BIN;
+const slowTmux = join(scratch.root, "tmux-slow");
+const tmuxCalls = join(scratch.root, "tmux-calls.log");
+await writeFile(tmuxCalls, "");
+await writeFile(
+  slowTmux,
+  [
+    "#!/bin/sh",
+    `export TMUX_TMPDIR='${tmuxDir}'`,
+    "kind=''; sock=''; named=''; want=''",
+    'for a in "$@"; do',
+    '  if [ -n "$want" ]; then',
+    '    case "$want" in S) sock="$a" ;; L) named="$a" ;; esac',
+    "    want=''; continue",
+    "  fi",
+    '  case "$a" in',
+    "    -S) want=S ;; -L) want=L ;; -f|-c|-T) want=x ;;",
+    '    -S*) sock="${a#-S}" ;; -L*) named="${a#-L}" ;;',
+    "    -*) ;;",
+    "    *) break ;;",
+    "  esac",
+    "done",
+    'if [ -n "$sock" ]; then',
+    `  case "$sock" in '${scratch.socketPath}'|'${socket}') kind=socket ;; *) kind=REFUSED ;; esac`,
+    'elif [ -n "$named" ]; then kind=PINNED-DEFAULT',
+    "else",
+    `  case "$TMUX" in '${scratch.socketPath}',*|'${socket}',*) kind=env ;; *) kind=PINNED-DEFAULT ;; esac`,
+    "fi",
+    'case "$*" in */tmp/tmux-[0-9]*) kind=REFUSED ;; esac',
+    `printf '%s %s %s\\n' "$(date -u +%H:%M:%S)" "$kind" "$*" >> '${tmuxCalls}'`,
+    'if [ "$kind" = REFUSED ]; then echo "soak: refusing a tmux call outside the scratch socket" >&2; exit 97; fi',
+    `if [ -e '${signals}/slow-probe' ]; then`,
+    '  case "$*" in *socket_path*) sleep 2 ;; esac',
+    "fi",
+    `exec '${realTmux}' "$@"`,
+    "",
+  ].join("\n"),
+);
+await chmod(slowTmux, 0o755);
+// A bare `tmux` from PATH goes through the same wrapper.
+const shimDir = join(scratch.root, "bin");
+await mkdir(shimDir, { recursive: true });
+await copyFile(slowTmux, join(shimDir, "tmux"));
+await chmod(join(shimDir, "tmux"), 0o755);
+const fleet = {
+  ...scratch,
+  environment: {
+    ...scratch.environment,
+    PATH: `${shimDir}:${scratch.environment.PATH}`,
+    TMUX_IDE_TMUX_BIN: slowTmux,
+    TMUX_TMPDIR: tmuxDir,
+  },
+};
+const tmux = (...argv) =>
+  execFileSync(realTmux, ["-S", scratch.socketPath, ...argv], {
+    env: { ...process.env, ...scratch.environment, TMUX_TMPDIR: tmuxDir },
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+const tmuxQuiet = (...argv) => {
+  try {
+    return tmux(...argv);
+  } catch {
+    return "";
+  }
+};
+
+const daemonOptions = process.env.SOAK_CLI ? { cliPath: process.env.SOAK_CLI } : {};
+let daemon = null;
+// The output of every daemon this run started, oldest first: a restart must
+// not lose what the daemon before it logged.
+const daemonLogs = [];
+const daemonLog = () =>
+  [...daemonLogs, daemon ? daemon.output() : ""]
+    .map((text, index) => `=== daemon ${index + 1} ===\n${text}`)
+    .join("\n");
+const startOwnDaemon = async () => {
+  if (daemon) daemonLogs.push(daemon.output().replaceAll(daemon.record.authToken, "[redacted]"));
+  daemon = await startDaemon(fleet, daemonOptions);
+  assert.notEqual(daemon.record.port, 56983, "refusing the owner's daemon port");
+  return daemon;
+};
+const api = async (path) => {
+  try {
+    const response = await fetch(`${daemon.baseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    return response.status;
+  } catch {
+    return 0;
+  }
+};
+
+// Every session this daemon may list was created here, under these names.
+const ours = /^(e2e-soak-|soak-|churn-)/u;
+const assertIsolated = async () => {
+  try {
+    const response = await fetch(`${daemon.baseUrl}/api/resources/fleet-catalog`, {
+      headers: { Authorization: `Bearer ${daemon.record.authToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return;
+    const body = await response.json();
+    const foreign = (body.sessions ?? []).map((s) => s.label).filter((label) => !ours.test(label));
+    assert.deepEqual(foreign, [], "ISOLATION BREACH: the scratch daemon lists a foreign session");
+  } catch (error) {
+    if (error?.code === "ERR_ASSERTION") throw error;
+  }
+};
+
+// What the daemon's tmux calls were, by where they went. Saved before the
+// scratch root is removed.
+const tmuxCallReport = async () => {
+  const text = await readFile(tmuxCalls, "utf8").catch(() => "");
+  const counts = { socket: 0, env: 0, "PINNED-DEFAULT": 0, REFUSED: 0 };
+  for (const line of text.split("\n")) {
+    const kind = line.split(" ")[1];
+    if (kind in counts) counts[kind] += 1;
+  }
+  if (process.env.SOAK_TMUX_LOG) await writeFile(process.env.SOAK_TMUX_LOG, text);
+  console.log(`tmux calls by the daemon: ${JSON.stringify(counts)}`);
+  return counts;
+};
+// The scratch tmux servers this run started, to stop by pid if kill-server
+// did not (a loaded machine timed it out and left servers behind).
+const serverPids = new Set();
+const noteServer = () => {
+  const pid = Number(tmuxQuiet("display-message", "-p", "#{pid}"));
+  if (Number.isInteger(pid) && pid > 1) serverPids.add(pid);
+};
+const stopServers = () => {
+  tmuxQuiet("kill-server");
+  for (const pid of serverPids) {
+    try {
+      const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], {
+        encoding: "utf8",
+      });
+      if (command.includes(scratch.socketPath) || command.includes(socket))
+        process.kill(pid, "SIGTERM");
+    } catch {
+      /* Already gone. */
+    }
+  }
+};
+noteServer();
+// Stops what is left of the scratch world and reports the tmux calls. A
+// refused call fails the run: something tried to leave the scratch socket.
+const endScratch = async () => {
+  stopServers();
+  const calls = await tmuxCallReport();
+  await scratch.dispose();
+  if (calls.REFUSED > 0) {
+    console.error(`ISOLATION: ${calls.REFUSED} tmux call(s) were refused; see the tmux call log`);
+    process.exitCode = 1;
+  }
+};
+const events = [];
+let openSession = null;
+let child = null;
+let sessionSeq = 0;
+const ensureSessions = () => {
+  const names = tmuxQuiet("list-sessions", "-F", "#{session_name}").split("\n").filter(Boolean);
+  for (let have = names.length; have < 2; have += 1) {
+    sessionSeq += 1;
+    tmuxQuiet(
+      "new-session",
+      "-d",
+      "-s",
+      `soak-${sessionSeq}`,
+      "-c",
+      scratch.projectDir,
+      "exec sh -i",
+    );
+    tmuxQuiet("set-option", "-t", `soak-${sessionSeq}`, "@tmux_ide_adopted", "1");
+  }
+  noteServer();
+};
+
+// Each fault returns what it did, for the log.
+const faults = {
+  // The owner's case, three times as on 12 Nov: the daemon stays up on the
+  // same port and closes every stream of the server.
+  "owner-rebuild": async () => {
+    const statuses = [];
+    for (let round = 0; round < 3; round += 1) {
+      await writeFile(join(signals, "slow-probe"), "");
+      statuses.push(await api("/api/v1/tmux-servers"));
+      await sleep(1500);
+      await rm(join(signals, "slow-probe"), { force: true });
+      await sleep(8000);
+    }
+    return `probe slowed 3 times; list answered ${statuses.join(",")}`;
+  },
+  // The probe keeps failing for 20 s: the server stays offline in the catalog.
+  "owner-offline-20s": async () => {
+    await writeFile(join(signals, "slow-probe"), "");
+    const status = await api("/api/v1/tmux-servers");
+    await sleep(20_000);
+    await rm(join(signals, "slow-probe"), { force: true });
+    return `probe slow for 20 s; list answered ${status}`;
+  },
+  "stream-detach": async () => {
+    const clients = tmuxQuiet("list-clients", "-F", "#{client_control_mode} #{client_name}")
+      .split("\n")
+      .filter((line) => line.startsWith("1 "))
+      .map((line) => line.slice(2));
+    for (const name of clients) tmuxQuiet("detach-client", "-t", name);
+    return `detached ${clients.length} control client(s)`;
+  },
+  "daemon-restart": async () => {
+    const before = daemon.record;
+    await daemon.stop();
+    await startOwnDaemon();
+    return `restarted: port ${before.port} -> ${daemon.record.port}`;
+  },
+  // No clean exit, a stale record, and a pause as before launchd restarts it.
+  "daemon-kill": async () => {
+    const before = daemon.record;
+    process.kill(before.pid, "SIGKILL");
+    await sleep(3000);
+    await daemon.stop().catch(() => undefined);
+    await startOwnDaemon();
+    return `killed ${before.pid}; back after 3 s on port ${daemon.record.port}`;
+  },
+  "daemon-freeze": async () => {
+    const pid = daemon.record.pid;
+    process.kill(pid, "SIGSTOP");
+    await sleep(10_000);
+    process.kill(pid, "SIGCONT");
+    return `SIGSTOP ${pid} for 10 s`;
+  },
+  // Long enough for the events socket's 45 s silence deadline.
+  "daemon-freeze-50s": async () => {
+    const pid = daemon.record.pid;
+    process.kill(pid, "SIGSTOP");
+    await sleep(50_000);
+    process.kill(pid, "SIGCONT");
+    return `SIGSTOP ${pid} for 50 s`;
+  },
+  "session-churn": async () => {
+    sessionSeq += 1;
+    const name = `churn-${sessionSeq}`;
+    tmuxQuiet("new-session", "-d", "-s", name, "-c", scratch.projectDir, "exec sh -i");
+    await sleep(2000);
+    tmuxQuiet("kill-session", "-t", `=${name}`);
+    return `created and killed ${name}`;
+  },
+  "pane-split": async () => {
+    if (!openSession) return "no open session known";
+    tmuxQuiet("split-window", "-d", "-t", `=${openSession}:`, "exec sh -i");
+    await sleep(3000);
+    const panes = tmuxQuiet("list-panes", "-t", `=${openSession}:`, "-F", "#{pane_id}").split("\n");
+    if (panes.length > 1) tmuxQuiet("kill-pane", "-t", panes.at(-1));
+    return `split ${openSession}, then closed the new pane`;
+  },
+  // The session really ends: the app should say so and show the list.
+  "session-kill-open": async () => {
+    if (!openSession) return "no open session known";
+    const name = openSession;
+    tmuxQuiet("kill-session", "-t", `=${name}`);
+    ensureSessions();
+    return `killed the open session ${name}`;
+  },
+  "tmux-kill-server": async () => {
+    tmuxQuiet("kill-server");
+    await sleep(2000);
+    ensureSessions();
+    return "killed the tmux server; new server with 2 sessions after 2 s";
+  },
+  "cpu-starve": async () => {
+    const hogs = cpus().map(() => spawn("/usr/bin/yes", [], { stdio: "ignore" }));
+    await sleep(8000);
+    for (const hog of hogs) hog.kill("SIGKILL");
+    return `${hogs.length} busy processes for 8 s`;
+  },
+};
+const expectedEnd = new Set(["session-kill-open", "tmux-kill-server"]);
+const defaultOrder = [
+  "owner-rebuild",
+  "stream-detach",
+  "daemon-restart",
+  "session-churn",
+  "owner-offline-20s",
+  "daemon-freeze",
+  "pane-split",
+  "daemon-kill",
+  "session-kill-open",
+  "tmux-kill-server",
+  "daemon-freeze-50s",
+];
+const order = (process.env.SOAK_FAULTS?.split(",") ?? defaultOrder).filter(
+  (name) => name in faults && (name !== "cpu-starve" || process.env.SOAK_CPU === "1"),
+);
+assert(order.length > 0, "no known fault selected");
+
+const injected = [];
+let beat = 0;
+let beating = null;
+// SOAK_MODE=late-daemon: the app starts first, the daemon 3 s after the app
+// reported that it is missing. Home must load without any command.
+if (process.env.SOAK_MODE === "late-daemon") {
+  try {
+    child = spawn(
+      guiTestBinary,
+      [
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1",
+        "home_loads_when_the_daemon_starts_after_the_app",
+      ],
+      {
+        env: {
+          ...process.env,
+          ...fleet.environment,
+          TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (chunk) => (output += chunk));
+    const exited = once(child, "close", { signal: AbortSignal.timeout(180_000) });
+    while (!output.includes("LATE_DAEMON_READY")) {
+      assert(child.exitCode === null, `the app test exited early:\n${output.slice(-2000)}`);
+      await sleep(100);
+    }
+    await sleep(3000);
+    const startedAt = Date.now();
+    await startOwnDaemon();
+    const readyAfter = Date.now() - startedAt;
+    const [code] = await exited;
+    const loaded = /LATE_DAEMON_LOADED (\d+)/u.exec(output);
+    console.log(
+      JSON.stringify({
+        mode: "late-daemon",
+        exit: code,
+        daemonReadyMs: readyAfter,
+        homeLoadedMsAfterMissing: loaded ? Number(loaded[1]) : null,
+      }),
+    );
+    assert.equal(code, 0, output.slice(-3000));
+  } finally {
+    try {
+      await stopFixtureChild(child);
+    } finally {
+      try {
+        await daemon?.stop();
+      } finally {
+        await endScratch();
+      }
+    }
+  }
+  process.exit(process.exitCode ?? 0);
+}
+// SOAK_MODE=requests: no faults. The app test opens a session, idles in it
+// and creates one, and prints what it asked the daemon for.
+if (process.env.SOAK_MODE === "requests") {
+  try {
+    await startOwnDaemon();
+    child = spawn(
+      guiTestBinary,
+      ["--ignored", "--nocapture", "--test-threads=1", "connection_request_counts"],
+      {
+        env: {
+          ...process.env,
+          ...fleet.environment,
+          TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
+          TMUX_IDE_TEST_IDLE_SECS: process.env.SOAK_IDLE_SECONDS ?? "60",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let output = "";
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (chunk) => (output += chunk));
+    const [code] = await once(child, "close", { signal: AbortSignal.timeout(300_000) });
+    await assertIsolated();
+    const line = output.split("\n").find((text) => text.startsWith("REQUEST_COUNTS "));
+    const redacted = output.replaceAll(daemon.record.authToken, "[redacted]");
+    assert.equal(code, 0, redacted.slice(-3000));
+    assert(line, redacted.slice(-3000));
+    console.log(JSON.stringify(JSON.parse(line.slice(15)), null, 1));
+    if (process.env.SOAK_DAEMON_LOG)
+      await writeFile(
+        process.env.SOAK_DAEMON_LOG,
+        daemonLog().replaceAll(daemon.record.authToken, "[redacted]"),
+      );
+  } finally {
+    try {
+      await stopFixtureChild(child);
+    } finally {
+      try {
+        await daemon?.stop();
+      } finally {
+        await endScratch();
+      }
+    }
+  }
+  process.exit(process.exitCode ?? 0);
+}
+try {
+  await startOwnDaemon();
+  child = spawn(
+    guiTestBinary,
+    ["--ignored", "--nocapture", "--test-threads=1", "connection_soak"],
+    {
+      env: {
+        ...process.env,
+        ...fleet.environment,
+        TMUX_IDE_TEST_DAEMON_RECORD: join(scratch.daemonInfoDir, "daemon.json"),
+        TMUX_IDE_TEST_SIGNAL_DIR: signals,
+        TMUX_IDE_SOAK_INACTIVE: inactive ? "1" : "",
+        TMUX_IDE_SOAK_RECOVER_LIMIT_S: String(recoverLimit),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  const transcript = [];
+  let buffered = "";
+  for (const stream of [child.stdout, child.stderr])
+    stream.on("data", (chunk) => {
+      transcript.push(chunk);
+      buffered += chunk;
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        const at = line.indexOf("SOAK_EVENT ");
+        if (at < 0) continue;
+        try {
+          const event = JSON.parse(line.slice(at + 11));
+          events.push(event);
+          if (event.session) openSession = event.session;
+          if (event.event !== "ready" && process.env.SOAK_QUIET !== "1")
+            console.error(`[soak] ${event.event} ${event.fault ?? ""} ${event.ms ?? ""}`);
+        } catch {
+          /* A torn line; the transcript keeps it. */
+        }
+      }
+    });
+  const exited = once(child, "close");
+  const deadline = Date.now() + 90_000;
+  while (!events.some((event) => event.event === "ready")) {
+    assert(child.exitCode === null, "the app test exited before it connected");
+    assert(Date.now() < deadline, "the app never connected");
+    await sleep(200);
+  }
+  if (inactive)
+    beating = setInterval(() => {
+      beat += 1;
+      for (const name of tmuxQuiet("list-sessions", "-F", "#{session_name}").split("\n"))
+        if (name) tmuxQuiet("send-keys", "-t", `=${name}:`, `printf 'beat-%s\\n' ${beat}`, "Enter");
+    }, 1000);
+  await sleep(inactive ? 4000 : 6000);
+
+  const end = Date.now() + seconds * 1000;
+  for (let index = 0; Date.now() < end && child.exitCode === null; index += 1) {
+    const name = order[index % order.length];
+    const tag = `${name}#${index + 1}`;
+    await writeFile(join(signals, "fault"), tag);
+    await writeFile(join(signals, "busy"), tag);
+    const at = Date.now();
+    let did;
+    try {
+      did = await faults[name]();
+    } catch (error) {
+      did = `fault failed: ${error.message}`;
+    }
+    await rm(join(signals, "busy"), { force: true });
+    await assertIsolated();
+    injected.push({ tag, name, at, did, expectedEnd: expectedEnd.has(name) });
+    console.error(`[soak] injected ${tag}: ${did}`);
+    await sleep(settleMs);
+    // Do not start the next fault on top of an unfinished recovery, up to the limit.
+    const patience = Date.now() + (recoverLimit * 3 + 30) * 1000;
+    while (Date.now() < patience && child.exitCode === null) {
+      const last = events.findLast((event) => ["down", "up"].includes(event.event));
+      if (!last || last.event === "up") break;
+      await sleep(500);
+    }
+    await writeFile(join(signals, "fault"), "idle");
+    await sleep(1500);
+  }
+  await writeFile(join(signals, "stop"), "");
+  const [code, signal] = await Promise.race([exited, sleep(30_000).then(() => ["timeout", null])]);
+  if (process.env.SOAK_TRANSCRIPT)
+    await writeFile(
+      process.env.SOAK_TRANSCRIPT,
+      Buffer.concat(transcript).toString().replaceAll(daemon.record.authToken, "[redacted]"),
+    );
+  if (process.env.SOAK_DAEMON_LOG)
+    await writeFile(
+      process.env.SOAK_DAEMON_LOG,
+      daemonLog().replaceAll(daemon.record.authToken, "[redacted]"),
+    );
+  const report = summarise({ events, injected, inactive, seconds, exit: { code, signal } });
+  if (process.env.SOAK_REPORT)
+    await writeFile(
+      process.env.SOAK_REPORT,
+      JSON.stringify({ ...report, events, injected }, null, 2),
+    );
+  console.log(table(report));
+  console.log(JSON.stringify(report.totals));
+  assert.equal(code, 0, "the app test did not exit cleanly");
+  assert.equal(report.totals.stuck, 0, "a state did not recover by itself");
+  assert.equal(report.totals.silentKeyLoss, 0, "typed keys were lost without a notice");
+  assert.equal(report.totals.unexpectedEnds, 0, "a session was reported ended that was not");
+} finally {
+  if (beating) clearInterval(beating);
+  try {
+    await stopFixtureChild(child);
+  } finally {
+    try {
+      if (existsSync(join(signals, "slow-probe"))) await rm(join(signals, "slow-probe"));
+      await daemon?.stop();
+    } finally {
+      await endScratch();
+    }
+  }
+}
