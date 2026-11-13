@@ -14,6 +14,8 @@ import {
   decodeTerminalGraphicsCompressed,
   decodeTerminalDeliveryBinaryChunk,
   PANE_STREAM_PROTOCOL_VERSION,
+  PANE_STREAM_READER_CAPABILITY_VERSION,
+  PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
@@ -2536,6 +2538,38 @@ describe("PaneStreamAdmissionCoordinator", () => {
       expect(withIt.framesOfType("ready")[0]).toMatchObject({ topologyInPlace: true });
       const without = await open(h, ["pane.one", "pane.two"], [1]);
       expect(Object.keys(without.framesOfType("ready")[0]!)).not.toContain("topologyInPlace");
+    });
+
+    // The offer array holds nine numbers on every daemon, and the Mac app's
+    // interactive offer is full: 120 carries 118 and 119 in one slot.
+    it("takes 120 for 118 and 119 together", async () => {
+      const frames = async (protocolVersions: number[]) => {
+        const { h } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"], protocolVersions);
+        change(h, ["pane.one", "pane.two", "pane.three"]);
+        await vi.waitFor(() =>
+          expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(3),
+        );
+        const strip = (frame: Record<string, unknown>) => ({ ...frame, requestId: null });
+        return {
+          ready: strip(socket.framesOfType("ready")[0]!),
+          topology: socket.framesOfType("topology"),
+          layouts: socket.framesOfType("layout-snapshot"),
+          closed: socket.closed,
+        };
+      };
+      const bundled = await frames([1, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION]);
+      const separate = await frames([
+        1,
+        PANE_STREAM_READER_CAPABILITY_VERSION,
+        PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
+      ]);
+      expect(bundled).toEqual(separate);
+      expect(bundled.ready).toMatchObject({ topologyInPlace: true });
+      expect(bundled.topology).toHaveLength(1);
+      // What 118 adds to a layout is there, which a stream without it does not get.
+      const withoutReader = await frames([1, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION]);
+      expect(bundled.layouts).not.toEqual(withoutReader.layouts);
     });
 
     it("gives a client without the capability today's answer, byte for byte", async () => {

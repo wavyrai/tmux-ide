@@ -24,6 +24,7 @@ import {
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
   PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION,
   PANE_STREAM_READER_CAPABILITY_VERSION,
+  PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   type PaneStreamInputLifetime,
 } from "@tmux-ide/contracts";
@@ -1419,8 +1420,10 @@ export class PaneStreamLiveConnection {
     this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
     this.#onRetire = options.onRetire;
     this.#topologyInPlace =
-      options.descriptor.terminalDelivery?.protocolVersions.includes(
-        PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
+      options.descriptor.terminalDelivery?.protocolVersions.some(
+        (version) =>
+          version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION ||
+          version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
       ) === true;
     for (const pane of options.descriptor.panes) this.#panes.set(pane, newPaneChannel(pane));
   }
@@ -2064,7 +2067,8 @@ export class PaneStreamLiveConnection {
         (version) =>
           version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION ||
           version === PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION ||
-          version === PANE_STREAM_READER_CAPABILITY_VERSION,
+          version === PANE_STREAM_READER_CAPABILITY_VERSION ||
+          version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
       ) === true;
     channel.graphicsZlib = zlib;
     channel.graphicsLocal =
@@ -2778,7 +2782,15 @@ export class PaneStreamLiveConnection {
   }
 
   #offers(version: number): boolean {
-    return this.#descriptor.terminalDelivery?.protocolVersions.includes(version) === true;
+    const offered = this.#descriptor.terminalDelivery?.protocolVersions;
+    if (!offered) return false;
+    // 120 stands for 118 and 119 together.
+    return (
+      offered.includes(version) ||
+      ((version === PANE_STREAM_READER_CAPABILITY_VERSION ||
+        version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION) &&
+        offered.includes(PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION))
+    );
   }
 
   #layoutFrame(event: MirrorLayoutEvent): PaneStreamServerFrame | null {

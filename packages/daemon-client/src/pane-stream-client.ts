@@ -5,6 +5,7 @@ import {
   TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION,
   TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION,
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
+  PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PaneStreamInputLifetimeSchemaZ,
   type PaneStreamInputLifetime,
@@ -1367,8 +1368,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
       supportsInputLifetime = frame.inputLifetime === true;
       topologyInPlace =
         frame.topologyInPlace === true &&
-        options.stream.terminalDelivery.protocolVersions.includes(
-          PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
+        options.stream.terminalDelivery.protocolVersions.some(
+          (version) =>
+            version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION ||
+            version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
         );
       supportsInputBytes =
         frame.inputBytes === true &&

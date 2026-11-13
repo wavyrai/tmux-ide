@@ -8,6 +8,7 @@ import {
   PANE_STREAM_MAX_PANES,
   PANE_STREAM_PROTOCOL_VERSION,
   PANE_STREAM_REDEEM_PATH,
+  PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamClientFrameSchemaZ,
@@ -603,6 +604,8 @@ describe("topology in place (capability 119)", () => {
 
   it("has its own version number, next after the reader capability", () => {
     expect(PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION).toBe(119);
+    // 118 and 119 in one slot of the nine-number offer.
+    expect(PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION).toBe(120);
   });
 
   it("is confirmed in the ready frame only as the literal true", () => {

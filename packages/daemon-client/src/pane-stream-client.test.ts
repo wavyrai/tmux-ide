@@ -278,6 +278,28 @@ describe("semantic pane-stream runtime client", () => {
       ]);
     });
 
+    it("takes the frame on an offer of 120, the bundle of 118 and 119", async () => {
+      const socket = new FakeSocket();
+      handshake(socket, true);
+      const topologies: unknown[] = [];
+      const faults: Error[] = [];
+      const base = options(socket, {
+        requestInitialInputAuthority: false,
+        onFault: (error: Error) => faults.push(error),
+        onTopology: (frame: unknown) => topologies.push(frame),
+      });
+      await openPaneStreamRuntimeClient({
+        ...base,
+        stream: {
+          ...base.stream,
+          terminalDelivery: { ...base.stream.terminalDelivery, protocolVersions: [1, 120] },
+        },
+      } as never);
+      socket.message(added);
+      expect(faults).toEqual([]);
+      expect(topologies).toEqual([added]);
+    });
+
     it("refuses the frame from a daemon that did not confirm the capability", async () => {
       const { socket, faults, topologies } = await open(false);
       socket.message(added);

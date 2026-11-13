@@ -265,6 +265,13 @@ export const PANE_STREAM_READER_CAPABILITY_VERSION = 118;
  * ready frame; without both, nothing changes for either side.
  */
 export const PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION = 119;
+/**
+ * 118 and 119 in one number, for a client whose offer array is full (it holds
+ * nine, on every daemon, and the Mac app's interactive offer already has
+ * nine). Offered in place of 118. A daemon that predates it ignores it and
+ * then gives neither, so a client offers it only to a daemon that has it.
+ */
+export const PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION = 120;
 export const PaneStreamInputLifetimeSchemaZ = z
   .object({
     generation: z.string().min(1).max(256),
