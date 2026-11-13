@@ -3,12 +3,7 @@
 /// An empty line (a reconnect, which the footer slot shows) is never a
 /// notice, even while input is not ready.
 pub(super) fn visible(status: &str, developer_mode: bool, input_ready: bool) -> bool {
-    developer_mode
-        || (!status.is_empty() && !input_ready)
-        || !matches!(
-            status,
-            "" | "Connected" | "Keyboard ready" | "Keyboard ready — click terminal to type"
-        )
+    developer_mode || (!status.is_empty() && !input_ready) || !routine(status)
 }
 
 impl super::SnapshotView {
@@ -41,11 +36,23 @@ impl super::SnapshotView {
                 "Input interrupted; click terminal when ready, then retype — {}",
                 state.status
             )
+        } else if routine(&state.status) && state.pane_actions.as_ref().is_some_and(|a| a.zoomed) {
+            // #739: a zoomed window shows one pane and no dividers; say why.
+            ZOOMED.into()
         } else {
             state.status.clone()
         }
     }
 }
+/// The lines normal mode leaves out: all is well.
+fn routine(status: &str) -> bool {
+    matches!(
+        status,
+        "" | "Connected" | "Keyboard ready" | "Keyboard ready — click terminal to type"
+    )
+}
+/// Shown while the selected pane's window is zoomed and nothing else needs saying.
+pub(super) const ZOOMED: &str = "Zoomed: dividers are hidden until you restore the layout";
 /// Shown beside the tabs while a captured frame is selected.
 pub(super) const SELECTING: &str =
     "Selecting captured frame — Cmd-C copies; Escape or click resumes";
