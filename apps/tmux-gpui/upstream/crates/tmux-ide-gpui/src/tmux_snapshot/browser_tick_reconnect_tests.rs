@@ -101,8 +101,10 @@ fn next(snapshot: &Entity<SnapshotView>, cx: &mut VisualTestContext) -> Next {
 }
 
 /// A connected, idle workspace arms nothing; and while it reconnects for
-/// 70 s (past every threshold of the connection slot) the task wakes a
-/// handful of times, for the slot's changes, not 4,375 times.
+/// 80 s the task wakes a handful of times, for the connection slot's
+/// changes, not 5,000 times. (The slot's timers at 1, 2, 8 and 60 s each
+/// wait from the real clock, which this test's clock does not move: here
+/// they fire about 71 s in, so 80 s is past the last one.)
 #[gpui::test]
 fn a_reconnecting_window_does_not_spin(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);
@@ -118,8 +120,8 @@ fn a_reconnecting_window_does_not_spin(cx: &mut TestAppContext) {
         snapshot.read_with(cx, |view, _| view.session_reconnecting_for().is_some()),
         "the fixture is reconnecting"
     );
-    let wakes = wakes_over(&snapshot, cx, Duration::from_secs(70));
-    assert!(wakes <= 12, "{wakes} wakes in 70 s of reconnecting");
+    let wakes = wakes_over(&snapshot, cx, Duration::from_secs(80));
+    assert!(wakes <= 12, "{wakes} wakes in 80 s of reconnecting");
     assert_eq!(next(&snapshot, cx), Next::Idle, "and nothing is armed");
     assert_eq!(
         wakes_over(&snapshot, cx, Duration::from_secs(10)),
