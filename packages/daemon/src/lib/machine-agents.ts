@@ -1,4 +1,3 @@
-import { waitForRosterTarget } from "./roster-target-wait.ts";
 import { isDeepStrictEqual } from "node:util";
 import { machineResourceKey } from "@tmux-ide/core";
 import {
@@ -6,7 +5,11 @@ import {
   type MachineConnectionManager,
 } from "./machine-connection-manager.ts";
 import type { MachineCatalogSnapshot } from "./machine-catalog.ts";
-import { createHomeAgentObserver, type HomeAgentObserver } from "./home-agent-observer.ts";
+import {
+  createHomeAgentObserver,
+  waitForRosterTarget,
+  type HomeAgentObserver,
+} from "./home-agent-observer.ts";
 import { createHomeAgentTransport } from "./home-agent-transport.ts";
 import type { HomeAgentRow, HomeAgentSnapshot } from "@tmux-ide/presentation/home-agent-roster";
 

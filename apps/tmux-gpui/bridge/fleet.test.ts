@@ -111,6 +111,8 @@ async function fixture(count = 1, preferences?: ReturnType<typeof createFleetPre
         };
       },
       isCurrentTarget: () => true,
+      isRefreshing: () => false,
+      whenCurrentTarget: async () => true,
       start() {
         agentStarts++;
       },

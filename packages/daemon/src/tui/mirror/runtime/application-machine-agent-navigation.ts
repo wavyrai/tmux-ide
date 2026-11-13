@@ -15,6 +15,25 @@ import type { OpenTuiGenerationHostSnapshot } from "./open-tui-generation-host.t
 
 type HomeNavigatorOptions = Parameters<typeof createApplicationHomeAgentNavigator>[0];
 
+/**
+ * The two checks the navigator asks of the machines' agent roster: is a row
+ * current, and is it current once a re-read in progress has finished.
+ */
+export function machineAgentRosterChecks(roster: {
+  isCurrentTarget(machineId: string, row: never): boolean;
+  whenCurrentTarget(machineId: string, row: never, signal: AbortSignal): Promise<boolean>;
+}) {
+  return {
+    isCurrentTarget: (machineId: string, row: HomeAgentNavigationTarget): boolean =>
+      roster.isCurrentTarget(machineId, row as never),
+    waitForCurrentTarget: (
+      machineId: string,
+      row: HomeAgentNavigationTarget,
+      signal: AbortSignal,
+    ): Promise<boolean> => roster.whenCurrentTarget(machineId, row as never, signal),
+  };
+}
+
 /** Machine identity fences the existing exact-agent admission owner. No independent input path. */
 export function createApplicationMachineAgentNavigator(options: {
   readonly isCurrentTarget: (machineId: string, target: HomeAgentNavigationTarget) => boolean;

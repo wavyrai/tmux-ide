@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ROSTER_SETTLE_MS, waitForRosterTarget } from "./roster-target-wait.ts";
+import { ROSTER_SETTLE_MS, waitForRosterTarget } from "./home-agent-observer.ts";
 
 function roster(initial: { current: boolean; refreshing: boolean }) {
   const state = { ...initial };

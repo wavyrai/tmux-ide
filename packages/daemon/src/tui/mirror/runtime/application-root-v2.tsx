@@ -5,7 +5,7 @@ import { terminalWindowActionCallbacks } from "./application-terminal-workspace-
 import { applicationRouteConnection } from "./application-route-connection.ts";
 import { ApplicationMachineOverlays } from "./application-machine-overlays.tsx";
 import { applicationMachineAuthorityManager } from "./application-machine-authority.ts";
-import { createApplicationMachineAgentNavigator } from "./application-machine-agent-navigation.ts";
+import * as machineAgentNavigation from "./application-machine-agent-navigation.ts";
 import { createApplicationMachineNavigation } from "./application-machine-navigation.ts";
 import { handleFleetShortcut } from "./application-machine-navigation.ts";
 import { disposeApplicationDaemonAuthority } from "./application-daemon-authority.ts";
@@ -325,7 +325,7 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
         );
         const startGeneration = terminalInputIngress.wrapStarter(generationStarter);
         let machineAgentNavigator:
-          | ReturnType<typeof createApplicationMachineAgentNavigator>
+          | ReturnType<typeof machineAgentNavigation.createApplicationMachineAgentNavigator>
           | undefined;
         const machines = createApplicationMachineNavigation({
           attachedGeneration: generation,
@@ -360,10 +360,8 @@ export async function startApplicationRoot(options: StartApplicationRootOptions 
           setNote: appearance.setNote,
         });
         const paneInteractions = createMachinePaneActivity(machines, generationMachineId, shell);
-        machineAgentNavigator = createApplicationMachineAgentNavigator({
-          isCurrentTarget: (machineId, row) => machines.agents.isCurrentTarget(machineId, row),
-          waitForCurrentTarget: (machineId, row, signal) =>
-            machines.agents.whenCurrentTarget(machineId, row as never, signal),
+        machineAgentNavigator = machineAgentNavigation.createApplicationMachineAgentNavigator({
+          ...machineAgentNavigation.machineAgentRosterChecks(machines.agents),
           selectedMachineId: machines.selectedMachineId,
           generationMachineId,
           generation,
