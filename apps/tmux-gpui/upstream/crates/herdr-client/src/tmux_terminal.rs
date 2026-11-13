@@ -67,7 +67,7 @@ impl Failure {
                 fault: None,
             },
             Event::Control(raw) => fault(raw.get()).unwrap_or_default(),
-            Event::Ready(_) | Event::GraphicsBinary(_) => Self::default(),
+            Event::Ready(_) | Event::Topology { .. } | Event::GraphicsBinary(_) => Self::default(),
         }
     }
 }
@@ -130,6 +130,12 @@ pub enum Outcome {
     },
     /// The daemon closed this pane's source. Other panes keep updating.
     Unavailable(String),
+    /// The stream's pane set changed in place (capability 119). Removed panes
+    /// are gone from this state; added ones wait for their delivery-ready.
+    Topology {
+        change: tmux_stream::Topology,
+        raw: Box<RawValue>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -383,6 +389,24 @@ impl TerminalState {
                 index,
                 data,
             } => self.chunk(pane, transaction_id, index, data, true),
+            tmux_stream::Event::Topology { change, raw } => {
+                // The reader checked the frame against its set, which is this
+                // one; a difference means the two disagree about the stream.
+                if !change.removed.iter().all(|pane| self.panes.contains(pane))
+                    || change.added.iter().any(|pane| self.panes.contains(pane))
+                    || change.panes.is_empty()
+                    || change.panes.len() > 24
+                {
+                    return Err(Error::Identity);
+                }
+                for pane in &change.removed {
+                    self.receivers.remove(pane);
+                    self.reseeds.remove(pane);
+                    self.unavailable.remove(pane);
+                }
+                self.panes.clone_from(&change.panes);
+                Ok(Outcome::Topology { change, raw })
+            }
             tmux_stream::Event::Control(value) => {
                 #[derive(Deserialize)]
                 struct Kind<'a> {

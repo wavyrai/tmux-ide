@@ -815,3 +815,144 @@ fn a_source_closed_fault_retires_only_its_pane_until_none_is_left() {
     until(|| matches!(session.drain().unwrap().status, Status::Failed(_)).then_some(()));
     peer.join().unwrap();
 }
+
+fn ready_in_place(socket: &mut WebSocket<TcpStream>, panes: &[&str]) {
+    send(
+        socket,
+        json!({"type":"ready","protocolVersion":2,"daemonInstanceId":INSTANCE,
+        "requestId":REQUEST,"panes":panes,"effectiveViewerMode":"read-only","topologyInPlace":true}),
+    );
+}
+fn delivery_ready(socket: &mut WebSocket<TcpStream>, pane: &str) {
+    send(
+        socket,
+        json!({"type":"terminal-delivery-ready","pane":pane,"negotiation":{"accepted":true,
+        "negotiated":{"protocolVersion":1,"encoding":"semantic-compact-v1","richPlacements":true,
+        "generation":INSTANCE,"deliveryNonce":NONCE,"alternateScreenProjection":null}}}),
+    );
+}
+#[allow(clippy::result_large_err)] // tungstenite fixes this callback's error type.
+fn accept_in_place(listener: TcpListener, panes: &[&str]) -> WebSocket<TcpStream> {
+    let (stream, _) = listener.accept().unwrap();
+    stream.set_read_timeout(Some(WAIT)).unwrap();
+    let mut socket =
+        tungstenite::accept_hdr(stream, |_request: &Request, mut response: Response| {
+            response.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                tmux_stream::SUBPROTOCOL.parse().unwrap(),
+            );
+            Ok(response)
+        })
+        .unwrap();
+    let _redeem = socket.read().unwrap();
+    ready_in_place(&mut socket, panes);
+    for pane in panes {
+        delivery_ready(&mut socket, pane);
+    }
+    socket
+}
+
+/// #723, capability 119: another tmux client closes pane.b and splits in
+/// pane.c. The stream stays open: pane.b's state is dropped, pane.c is
+/// negotiated and seeded as at open and acknowledged, pane.a keeps updating,
+/// and the frame reaches the control queue ahead of what follows it.
+#[test]
+fn a_pane_change_in_place_drops_the_removed_pane_and_seeds_the_added_one() {
+    let (listener, options) = fixture_panes(&["pane.a", "pane.b"]);
+    let (acked_tx, acked_rx) = bounded(1);
+    let peer = thread::spawn(move || {
+        let mut socket = accept_in_place(listener, &["pane.a", "pane.b"]);
+        transaction_on(&mut socket, "pane.a", 0, false);
+        ack(&mut socket, 0);
+        transaction_on(&mut socket, "pane.b", 0, false);
+        ack(&mut socket, 0);
+        // The daemon may say the pane's source closed just before the frame.
+        send(
+            &mut socket,
+            json!({"type":"terminal-delivery-fault","pane":"pane.b","fault":{
+            "type":"terminal.delivery.fault","reason":"source-closed","message":"private",
+            "deliveryNonce":NONCE}}),
+        );
+        send(
+            &mut socket,
+            json!({"type":"topology","topologyEpoch":3,"panes":["pane.a","pane.c"],
+            "removed":["pane.b"],"added":["pane.c"]}),
+        );
+        delivery_ready(&mut socket, "pane.c");
+        transaction_on(&mut socket, "pane.c", 0, false);
+        ack(&mut socket, 0);
+        transaction_on(&mut socket, "pane.a", 1, false);
+        ack(&mut socket, 1);
+        acked_tx.send(()).unwrap();
+        let _ = socket.read();
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let mut controls = Vec::new();
+    let last = until(|| {
+        let updates = session.drain().unwrap();
+        assert!(
+            !matches!(updates.status, Status::Failed(_)),
+            "the stream failed"
+        );
+        controls.extend(updates.controls.iter().map(|raw| raw.get().to_owned()));
+        (revision(&session, "pane.a") == Some(2) && revision(&session, "pane.c") == Some(1))
+            .then_some(updates)
+    });
+    assert_eq!(
+        revision(&session, "pane.b"),
+        None,
+        "the removed pane was kept"
+    );
+    assert!(last.unavailable.is_empty(), "{:?}", last.unavailable);
+    let frames: Vec<Value> = (controls.iter())
+        .map(|raw| serde_json::from_str(raw).unwrap())
+        .collect();
+    assert_eq!(
+        frames,
+        [
+            json!({"type":"topology","topologyEpoch":3,"panes":["pane.a","pane.c"],
+            "removed":["pane.b"],"added":["pane.c"]})
+        ]
+    );
+    // Every seed and update was acknowledged, the added pane's included.
+    acked_rx.recv_timeout(WAIT).unwrap();
+    drop(session);
+    peer.join().unwrap();
+}
+
+/// A pane that left in place and comes back under the same id is a new pane:
+/// it is negotiated again, which a pane already in the stream never may be.
+#[test]
+fn a_pane_id_that_returns_is_negotiated_again() {
+    let (listener, options) = fixture_panes(&["pane.a", "pane.b"]);
+    let peer = thread::spawn(move || {
+        let mut socket = accept_in_place(listener, &["pane.a", "pane.b"]);
+        transaction_on(&mut socket, "pane.b", 0, false);
+        ack(&mut socket, 0);
+        send(
+            &mut socket,
+            json!({"type":"topology","topologyEpoch":1,"panes":["pane.a"],"removed":["pane.b"],"added":[]}),
+        );
+        send(
+            &mut socket,
+            json!({"type":"topology","topologyEpoch":2,"panes":["pane.a","pane.b"],"removed":[],"added":["pane.b"]}),
+        );
+        delivery_ready(&mut socket, "pane.b");
+        transaction_on(&mut socket, "pane.b", 0, false);
+        ack(&mut socket, 0);
+        // A second negotiation for a pane that is in the stream is refused.
+        delivery_ready(&mut socket, "pane.b");
+        let _ = socket.read();
+    });
+    let session = NativeSession::spawn(options, "workspace".into()).unwrap();
+    let mut seeded_twice = false;
+    until(|| {
+        let updates = session.drain().unwrap();
+        seeded_twice |= revision(&session, "pane.b") == Some(1)
+            && !matches!(updates.status, Status::Failed(_))
+            && updates.controls.is_empty();
+        matches!(updates.status, Status::Failed(_)).then_some(())
+    });
+    assert!(seeded_twice, "the returned pane was never seeded");
+    peer.join().unwrap();
+}

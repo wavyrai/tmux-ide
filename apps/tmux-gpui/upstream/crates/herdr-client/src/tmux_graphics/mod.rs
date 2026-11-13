@@ -591,6 +591,44 @@ impl Graphics {
             .filter_map(|pane| pane.state.as_ref())
             .any(|state| state.precise_cell_pixels == Some(true))
     }
+    /// The stream's pane set changed in place (capability 119): removed
+    /// panes lose their graphics state and unfinished images, added panes
+    /// start unbound, as every pane does when a stream opens.
+    pub fn follow(&mut self, removed: &[String], added: &[String]) -> Result<(), Error> {
+        if self.retired {
+            return Err(Error::Retired);
+        }
+        for pane in removed {
+            self.panes.remove(pane).ok_or(Error::Identity)?;
+            let gone: Vec<String> = (self.partials.iter())
+                .filter(|(_, partial)| &partial.pane == pane)
+                .map(|(digest, _)| digest.clone())
+                .collect();
+            for digest in gone {
+                self.partials.remove(&digest);
+                self.held.remove(&digest);
+            }
+        }
+        for pane in added {
+            if pane.is_empty() || pane.len() > 128 || self.panes.contains_key(pane) {
+                return Err(Error::Identity);
+            }
+            self.panes.insert(
+                pane.clone(),
+                Pane {
+                    incarnation: None,
+                    tombstone: false,
+                    state: None,
+                    visible: BTreeSet::new(),
+                    resolver: placeholders::Resolver::default(),
+                },
+            );
+        }
+        if self.panes.is_empty() || self.panes.len() > 24 {
+            return Err(Error::Identity);
+        }
+        Ok(())
+    }
     pub fn retire(&mut self) {
         self.retired = true;
         self.panes.clear();

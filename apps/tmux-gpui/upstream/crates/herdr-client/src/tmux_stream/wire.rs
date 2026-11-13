@@ -136,8 +136,85 @@ pub struct Ready {
     pub authority: Option<Box<RawValue>>,
     pub input_lifetime: Option<bool>,
     pub input_bytes: Option<bool>,
+    /// Capability 119: this stream follows pane changes with `topology`
+    /// frames instead of closing. Absent from a daemon without it.
+    pub topology_in_place: Option<bool>,
     #[serde(default)]
     pub diagnostic_capabilities: Vec<String>,
+}
+
+/// Capability 119, "topology in place": the stream's pane set changed and the
+/// stream stays open. `panes` is the whole set from now on. A
+/// `layout-snapshot` of the same epoch follows, then each added pane's
+/// `terminal-delivery-ready` and seed, as when a stream opens.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Topology {
+    #[serde(rename = "type")]
+    kind: String,
+    pub topology_epoch: u64,
+    pub panes: Vec<String>,
+    pub removed: Vec<String>,
+    pub added: Vec<String>,
+}
+impl Topology {
+    pub fn parse(text: &str) -> Result<Self, Error> {
+        let frame: Self = serde_json::from_str(text).map_err(Error::Json)?;
+        if frame.kind != "topology" {
+            return Err(Error::Frame);
+        }
+        Ok(frame)
+    }
+}
+
+/// What the reader knows of the stream after its ready frame: whether the
+/// daemon follows pane changes in place, and the pane set as it is now.
+pub(super) struct Live {
+    in_place: bool,
+    panes: Vec<String>,
+    epoch: Option<u64>,
+}
+impl Live {
+    pub(super) fn new(options: &ConnectOptions) -> Self {
+        Self {
+            in_place: false,
+            panes: options.descriptor.panes.clone(),
+            epoch: None,
+        }
+    }
+    /// Checks a `topology` frame against the set this side holds and takes
+    /// the new set. Any disagreement is an identity failure: the stream ends
+    /// and the caller leases a new one, as before capability 119.
+    fn follow(&mut self, frame: &Topology) -> Result<(), Error> {
+        let known = |pane: &String| self.panes.contains(pane);
+        let unique = |list: &[String]| {
+            (list.iter().enumerate()).all(|(index, pane)| !list[..index].contains(pane))
+        };
+        let mut expected: Vec<&String> = (self.panes.iter())
+            .filter(|pane| !frame.removed.contains(pane))
+            .chain(&frame.added)
+            .collect();
+        let mut named: Vec<&String> = frame.panes.iter().collect();
+        expected.sort();
+        named.sort();
+        if !self.in_place
+            || self.epoch.is_some_and(|last| frame.topology_epoch <= last)
+            || frame.panes.is_empty()
+            || frame.panes.len() > 24
+            || !frame.panes.iter().all(|pane| valid_pane(pane))
+            || !unique(&frame.panes)
+            || !unique(&frame.removed)
+            || !unique(&frame.added)
+            || !frame.removed.iter().all(known)
+            || frame.added.iter().any(known)
+            || expected != named
+        {
+            return Err(Error::Identity);
+        }
+        self.panes.clone_from(&frame.panes);
+        self.epoch = Some(frame.topology_epoch);
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -169,6 +246,13 @@ pub enum Event {
     },
     /// Existing authority/layout/graphics/fault frames; caller owns their protocol policy.
     Control(Box<RawValue>),
+    /// The stream's pane set changed in place (capability 119). Already
+    /// checked against the reader's set; `raw` is the frame for the caller's
+    /// ordered control queue.
+    Topology {
+        change: Topology,
+        raw: Box<RawValue>,
+    },
     /// Negotiated graphics binary envelope; validated by the graphics owner.
     GraphicsBinary(Vec<u8>),
 }
@@ -183,7 +267,9 @@ impl Event {
             }
             Self::Chunk { pane, data, .. } => Some((pane, data.len())),
             Self::BinaryChunk { pane, data, .. } => Some((pane, data.len())),
-            Self::Ready(_) | Self::Control(_) | Self::GraphicsBinary(_) => None,
+            Self::Ready(_) | Self::Control(_) | Self::Topology { .. } | Self::GraphicsBinary(_) => {
+                None
+            }
         }
     }
 }
@@ -221,7 +307,17 @@ struct Chunk {
     data: String,
 }
 
+/// One frame of a stream whose pane set never changes (and the tests' entry).
+#[cfg(test)]
 pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Result<Event, Error> {
+    parse_live(text, options, &mut Live::new(options), verified)
+}
+pub(super) fn parse_live(
+    text: &str,
+    options: &ConnectOptions,
+    live: &mut Live,
+    verified: bool,
+) -> Result<Event, Error> {
     if text.len() > MAX_SERVER_BYTES {
         return Err(Error::FrameBound);
     }
@@ -238,6 +334,7 @@ pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Res
             || !ready.diagnostic_capabilities.is_empty()
             || ready.input_lifetime == Some(false)
             || ready.input_bytes == Some(false)
+            || ready.topology_in_place == Some(false)
             || (issued.effective_viewer_mode == ViewerMode::Interactive
                 && ready.connection_client_id.as_deref() != Some(&options.host_client_id))
             || ready
@@ -252,7 +349,14 @@ pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Res
         {
             return Err(Error::DaemonTooOld);
         }
+        live.in_place = ready.topology_in_place == Some(true);
         return Ok(Event::Ready(ready));
+    }
+    if kind.kind == "topology" {
+        let change = Topology::parse(text)?;
+        live.follow(&change)?;
+        let raw = serde_json::from_str(text).map_err(Error::Json)?;
+        return Ok(Event::Topology { change, raw });
     }
     let delivery = match kind.kind {
         "terminal-delivery-ready" => {
@@ -300,7 +404,7 @@ pub(super) fn parse(text: &str, options: &ConnectOptions, verified: bool) -> Res
             | Event::Chunk { pane, .. } => pane,
             _ => return Err(Error::Frame),
         };
-        if !options.descriptor.panes.contains(pane) {
+        if !live.panes.contains(pane) {
             return Err(Error::Identity);
         }
         return Ok(delivery);
@@ -351,7 +455,11 @@ pub(super) fn redeem(options: &ConnectOptions) -> Result<String, Error> {
     .map_err(Error::Json)
 }
 
+#[cfg(test)]
 pub(super) fn parse_binary(bytes: &[u8], options: &ConnectOptions) -> Result<Event, Error> {
+    parse_binary_live(bytes, &Live::new(options))
+}
+pub(super) fn parse_binary_live(bytes: &[u8], live: &Live) -> Result<Event, Error> {
     if bytes.starts_with(b"TGB1") || bytes.starts_with(b"TGB2") {
         if bytes.len() > 8 + 4096 + 512 * 1024 {
             return Err(Error::FrameBound);
@@ -378,7 +486,7 @@ pub(super) fn parse_binary(bytes: &[u8], options: &ConnectOptions) -> Result<Eve
     }
     let header: Header = serde_json::from_slice(&bytes[8..8 + length]).map_err(Error::Json)?;
     if !valid_pane(&header.pane)
-        || !options.descriptor.panes.contains(&header.pane)
+        || !live.panes.contains(&header.pane)
         || uuid::Uuid::parse_str(&header.transaction_id).is_err()
         || header.index >= 64
     {

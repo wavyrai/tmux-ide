@@ -636,6 +636,15 @@ fn run(
                     Outcome::Ready(_) => {
                         if let Some(surfaces) = &mut surfaces { surfaces.start(stream)?; }
                     }
+                    Outcome::Topology { change, .. } => {
+                        // The worker's own per-pane state follows before the
+                        // mailbox does (in `publish`), so nothing keeps a pane
+                        // that left the stream.
+                        for pane in &change.removed { committed.remove(pane); }
+                        if let Some(graphics) = graphics.as_mut() {
+                            graphics.follow(&change.removed, &change.added)?;
+                        }
+                    }
                     Outcome::Control(raw) => {
                         #[derive(serde::Deserialize)]
                         struct Kind<'a> { #[serde(rename="type")] kind: &'a str }
@@ -720,6 +729,19 @@ fn publish_locked(mailbox: &mut Mailbox, outcome: Outcome) -> Result<(), Error> 
         Outcome::Unavailable(pane) => {
             mailbox.reseeding.remove(&pane);
             mailbox.unavailable.insert(pane);
+        }
+        Outcome::Topology { change, raw } => {
+            for pane in &change.removed {
+                mailbox.materializing.remove(pane);
+                mailbox.reseeding.remove(pane);
+                mailbox.unavailable.remove(pane);
+                mailbox.current.remove(pane);
+                mailbox.pending.remove(pane);
+                mailbox.graphics_placements.remove(pane);
+                mailbox.received.remove(pane);
+            }
+            // In order with the layout snapshot that follows it.
+            return publish_locked(mailbox, Outcome::Control(raw));
         }
 
         Outcome::Ready(ready) => mailbox.status = Status::Ready(Arc::new(ready)),

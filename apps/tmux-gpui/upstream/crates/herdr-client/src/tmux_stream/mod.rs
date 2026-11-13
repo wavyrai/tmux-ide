@@ -3,7 +3,7 @@ mod boundary;
 mod wire;
 mod worker;
 
-pub use wire::{ConnectOptions, Event, IssuedDescriptor, Ready, ViewerMode};
+pub use wire::{ConnectOptions, Event, IssuedDescriptor, Ready, Topology, ViewerMode};
 pub(crate) use wire::{valid_identity, valid_pane};
 pub use worker::{Command, PaneStream};
 
