@@ -63,7 +63,7 @@ function fixture(t) {
       encoding: "utf8",
       timeout: 10000,
     });
-  const runtime = (version = "2.9.22") => {
+  const runtime = (version = "2.9.23") => {
     const dir = join(home, ".local/share/tmux-ide/current/node/bin");
     mkdirSync(dir, { recursive: true });
     script(join(dir, "node"), "exit 0");
@@ -121,7 +121,7 @@ test("bootstrap failure is propagated before native fetch and runs subshell clea
   const f = fixture(t);
   assert.equal(f.run([], { TEST_CLI_FAIL: "1" }).status, 19);
   const args = readFileSync(f.paths.TEST_CLI_ARGS, "utf8").trimEnd().split("\n");
-  assert.ok(args.includes("2.9.22"));
+  assert.ok(args.includes("2.9.23"));
   assert.ok(args.includes("--no-claude-agent-teams"));
   assert.ok(existsSync(f.paths.TEST_MAIN_CLEANED));
   assert.ok(!existsSync(f.paths.TEST_FETCHED));
@@ -148,7 +148,7 @@ test("successful CLI prerequisite runs its own cleanup then continues native boo
   assert.ok(existsSync(f.paths.TEST_MAIN_CLEANED));
   assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
   const args = readFileSync(f.paths.TEST_CLI_ARGS, "utf8").trimEnd().split("\n");
-  assert.equal(args[args.indexOf("--version") + 1], "2.9.22");
+  assert.equal(args[args.indexOf("--version") + 1], "2.9.23");
   assert.ok(args.includes("--no-claude-agent-teams"));
   assert.deepEqual(readdirSync(f.temp), []);
 });
@@ -167,7 +167,7 @@ for (const args of [[], ["--update"]]) {
     f.runtime("2.9.4");
     assert.equal(f.run(args).status, 0);
     const bootstrap = readFileSync(f.paths.TEST_CLI_ARGS, "utf8").trimEnd().split("\n");
-    assert.equal(bootstrap[bootstrap.indexOf("--version") + 1], "2.9.22");
+    assert.equal(bootstrap[bootstrap.indexOf("--version") + 1], "2.9.23");
     assert.equal(bootstrap[bootstrap.indexOf("--prefix") + 1], join(f.home, ".local"));
     assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
   });
@@ -189,9 +189,9 @@ test("old CLI bootstrap failure prevents native installation", (t) => {
 });
 
 for (const args of [[], ["--update"]]) {
-  test(`qualified CLI 2.9.22 is preserved before native ${args[0] || "install"}`, (t) => {
+  test(`qualified CLI 2.9.23 is preserved before native ${args[0] || "install"}`, (t) => {
     const f = fixture(t);
-    f.runtime("2.9.22");
+    f.runtime("2.9.23");
     assert.equal(f.run(args).status, 0);
     assert.ok(!existsSync(f.paths.TEST_CLI_ARGS));
     assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
@@ -209,7 +209,8 @@ for (const version of [
   "2.9.18",
   "2.9.20",
   "2.9.21",
-  "2.9.23",
+  "2.9.22",
+  "2.9.24",
   "2.10.0",
   "3.0.0",
   "2.9.12-beta.1",
@@ -235,11 +236,12 @@ for (const version of [
         "2.9.19",
         "2.9.20",
         "2.9.21",
+        "2.9.22",
       ].includes(version)
     ) {
       assert.equal(result.status, 0);
       const args = readFileSync(f.paths.TEST_CLI_ARGS, "utf8").trimEnd().split("\n");
-      assert.equal(args[args.indexOf("--version") + 1], "2.9.22");
+      assert.equal(args[args.indexOf("--version") + 1], "2.9.23");
       assert.ok(existsSync(f.paths.TEST_NATIVE_ARGS));
     } else {
       assert.notEqual(result.status, 0);
@@ -254,7 +256,7 @@ for (const version of [
 for (const extra of [{ TEST_VERSION_FAIL: "1" }, { TEST_VERSION_EMPTY: "1" }]) {
   test(`unreadable existing CLI is preserved (${Object.keys(extra)[0]})`, (t) => {
     const f = fixture(t);
-    f.runtime("2.9.22");
+    f.runtime("2.9.23");
     const result = f.run([], extra);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Existing CLI preserved.*could not be read/);
