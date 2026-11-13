@@ -167,6 +167,141 @@ function acceptInteractiveHandshake(
 }
 
 describe("semantic pane-stream runtime client", () => {
+  // #723, capability 119: the pane set of an open stream may change.
+  describe("topology in place", () => {
+    const NEGOTIATION = {
+      accepted: true,
+      negotiated: {
+        protocolVersion: 1,
+        encoding: "semantic-v1",
+        richPlacements: false,
+        generation: INSTANCE,
+        deliveryNonce: "00000000-0000-4000-8000-000000000042",
+      },
+    };
+    /** A daemon that confirms the capability in its ready frame, or does not. */
+    function handshake(socket: FakeSocket, confirmed: boolean): void {
+      socket.onSend = (frame) => {
+        if (frame.type !== "redeem") return;
+        queueMicrotask(() =>
+          socket.message({
+            type: "ready",
+            ...(confirmed ? { topologyInPlace: true } : {}),
+            protocolVersion: 2,
+            daemonInstanceId: INSTANCE,
+            requestId: REQUEST,
+            panes: ["pane.editor"],
+            effectiveViewerMode: "interactive",
+          }),
+        );
+      };
+    }
+    async function open(confirmed: boolean, overrides: Record<string, unknown> = {}) {
+      const socket = new FakeSocket();
+      handshake(socket, confirmed);
+      const faults: Error[] = [];
+      const topologies: unknown[] = [];
+      const base = options(socket, {
+        requestInitialInputAuthority: false,
+        onFault: (error: Error) => faults.push(error),
+        onTopology: (frame: unknown) => topologies.push(frame),
+        ...overrides,
+      });
+      const client = await openPaneStreamRuntimeClient({
+        ...base,
+        stream: {
+          ...base.stream,
+          terminalDelivery: { ...base.stream.terminalDelivery, protocolVersions: [1, 119] },
+        },
+      } as never);
+      return { socket, client, faults, topologies, base };
+    }
+    const added = {
+      type: "topology",
+      topologyEpoch: 3,
+      panes: ["pane.editor", "pane.new"],
+      removed: [],
+      added: ["pane.new"],
+    };
+
+    it("takes a new pane into the stream: negotiation and delivery for it are accepted", async () => {
+      const { socket, faults, topologies, base } = await open(true);
+      // Before the frame the pane is not part of the stream.
+      socket.message(added);
+      expect(topologies).toEqual([added]);
+      socket.message({
+        type: "terminal-delivery-ready",
+        pane: "pane.new",
+        negotiation: NEGOTIATION,
+      });
+      expect(faults).toEqual([]);
+      expect(base.onNegotiated).toHaveBeenCalledWith("pane.new", NEGOTIATION);
+    });
+
+    it("drops a removed pane: later frames for it are refused", async () => {
+      const { socket, faults, topologies } = await open(true);
+      socket.message(added);
+      const removed = {
+        type: "topology",
+        topologyEpoch: 4,
+        panes: ["pane.new"],
+        removed: ["pane.editor"],
+        added: [],
+      };
+      socket.message(removed);
+      expect(topologies).toEqual([added, removed]);
+      expect(faults).toEqual([]);
+      socket.message({
+        type: "terminal-delivery-ready",
+        pane: "pane.editor",
+        negotiation: NEGOTIATION,
+      });
+      expect(faults.map((error) => error.message)).toEqual(["Unissued terminal pane"]);
+    });
+
+    it.each([
+      [
+        "names a pane the stream already has as added",
+        { added: ["pane.editor"], panes: ["pane.editor"] },
+      ],
+      [
+        "removes a pane the stream does not have",
+        { removed: ["pane.ghost"], added: [], panes: ["pane.editor"] },
+      ],
+      ["leaves out a pane without removing it", { panes: ["pane.new"] }],
+    ])("fails the stream when a topology frame %s", async (_name, change) => {
+      const { socket, faults, topologies } = await open(true);
+      socket.message({ ...added, ...change });
+      expect(topologies).toEqual([]);
+      expect(faults.map((error) => error.message)).toEqual([
+        "Pane-stream topology did not match the live pane set",
+      ]);
+    });
+
+    it("refuses the frame from a daemon that did not confirm the capability", async () => {
+      const { socket, faults, topologies } = await open(false);
+      socket.message(added);
+      expect(topologies).toEqual([]);
+      expect(faults.map((error) => error.message)).toEqual(["Unsolicited pane-stream topology"]);
+    });
+
+    it("refuses the frame when the caller gave no handler for it", async () => {
+      const { socket, faults } = await open(true, { onTopology: undefined });
+      socket.message(added);
+      expect(faults.map((error) => error.message)).toEqual(["Unsolicited pane-stream topology"]);
+    });
+
+    it("still refuses a pane nobody announced", async () => {
+      const { socket, faults } = await open(true);
+      socket.message({
+        type: "terminal-delivery-ready",
+        pane: "pane.new",
+        negotiation: NEGOTIATION,
+      });
+      expect(faults.map((error) => error.message)).toEqual(["Unissued terminal pane"]);
+    });
+  });
+
   it("rejects a regressing full-layout topology epoch before publication", async () => {
     const socket = new FakeSocket();
     acceptInteractiveHandshake(socket);

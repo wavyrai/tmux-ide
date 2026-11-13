@@ -1175,6 +1175,12 @@ interface OpenedPaneDelivery {
 
 interface PaneChannel {
   readonly semanticPaneId: string;
+  /**
+   * The pane left the session under a capability-119 stream. A client frame
+   * that was already on its way for this pane (an ack, input) is dropped, not
+   * a protocol error: the client could not know yet.
+   */
+  retiredInPlace?: boolean;
   sub: MirrorSubscription | null;
   delivery: SessionRuntimeTerminalDeliveryConnection | null;
   deliveryAddress: {
@@ -2725,6 +2731,7 @@ export class PaneStreamLiveConnection {
     channel.sub = null;
     channel.delivery = null;
     channel.closed = true;
+    channel.retiredInPlace = true;
     this.#surfaceDemands.get(channel.semanticPaneId)?.close();
     this.#surfaceDemands.delete(channel.semanticPaneId);
     if (sub) void sub.close().catch(() => undefined);
@@ -3429,6 +3436,7 @@ export class PaneStreamLiveConnection {
     deliveryNonce: string;
   }): PaneChannel | null {
     const channel = this.#panes.get(address.semanticPaneId);
+    if (channel?.retiredInPlace) return null;
     const expected = channel?.deliveryAddress;
     if (
       !channel?.delivery ||
@@ -3517,6 +3525,7 @@ export class PaneStreamLiveConnection {
 
   #acceptConsumed(pane: string, seq: number): void {
     const channel = this.#panes.get(pane);
+    if (channel?.retiredInPlace) return;
     if (
       !this.#deliveryAcks ||
       !channel ||
@@ -3570,6 +3579,7 @@ export class PaneStreamLiveConnection {
       return;
     }
     const channel = this.#panes.get(pane);
+    if (channel?.retiredInPlace) return;
     const semanticDelivery = this.#descriptor.terminalDelivery !== null;
     if (
       !channel ||

@@ -2586,6 +2586,55 @@ describe("PaneStreamAdmissionCoordinator", () => {
       expect(socket.framesOfType("terminal-delivery-fault")).toHaveLength(1);
     });
 
+    // Found with a real 119 client on a live daemon: its ack for the removed
+    // pane's last delivery was already on the wire and closed the stream 1008.
+    it("drops client frames that were on their way for a pane that just left", async () => {
+      const { h } = topologyHarness(["pane.one", "pane.two"]);
+      const { socket } = await connect(h, {
+        panes: ["pane.one", "pane.two"],
+        semanticDelivery: true,
+        protocolVersions: IN_PLACE,
+        viewerMode: "interactive",
+      });
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2),
+      );
+      change(h, ["pane.one"]);
+      await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+      socket.message({
+        type: "terminal-delivery-ack",
+        ack: {
+          type: "terminal.delivery.ack",
+          workspaceName: "workspace.alpha",
+          semanticPaneId: "pane.two",
+          generation: INSTANCE,
+          incarnation: `${INSTANCE}:0`,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          transactionId: "00000000-0000-4000-8000-000000000077",
+          canonicalRevision: 0,
+          canonicalStateHash: "1111111111111111",
+          representationHash: "2222222222222222",
+        },
+      });
+      socket.message({
+        type: "terminal-delivery-visibility",
+        workspaceName: "workspace.alpha",
+        pane: "pane.two",
+        generation: INSTANCE,
+        incarnation: `${INSTANCE}:0`,
+        deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        visibility: "hidden",
+      });
+      socket.message({ type: "consumed", pane: "pane.two", seq: 1 });
+      socket.message({ type: "input", kind: "key", pane: "pane.two", seq: 1, data: "x" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(socket.closed).toBeNull();
+      expect(h.sendInput).not.toHaveBeenCalled();
+      // A pane that never was in the stream is still a protocol error.
+      socket.message({ type: "consumed", pane: "pane.ghost", seq: 1 });
+      expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
+    });
+
     it("keeps the stream when a pane is added: the new pane is announced, then negotiated", async () => {
       const { h, opened, closed } = topologyHarness(["pane.one", "pane.two"]);
       const socket = await open(h, ["pane.one", "pane.two"]);
