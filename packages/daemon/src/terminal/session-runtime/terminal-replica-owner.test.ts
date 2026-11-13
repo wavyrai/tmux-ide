@@ -321,6 +321,22 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
       }
     });
 
+    it("reseeds for a difference that appears after a seed that had none", async () => {
+      // The ordinary case: a saved tab and no reflow. Later tmux drops history
+      // (clear-history); that difference is not the seed's own.
+      const r = await rig("A\tB");
+      try {
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        await r.outputAndCheck();
+        r.state.gap = -5;
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
     it("still reseeds every time for a seed without tabs", async () => {
       const r = await rig("AB");
       try {

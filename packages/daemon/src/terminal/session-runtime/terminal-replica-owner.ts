@@ -516,19 +516,20 @@ export class SessionRuntimeTerminalReplicaOwner {
       )
         return;
       const seed = this.#interpreter.currentSeed();
-      if (!seed || seed.snapshot.history.length === size) return;
+      if (!seed) return;
+      const gap = size - seed.snapshot.history.length;
       // A seed with reconstructed tabs can differ from tmux in row count, and
       // a new capture would paint the same rows again. Accept the difference
-      // that seed has; reseed only when the difference changes.
+      // that seed has at its first check, zero included, and reseed only when
+      // the difference changes.
       const reconstructed = this.#interpreter.reconstructedSeed();
       if (reconstructed !== null) {
-        const gap = size - seed.snapshot.history.length;
         if (this.#reconstructedHistoryGap?.seed !== reconstructed) {
           this.#reconstructedHistoryGap = { seed: reconstructed, gap };
           return;
         }
         if (this.#reconstructedHistoryGap.gap === gap) return;
-      }
+      } else if (gap === 0) return;
       upstream.reseed();
     } catch {
       // Unavailable metadata is not evidence that history disappeared.
