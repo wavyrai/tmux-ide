@@ -61,6 +61,14 @@ describe("targeted agent admission", () => {
       ).rejects.toThrow("Agent native identity is unavailable");
     });
   });
+  it.each(["abc", "0", "12x", "-1", " "])(
+    "refuses a birth id that is not one: %j",
+    async (birth) => {
+      await expect(
+        captureAgentAdmission(async () => `$1\t@1\t%2\t${birth}\t`, session, observed),
+      ).rejects.toThrow("Agent native identity is unavailable");
+    },
+  );
   it("rejects mismatched agent identity before promotion", async () => {
     await expect(
       captureAgentAdmission(async () => "$1\t@1\t%2\t12\t", session, {
