@@ -26,16 +26,24 @@ function roster(initial: { current: boolean; refreshing: boolean }) {
   };
 }
 
+/** The value a promise has settled to after a few microtasks, or "pending". */
+async function soon<T>(promise: Promise<T>): Promise<T | "pending"> {
+  let value: T | "pending" = "pending";
+  void promise.then((settled) => (value = settled));
+  for (let turn = 0; turn < 5; turn += 1) await Promise.resolve();
+  return value;
+}
+
 // PR #383's journey: a click during the roster's re-read was refused as stale.
 describe("waiting for a roster that is re-reading", () => {
   it("answers at once when there is nothing to wait for", async () => {
     await expect(
       waitForRosterTarget(roster({ current: true, refreshing: true }).options()),
     ).resolves.toBe(true);
-    // Not current and nothing being read: the row is gone, say so now.
-    await expect(
-      waitForRosterTarget(roster({ current: false, refreshing: false }).options()),
-    ).resolves.toBe(false);
+    // Not current and nothing being read: the row is gone, say so now, not at the bound.
+    expect(
+      await soon(waitForRosterTarget(roster({ current: false, refreshing: false }).options())),
+    ).toBe(false);
   });
 
   it("resolves true when the re-read brings the row back", async () => {
@@ -52,9 +60,10 @@ describe("waiting for a roster that is re-reading", () => {
   it("resolves false when the re-read ends without the row", async () => {
     const r = roster({ current: false, refreshing: true });
     const waiting = waitForRosterTarget(r.options());
+    expect(await soon(waiting)).toBe("pending");
     r.state.refreshing = false;
     r.publish();
-    await expect(waiting).resolves.toBe(false);
+    expect(await soon(waiting)).toBe(false);
     expect(r.stopped).toHaveBeenCalledTimes(1);
   });
 
