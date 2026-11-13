@@ -2669,6 +2669,72 @@ describe("PaneStreamAdmissionCoordinator", () => {
       expect(socket.closed).toEqual({ code: 1008, reason: "protocol-error" });
     });
 
+    // Found by the Mac app's 119 client: a tombstone for a pane that stays in
+    // the session, and then nothing. The hub drops a pane after its tombstone,
+    // so the pane stayed blank until the client gave up.
+    describe("a tombstone on a stream that follows its session", () => {
+      const tombstone = (pane: string) =>
+        ({
+          type: "terminal.delivery",
+          workspaceName: "workspace.alpha",
+          semanticPaneId: pane,
+          generation: INSTANCE,
+          incarnation: `${INSTANCE}:0`,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          transactionId: "00000000-0000-4000-8000-000000000055",
+          protocolVersion: 1,
+          encoding: "semantic-v1",
+          frame: "tombstone",
+        }) as never;
+
+      it("closes the stream when the pane is still in the session afterwards", async () => {
+        vi.useFakeTimers();
+        try {
+          const { h } = topologyHarness(["pane.one", "pane.two"]);
+          const socket = await open(h, ["pane.one", "pane.two"]);
+          const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+          void h.deliveryListeners.get("pane.one")?.(tombstone("pane.one"));
+          await vi.advanceTimersByTimeAsync(PANE_STREAM_TOPOLOGY_SETTLE_MS - 1);
+          expect(socket.closed).toBeNull();
+          await vi.advanceTimersByTimeAsync(2);
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+          expect(logged).toHaveBeenCalledWith(
+            "pane-stream",
+            "stream closed",
+            expect.objectContaining({
+              cause: "topology-in-place: a pane that stays lost its source",
+            }),
+          );
+          logged.mockRestore();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("stays open when the pane's removal follows", async () => {
+        const { h } = topologyHarness(["pane.one", "pane.two"]);
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        void h.deliveryListeners.get("pane.two")?.(tombstone("pane.two"));
+        change(h, ["pane.one"]);
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        await new Promise((resolve) => setTimeout(resolve, PANE_STREAM_TOPOLOGY_SETTLE_MS + 50));
+        expect(socket.closed).toBeNull();
+      });
+
+      it("changes nothing for a stream without the capability", async () => {
+        vi.useFakeTimers();
+        try {
+          const { h } = topologyHarness(["pane.one", "pane.two"]);
+          const socket = await open(h, ["pane.one", "pane.two"], [1]);
+          void h.deliveryListeners.get("pane.one")?.(tombstone("pane.one"));
+          await vi.advanceTimersByTimeAsync(PANE_STREAM_TOPOLOGY_SETTLE_MS * 4);
+          expect(socket.closed).toBeNull();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
+
     it("keeps the stream when a pane is added: the new pane is announced, then negotiated", async () => {
       const { h, opened, closed } = topologyHarness(["pane.one", "pane.two"]);
       const socket = await open(h, ["pane.one", "pane.two"]);

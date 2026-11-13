@@ -1913,7 +1913,30 @@ export class PaneStreamLiveConnection {
     }
   }
 
+  /**
+   * A tombstone ends a pane's delivery for good: the hub drops the pane and
+   * sends nothing more. Without capability 119 the pane's removal closes the
+   * stream anyway. With it, the removal arrives as a `topology` frame within
+   * moments; if none comes, the pane is still in the session and would stay
+   * blank for ever, so the stream closes as it would without the capability
+   * and the client takes a new one.
+   */
+  #watchTombstone(pane: string): void {
+    const channel = this.#panes.get(pane);
+    if (!this.#topologyInPlace || !channel || channel.closed) return;
+    const timer = setTimeout(() => {
+      if (this.#closed || channel.retiredInPlace || this.#panes.get(pane) !== channel) return;
+      this.#failTopologyChanged("a pane that stays lost its source");
+    }, PANE_STREAM_TOPOLOGY_SETTLE_MS);
+    timer.unref?.();
+  }
+
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
+    if (
+      (message.type === "terminal.delivery" || message.type === "terminal.projection") &&
+      message.frame === "tombstone"
+    )
+      this.#watchTombstone(pane);
     if (message.type === "terminal.projection") {
       const channel = this.#panes.get(pane);
       if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
