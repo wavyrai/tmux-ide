@@ -551,7 +551,13 @@ describe("SessionRuntimeTransportBinder", () => {
       outside,
     );
 
+    const hostHolds = (pane: string) =>
+      binder.resolveExecutionHandle("alpha", "electron:renderer-a", pane) !== undefined;
+    expect([hostHolds("pane.old"), hostHolds("pane.new")]).toEqual([true, false]);
+
     binding.amendPaneGrant({ added: ["pane.new"], removed: ["pane.old"] });
+    // The host's shared authorship follows the binding's grant.
+    expect([hostHolds("pane.old"), hostHolds("pane.new")]).toEqual([false, true]);
     // The new pane is inside the grant now: input authority covers it, and a
     // delivery for it gets past the grant (the session itself is not attached here).
     binding.assertController("pane.new");
@@ -571,7 +577,10 @@ describe("SessionRuntimeTransportBinder", () => {
     // Amending twice changes nothing, and an invalid pane id changes nothing at all.
     binding.amendPaneGrant({ added: ["pane.new"], removed: ["pane.old"] });
     expect(() => binding.amendPaneGrant({ added: ["%7"], removed: ["pane.editor"] })).toThrow();
+    expect(() => binding.amendPaneGrant({ added: ["pane.later"], removed: ["%7"] })).toThrow();
     binding.assertController("pane.editor");
+    expect(() => binding.assertController("pane.later")).toThrowError(outside);
+    expect(hostHolds("pane.new")).toBe(true);
 
     // A sibling stream of the same host keeps its own grant: the amendment is per binding.
     const sibling = binder.bind({
@@ -584,7 +593,9 @@ describe("SessionRuntimeTransportBinder", () => {
     });
     sibling.assertController("pane.old");
     expect(() => sibling.assertController("pane.new")).toThrowError(outside);
+    expect(hostHolds("pane.old")).toBe(true);
     await sibling.close();
+    expect(hostHolds("pane.old")).toBe(false);
     // After the sibling is gone nobody of this host holds pane.old.
     expect(() => binding.assertController("pane.old")).toThrowError(outside);
 

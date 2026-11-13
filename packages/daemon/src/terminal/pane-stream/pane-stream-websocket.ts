@@ -2607,7 +2607,6 @@ export class PaneStreamLiveConnection {
       return this.#topologyFailed("session inventory unavailable", error);
     }
     if (this.#closed) return this.#topologyFailed("closed");
-    if (this.#topologyPending) return "stale";
     const next = [...new Set(described.panes.map((pane) => pane.semanticPaneId))].sort();
     if (next.length === 0) return this.#topologyFailed("session has no panes");
     const frames = this.#validateInitialLayout(snapshot.layouts, next);
