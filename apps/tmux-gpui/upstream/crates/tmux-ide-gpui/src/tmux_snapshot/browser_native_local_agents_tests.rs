@@ -475,3 +475,46 @@ fn a_failed_reread_drops_the_shown_rows_and_their_keys() {
         "a row from a failed read can still be opened"
     );
 }
+
+/// #764 on a workspace: the same refusal, shown as the status line there.
+#[test]
+fn a_click_on_a_moved_agent_in_a_workspace_says_so_in_the_status() {
+    let (mut local, _events) = reconnect::tests::attached();
+    local.state.surface = Surface::Workspace;
+    local.foreground = true;
+    local.stage = None;
+    local.agents = ready();
+    let shown = local.agents.publication();
+    let session = local.agents.slots[0].context.live.clone();
+    local.state.selected_session = Some(session.clone());
+    let key = local.agents.slots[0].context.key.clone();
+    let Observed::Ready(observed) = &local.agents.slots[0].observed else {
+        unreachable!()
+    };
+    let mut elsewhere = observed.clone();
+    elsewhere.agents[0]
+        .native_identity
+        .as_mut()
+        .unwrap()
+        .pane_birth_id = "2".into();
+    let later = uuid::Uuid::new_v4();
+    local.agents.epoch = Some(later);
+    assert!(local.agents.apply(&key, later, Ok(elsewhere)));
+    let moved = local.agents.publication();
+    let from = local.state.request;
+    local
+        .open_agent(Command::OpenWorkspaceAgent {
+            request: from + 1,
+            from_request: from,
+            roster_revision: moved.revision,
+            key: shown.rows[0].key.clone(),
+            session_id: session,
+        })
+        .unwrap();
+    assert_eq!(local.state.status, AGENT_MOVED);
+    assert_eq!(
+        local.state.request, from,
+        "a workspace click is not navigation"
+    );
+    assert!(local.stage.is_none(), "nothing was opened");
+}
