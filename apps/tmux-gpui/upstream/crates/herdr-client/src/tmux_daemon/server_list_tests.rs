@@ -271,3 +271,30 @@ fn without_the_cache_every_selection_asks() {
     daemon.select_server(&server_scope()).unwrap();
     assert_eq!(lists(&worker.join().unwrap()), 2);
 }
+
+/// A server the remembered list does not have yet (it started after the
+/// read) is asked about once, not refused for up to five seconds.
+#[test]
+fn a_server_missing_from_the_remembered_list_is_asked_about_once() {
+    cached(false, || {
+        let (port, worker) = peer_many(5, |index| match index {
+            0 => response(&identity()),
+            1 => response(&serde_json::json!({"version":1,"servers":[]})),
+            2 => response(&registrations()),
+            _ => response(&serde_json::json!({"version":1,"servers":[]})),
+        });
+        let (_sandbox, daemon) = discovered(port);
+        // Remembers a list without the server.
+        assert!(daemon.list_servers().unwrap().is_empty());
+        daemon.select_server(&server_scope()).unwrap();
+        // A server that is really gone is still refused, after one ask.
+        forget_known_servers();
+        assert!(daemon.list_servers().unwrap().is_empty());
+        assert!(matches!(
+            daemon.select_server(&server_scope()),
+            Err(Error::ServerChanged)
+        ));
+        let requests = worker.join().unwrap();
+        assert_eq!(lists(&requests), 4, "{requests}");
+    });
+}

@@ -61,7 +61,22 @@ impl LocalDaemon {
 }
 impl super::owner::Owner {
     pub(super) fn select_server(&self, scope: &ServerScope) -> Result<ServerClient, Error> {
-        if !self.known_servers()?.iter().any(|entry| matches!(entry, ServerRegistration::Online {scope:current,..} if current==scope)) {
+        let listed = |servers: &[ServerRegistration]| {
+            servers.iter().any(|entry| {
+                matches!(entry, ServerRegistration::Online { scope: current, .. } if current == scope)
+            })
+        };
+        let found = match self {
+            // A remembered list may be older than the server: a miss in it
+            // asks once before the server counts as changed.
+            Self::Local(daemon) => match daemon.remembered_or_listed()? {
+                (servers, true) if !listed(&servers) => listed(&daemon.list_servers()?),
+                (servers, _) => listed(&servers),
+            },
+            #[cfg(unix)]
+            Self::Remote(_) => listed(&self.known_servers()?),
+        };
+        if !found {
             return Err(Error::ServerChanged);
         }
         Ok(ServerClient {
