@@ -165,8 +165,8 @@ fn disconnect_stands_apart_and_reads_as_the_destructive_one(cx: &mut TestAppCont
 }
 
 /// #803: Home's own Tab reaches each machine's text actions after the
-/// action row, "Use for new sessions" before Disconnect; Return presses the
-/// focused one and nothing else; Escape gives the keyboard back.
+/// action row, "Use for new sessions" before Disconnect; Escape gives the
+/// keyboard back; Return presses the focused one and nothing else.
 #[gpui::test]
 fn homes_tab_reaches_the_machine_actions_after_the_action_row(cx: &mut TestAppContext) {
     let (view, cx, receiver) = fleet_home(cx);
@@ -236,15 +236,22 @@ fn homes_tab_reaches_the_machine_actions_after_the_action_row(cx: &mut TestAppCo
     assert!(!on(cx, order[0]));
     cx.simulate_keystrokes("tab");
     assert!(on(cx, order[0]));
-    cx.simulate_keystrokes("enter");
-    let sent: Vec<_> = receiver.try_iter().collect();
-    assert_eq!(sent.len(), 1, "one press, one command");
-    assert!(matches!(sent[0], browser::Command::FleetServer { .. }));
-    // Escape gives the keyboard back.
+    // Escape gives the keyboard back to Home, and Tab finds the stop again.
     cx.simulate_keystrokes("escape");
     assert!(!aside(cx));
     let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
     cx.update(|window, _| assert!(terminal.is_focused(window)));
+    for _ in 0..40 {
+        if on(cx, order[0]) {
+            break;
+        }
+        cx.simulate_keystrokes("tab");
+    }
+    assert!(on(cx, order[0]));
+    cx.simulate_keystrokes("enter");
+    let sent: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(sent.len(), 1, "one press, one command");
+    assert!(matches!(sent[0], browser::Command::FleetServer { .. }));
 }
 
 /// A focused machine action whose machine goes away does not keep the
