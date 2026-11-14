@@ -6,13 +6,16 @@
  * adopted. A server started by plain `tmux` then has no snapshot, silently
  * (#783). The daemon fills the gap: it writes the same file, with the same
  * builder, whenever the updater's own session is not running. One writer at a
- * time, so the two never rotate each other's generation away.
+ * time, so the two never rotate each other's generation away. Neither replaces
+ * a restore point: the snapshot of a server that is gone and whose sessions
+ * have not come back (`snapshotIsRestorePoint`).
  */
 import { UPDATER_SESSION } from "./chrome-front-door.ts";
 import {
   buildSnapshot,
   readSnapshot,
   snapshotFingerprint,
+  snapshotIsRestorePoint,
   SNAPSHOT_PANE_FORMAT,
   SNAPSHOT_SESSION_FORMAT,
   writeSnapshot,
@@ -35,6 +38,7 @@ export type DaemonCrashSnapshotPulse =
   | "written"
   | "unchanged"
   | "updater-writes"
+  | "restore-point-kept"
   | "tmux-unavailable";
 
 export function createDaemonCrashSnapshot(deps: DaemonCrashSnapshotDeps) {
@@ -43,41 +47,45 @@ export function createDaemonCrashSnapshot(deps: DaemonCrashSnapshotDeps) {
   const write = deps.write ?? writeSnapshot;
   /** The tmux answers of the last pulse that built a snapshot. */
   let seen: string | null = null;
-  /** Fingerprint of what the file holds; undefined until read from the file. */
-  let fingerprint: string | null | undefined;
   return {
     async pulse(): Promise<DaemonCrashSnapshotPulse> {
       let sessions: string;
       let panes: string;
+      let existing: FleetSnapshot | null;
+      let serverStartMs = Number.NaN;
       try {
         sessions = await deps.run(["list-sessions", "-F", SNAPSHOT_SESSION_FORMAT]);
         if (sessions.split("\n").some((line) => line.split("\t")[0] === UPDATER_SESSION)) {
           // The updater owns the file now; start over from the file when it stops.
           seen = null;
-          fingerprint = undefined;
           return "updater-writes";
         }
         panes = await deps.run(["list-panes", "-a", "-F", SNAPSHOT_PANE_FORMAT]);
+        if (`${sessions}\n\n${panes}` === seen) return "unchanged";
+        existing = read();
+        if (existing)
+          serverStartMs =
+            Number((await deps.run(["display-message", "-p", "#{start_time}"])).trim()) * 1000;
       } catch {
         // A server that is gone or unreachable must not replace the snapshot
         // that restores it.
         return "tmux-unavailable";
       }
-      const answers = `${sessions}\n\n${panes}`;
-      if (answers === seen) return "unchanged";
-      if (fingerprint === undefined) {
-        const existing = read();
-        fingerprint = existing ? snapshotFingerprint(existing) : null;
+      const running = sessions.split("\n").map((line) => line.split("\t")[0]!);
+      if (snapshotIsRestorePoint(existing, { serverStartMs, sessions: running })) {
+        // Look again next time: a restore or a deleted file changes no tmux
+        // answer this pulse could remember.
+        seen = null;
+        return "restore-point-kept";
       }
       const snapshot = buildSnapshot(
         panes.split("\n").filter(Boolean),
         sessions.split("\n").filter(Boolean),
         await processTable(),
       );
-      seen = answers;
-      const next = snapshotFingerprint(snapshot);
-      if (next === fingerprint) return "unchanged";
-      fingerprint = next;
+      seen = `${sessions}\n\n${panes}`;
+      if (existing && snapshotFingerprint(existing) === snapshotFingerprint(snapshot))
+        return "unchanged";
       write(snapshot);
       return "written";
     },

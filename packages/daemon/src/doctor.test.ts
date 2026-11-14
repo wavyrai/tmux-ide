@@ -403,6 +403,28 @@ describe("crash snapshot row", () => {
       /The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer$/,
     );
   });
+  it("says a restore point is kept, what it holds and how to release it", () => {
+    const serverStart = Date.parse("2026-11-10T08:00:00Z");
+    const row = snapshotRow(
+      saved("2026-11-09T09:00:00Z", "api", "web", "docs"),
+      ["web", "scratch"],
+      NOW,
+      serverStart,
+    );
+    expect(row.pass).toBe(false);
+    expect(row.detail).toBe(
+      "restore point kept: saved 1 days old, before this tmux server started; 2 of its sessions are not running (api, docs). `tmux-ide restore` brings them back; delete snapshot.json to let a new snapshot replace it",
+    );
+    // The same snapshot on the server that saved it is an ordinary stale snapshot.
+    expect(
+      snapshotRow(
+        saved("2026-11-09T09:00:00Z", "api"),
+        ["web"],
+        NOW,
+        Date.parse("2026-11-01T00:00:00Z"),
+      ).detail,
+    ).toMatch(/^1 days old; misses 1 running session \(web\)/);
+  });
   it("passes when it covers every running session", () => {
     const row = snapshotRow(saved("2026-11-10T08:58:00Z", "api", "web"), ["web", "api"], NOW);
     expect(row).toMatchObject({ pass: true, detail: "2 min old, covers every running session" });

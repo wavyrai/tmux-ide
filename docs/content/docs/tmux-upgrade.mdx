@@ -221,6 +221,12 @@ bring back the layout and the agent conversations.
    adopted, the chrome updater writes it instead. With neither running, the
    snapshot can be days old.
 
+   Starting a new server does not replace the snapshot of the one that ended.
+   Neither writer replaces it while it names a session the new server lacks.
+   Writing resumes once `tmux-ide restore` has brought those sessions back. To
+   drop the old snapshot without restoring it, delete
+   `~/.tmux-ide/snapshot.json`; the next write replaces it.
+
 2. Rebuild from it, with the agents' conversations:
 
    ```bash

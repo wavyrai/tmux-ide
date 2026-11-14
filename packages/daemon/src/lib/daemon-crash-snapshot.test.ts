@@ -18,7 +18,13 @@ const pane = (session: string, window = 0, index = 0) =>
     .join("\t");
 
 function world(initial: { sessions: string[]; panes: string[] }) {
-  const state = { ...initial, fail: null as Error | null, file: null as FleetSnapshot | null };
+  const state = {
+    ...initial,
+    fail: null as Error | null,
+    file: null as FleetSnapshot | null,
+    /** `#{start_time}` of the server, in seconds. Long ago unless a test says otherwise. */
+    startTime: 1_000_000_000,
+  };
   const written: FleetSnapshot[] = [];
   const processTable = vi.fn(async () => []);
   const run = vi.fn(async (args: readonly string[]) => {
@@ -26,6 +32,10 @@ function world(initial: { sessions: string[]; panes: string[] }) {
     if (args[0] === "list-sessions") {
       expect(args).toEqual(["list-sessions", "-F", SNAPSHOT_SESSION_FORMAT]);
       return state.sessions.map((name) => `${name}\t`).join("\n");
+    }
+    if (args[0] === "display-message") {
+      expect(args).toEqual(["display-message", "-p", "#{start_time}"]);
+      return `${state.startTime}\n`;
     }
     expect(args).toEqual(["list-panes", "-a", "-F", SNAPSHOT_PANE_FORMAT]);
     return state.panes.join("\n");
@@ -98,6 +108,61 @@ describe("the daemon's crash snapshot (#783)", () => {
     w.state.sessions = ["work"];
     expect(await snapshot.pulse()).toBe("written");
     expect(w.state.file!.sessions.map((session) => session.name)).toEqual(["work"]);
+  });
+
+  describe("a restore point: the snapshot of a server that is gone", () => {
+    /** Two sessions saved by the old server; then a new server with one other session. */
+    async function replaced() {
+      const w = world({ sessions: ["one", "two"], panes: [pane("one"), pane("two")] });
+      await createDaemonCrashSnapshot(w.deps).pulse();
+      const saved = w.state.file!;
+      w.state.sessions = ["fresh"];
+      w.state.panes = [pane("fresh")];
+      w.state.startTime = Math.floor(Date.parse(saved.savedAt) / 1000) + 60;
+      // The daemon restarts with the server: it remembers nothing.
+      return { w, saved, snapshot: createDaemonCrashSnapshot(w.deps) };
+    }
+
+    it("is kept while the new server lacks a session it names", async () => {
+      const { w, saved, snapshot } = await replaced();
+      expect(await snapshot.pulse()).toBe("restore-point-kept");
+      w.state.panes.push(pane("fresh", 0, 1));
+      expect(await snapshot.pulse()).toBe("restore-point-kept");
+      expect(w.state.file).toBe(saved);
+      expect(w.written).toHaveLength(1);
+      expect(w.processTable).toHaveBeenCalledTimes(1);
+    });
+
+    it("is replaced once its sessions run again", async () => {
+      const { w, snapshot } = await replaced();
+      await snapshot.pulse();
+      w.state.sessions = ["fresh", "one", "two"];
+      w.state.panes.push(pane("one"), pane("two"));
+      expect(await snapshot.pulse()).toBe("written");
+      expect(w.state.file!.sessions.map((session) => session.name)).toEqual([
+        "fresh",
+        "one",
+        "two",
+      ]);
+    });
+
+    it("is replaced after the user deletes the file, with tmux unchanged", async () => {
+      const { w, snapshot } = await replaced();
+      await snapshot.pulse();
+      w.state.file = null;
+      expect(await snapshot.pulse()).toBe("written");
+      expect(w.state.file!.sessions.map((session) => session.name)).toEqual(["fresh"]);
+    });
+
+    it("is not what a server sees in its own snapshot after a session ends", async () => {
+      const w = world({ sessions: ["one", "two"], panes: [pane("one"), pane("two")] });
+      const snapshot = createDaemonCrashSnapshot(w.deps);
+      await snapshot.pulse();
+      w.state.sessions = ["one"];
+      w.state.panes = [pane("one")];
+      expect(await snapshot.pulse()).toBe("written");
+      expect(w.state.file!.sessions.map((session) => session.name)).toEqual(["one"]);
+    });
   });
 
   it("keeps the last snapshot when tmux cannot be asked", async () => {

@@ -384,12 +384,31 @@ export function snapshotEvery(): number {
   return Number.isInteger(n) && n > 0 ? n : SNAPSHOT_EVERY;
 }
 
+/**
+ * Is `existing` a restore point: the snapshot of a tmux server that is gone,
+ * naming at least one session the running server lacks? That file is what
+ * `tmux-ide restore` rebuilds from, so no writer may replace it. It stops
+ * being one when its sessions run again (after a restore) or the user deletes
+ * the file. A server's own snapshot is never one: it was saved after the
+ * server started.
+ */
+export function snapshotIsRestorePoint(
+  existing: { readonly savedAt: string; readonly sessions: readonly { name: string }[] } | null,
+  live: { readonly serverStartMs: number; readonly sessions: readonly string[] },
+): boolean {
+  if (!existing || !(live.serverStartMs > Date.parse(existing.savedAt))) return false;
+  const running = new Set(live.sessions);
+  return existing.sessions.some((session) => !running.has(session.name));
+}
+
 /** Deps for {@link createSnapshotter} — injectable so the throttle is unit-tested. */
 export interface SnapshotterDeps {
   collect: () => FleetSnapshot;
   read: () => FleetSnapshot | null;
   write: (snapshot: FleetSnapshot) => void;
   every: number;
+  /** When the running tmux server started. With it, a restore point is not replaced. */
+  serverStartMs?: () => number;
 }
 
 /**
@@ -406,6 +425,7 @@ export function createSnapshotter(deps: SnapshotterDeps): Snapshotter {
   let ticks = 0;
   let seeded = false;
   let lastFingerprint: string | null = null;
+  let held = false;
   return {
     onTick(): void {
       ticks++;
@@ -416,6 +436,25 @@ export function createSnapshotter(deps: SnapshotterDeps): Snapshotter {
         seeded = true;
       }
       const snapshot = deps.collect();
+      if (deps.serverStartMs) {
+        const existing = deps.read();
+        let serverStartMs = Number.NaN;
+        try {
+          serverStartMs = deps.serverStartMs();
+        } catch {
+          // Unknown start time: not a restore point.
+        }
+        const sessions = snapshot.sessions.map((session) => session.name);
+        if (snapshotIsRestorePoint(existing, { serverStartMs, sessions })) {
+          held = true;
+          return;
+        }
+        if (held) {
+          // Released: the file changed hands or is gone. Compare with it afresh.
+          held = false;
+          lastFingerprint = existing ? snapshotFingerprint(existing) : null;
+        }
+      }
       const fingerprint = snapshotFingerprint(snapshot);
       if (fingerprint === lastFingerprint) return;
       lastFingerprint = fingerprint;
