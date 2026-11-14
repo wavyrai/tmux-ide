@@ -115,6 +115,20 @@ The running tmux server was started by another tmux, such as Homebrew's.
 `tmux-ide servers upgrade` restarts it on tmux-ide's own tmux and restores its
 sessions. See [Move to tmux-ide's own tmux](/docs/tmux-upgrade).
 
+Sessions on such a server still open. One difference shows in output printed
+before you opened the pane: a stock tmux does not report how wide each tab was,
+so tmux-ide places tabs at the default stops (every 8 columns).
+
+- A line edited in place after its tab was printed, or printed under custom tab
+  stops, can be a few columns off.
+- If the pane was made narrower after the output was printed (for example `ls`
+  in a wide terminal, then a narrow pane), those lines can wrap at other places
+  than tmux wraps them, and the pane can show other lines than `tmux attach`
+  does.
+
+Both last until the program draws the lines again or they scroll out of the
+history. New output is not affected.
+
 ## doctor warns about "tmux server"
 
 The background daemon looks for tmux in `/tmp/tmux-<uid>/` and ignores `TMUX_TMPDIR`.

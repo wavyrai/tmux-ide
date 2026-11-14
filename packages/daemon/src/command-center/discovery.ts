@@ -40,7 +40,9 @@ let _tmuxRunner: TmuxRunner = (args) =>
   execFileSync("tmux", ["-u", ...runtimeTmuxArgs(args)], {
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "ignore"],
+    // Keep stderr on the error: it is how a caller tells "no server running"
+    // from a server it could not reach. Nothing is printed either way.
+    stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 
 export function _setTmuxRunner(fn: TmuxRunner): () => void {

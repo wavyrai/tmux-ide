@@ -1,4 +1,5 @@
 import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
+import { logger } from "../../lib/log.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
@@ -184,6 +185,9 @@ export class TerminalReplicaInterpreter {
   #nativeSeedBackingCandidate: NativeGridCapture | undefined;
   readonly #generation: SessionRuntimeGeneration;
   readonly #workspaceName: string;
+  #stockTabsNoted = false;
+  #seedOrdinal = 0;
+  #reconstructedSeed: number | null = null;
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
   #scrollback: number;
@@ -344,6 +348,15 @@ export class TerminalReplicaInterpreter {
     return this.#needsSeed ? null : this.#seed();
   }
 
+  /**
+   * Names the current seed when its tab cells were reconstructed from a stock
+   * capture; null otherwise. Such a seed can wrap a reflowed line at other
+   * places than tmux does, so its history can differ from tmux's in length.
+   */
+  reconstructedSeed(): number | null {
+    return this.#reconstructedSeed;
+  }
+
   /** Prioritize one future parser admission, independent of diagnostic tracing. */
   prioritizeNextWrite(): void {
     if (!this.#closed) this.#prioritizeNextWrite = true;
@@ -428,7 +441,12 @@ export class TerminalReplicaInterpreter {
   ): Promise<void> {
     if (this.#closed) return;
     if (operation.type === "reseed") {
-      if (operation.bootstrap === "painted-capture" && !operation.native)
+      // A stock capture prints a saved tab cell as one HT and drops its width.
+      // Paint it to the next tab stop; refuse only when the parser cannot say
+      // where its cursor is.
+      const paintCapturedTabs = operation.bootstrap === "painted-capture" && !operation.native;
+      let seedReconstructed: boolean;
+      if (paintCapturedTabs && !this.#backend.graphicsCursor)
         assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
       this.#causalCell?.fail("reseeded");
       const nativeCols = operation.nativeCols ?? operation.cols;
@@ -447,9 +465,23 @@ export class TerminalReplicaInterpreter {
       try {
         if (operation.native && !replacement.importNativeGrid?.(operation.native))
           throw new Error("Native bootstrap requires a compatible interpreter");
+        // Capture chunks come first and in order; anything else is live output,
+        // where HT stays cursor motion.
+        const captured = operation.captureChunks ?? operation.chunks;
+        let nextCaptured = 0;
+        let reconstructed = false;
         for (const chunk of operation.chunks) {
-          await this.#writeToBackend(replacement, chunk);
+          const fromCapture =
+            paintCapturedTabs &&
+            nextCaptured < captured.length &&
+            Buffer.compare(chunk, captured[nextCaptured]!) === 0;
+          if (fromCapture) nextCaptured += 1;
+          if (fromCapture && chunk.includes(9)) {
+            reconstructed = true;
+            await this.#writeStockCapture(replacement, chunk);
+          } else await this.#writeToBackend(replacement, chunk);
         }
+        seedReconstructed = reconstructed;
         if (operation.wraparound !== undefined)
           replacement.setAuthoritativeWraparound(operation.wraparound);
         if (operation.observedModes) replacement.setAuthoritativeModes(operation.observedModes);
@@ -484,6 +516,8 @@ export class TerminalReplicaInterpreter {
         previous.modes().alternateScreen === replacement.modes().alternateScreen;
       if (!sameGraphicsBasis) this.#kitty.dropCursorPlacements();
       this.#nativeReseedRequested = false;
+      this.#seedOrdinal += 1;
+      this.#reconstructedSeed = seedReconstructed ? this.#seedOrdinal : null;
       this.#scrollback = scrollback;
       this.#bootstrap = {
         kind: operation.bootstrap,
@@ -671,6 +705,44 @@ export class TerminalReplicaInterpreter {
       });
       this.#tail = run.catch(() => undefined);
     }, 250);
+  }
+
+  /**
+   * Replay one stock `capture-pane -e` chunk. tmux stores a tab as one wide
+   * cell and prints it as a single HT, without its width. Blank the cells up
+   * to the next default tab stop instead (ECH, then CUF): that is the cell tmux
+   * made when the tab was written at this column, and erased cells take the
+   * rendition the capture set for it, as tmux's blank tab cell does. tmux never
+   * tabs into the last column (`input_c0_dispatch`).
+   * Where this differs from tmux: a row edited after its tab was written
+   * (insert or delete character) or written under custom tab stops is columns
+   * off in that row. A line reflowed by a resize is worse: tmux keeps the tab
+   * cell's width, this measures it again from the new column, so the line can
+   * wrap at other places and the pane can hold other rows than tmux shows,
+   * until that output scrolls away or is redrawn. The owner accepts the
+   * resulting difference in history length (`reconstructedSeed`).
+   */
+  async #writeStockCapture(backend: TerminalInterpreterBackend, chunk: Uint8Array): Promise<void> {
+    let start = 0;
+    for (;;) {
+      const tab = chunk.indexOf(9, start);
+      if (tab < 0) break;
+      if (tab > start) await this.#writeToBackend(backend, chunk.subarray(start, tab));
+      const column = backend.graphicsCursor!().x;
+      const stop = Math.min(backend.cols - 1, (Math.floor(column / 8) + 1) * 8);
+      if (stop > column)
+        await this.#writeToBackend(backend, `\x1b[${stop - column}X\x1b[${stop - column}C`);
+      start = tab + 1;
+    }
+    if (!this.#stockTabsNoted) {
+      this.#stockTabsNoted = true;
+      // Once per pane: its saved rows are not tmux's exact cells on this server.
+      logger.info("terminal-replica", "stock capture: tab positions reconstructed", {
+        pane: this.#semanticPaneId,
+        workspace: this.#workspaceName,
+      });
+    }
+    if (start < chunk.length) await this.#writeToBackend(backend, chunk.subarray(start));
   }
 
   #writeToBackend(backend: TerminalInterpreterBackend, data: Uint8Array | string): Promise<void> {

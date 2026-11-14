@@ -325,16 +325,18 @@ describe("tmux features row", () => {
   const none = () => fail("no server running on /tmp/s\n");
   it("names stock tmux and bundled tmux from the running server", () => {
     expect(tmuxFeaturesRow(stock, bundled).detail).toBe(
-      "stock tmux: reduced features; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
+      "stock tmux: reduced features (tab positions in saved output are reconstructed); run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
     );
     expect(tmuxFeaturesRow(bundled, stock).detail).toBe("bundled tmux: full features");
     expect(tmuxFeaturesRow(stock, bundled)).toMatchObject({ pass: true, optional: true });
   });
   it("asks the binary only when no server is running", () => {
-    expect(tmuxFeaturesRow(none, stock).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(none, stock).detail).toBe(
+      "stock tmux: reduced features (tab positions in saved output are reconstructed)",
+    );
     expect(tmuxFeaturesRow(none, bundled).detail).toBe("bundled tmux: full features");
     expect(tmuxFeaturesRow(() => fail("error connecting to /tmp/s\n"), stock).detail).toBe(
-      "stock tmux: reduced features",
+      "stock tmux: reduced features (tab positions in saved output are reconstructed)",
     );
   });
   it("names an older tmux-ide tmux that lacks only the split command", () => {
