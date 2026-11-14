@@ -36,6 +36,18 @@ dev_app="$output/Tmux IDE CI Development.app"
   "$native_binary" "$output/native-build.json" "$dev_app" \
   --node "$node_binary" --node-license "$node_license" \
   2>&1 | tee "$output/assembly-dev.log"
+# A release assembles with --metadata. No other check runs that branch, so a
+# break in it would first show at release.
+release_app="$output/TmuxIDE.app"
+printf '%s\n' '{"bundleId":"com.tmux-ide.gpui.ci","version":"0.0.1","buildNumber":"1"}' > "$output/metadata.json"
+"$node_binary" apps/tmux-gpui/scripts/assemble-local-app.mjs \
+  "$native_binary" "$output/native-build.json" "$release_app" \
+  --metadata "$output/metadata.json" \
+  2>&1 | tee "$output/assembly-metadata.log"
+TMUX_GPUI_TEST_METADATA_APP="$release_app" TMUX_GPUI_TEST_METADATA="$output/metadata.json" \
+  "$node_binary" --test apps/tmux-gpui/scripts/assemble-metadata-app.test.mjs \
+  2>&1 | tee "$output/metadata-tests.log"
+grep -q '^# skipped 0$\|^ℹ skipped 0$' "$output/metadata-tests.log"
 TMUX_GPUI_TEST_APP="$app" "$node_binary" --import tsx --test \
   apps/tmux-gpui/bridge/local-app.test.mjs \
   2>&1 | tee "$output/package-tests.log"

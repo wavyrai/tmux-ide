@@ -249,6 +249,132 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     }
   });
 
+  describe("history size after a seed with reconstructed tabs (#737)", () => {
+    // tmux keeps a tab cell's width through reflow; the reconstruction cannot,
+    // so a narrowed pane can wrap at other places and count other rows. A new
+    // capture paints the same rows again, so reseeding for it never ends.
+    async function rig(seedText: string) {
+      let request!: MirrorSubscribeRequest;
+      const state = { gap: 7 };
+      let history = 0;
+      const readHistorySize = vi.fn(async () => history + state.gap);
+      const emitSeed = () => {
+        request.onLayout?.(layout(8, 1));
+        request.onEvent({ type: "reset", cols: 8, rows: 1 });
+        request.onEvent({ type: "seed", data: new TextEncoder().encode(seedText) });
+        request.onEvent({ type: "cursor", x: 0, y: 0 });
+      };
+      const reseed = vi.fn(() => queueMicrotask(emitSeed));
+      const mirror = {
+        subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+          request = candidate;
+          queueMicrotask(emitSeed);
+          return { ...subscription(candidate), readHistorySize, reseed };
+        },
+      };
+      const owner = new SessionRuntimeTerminalReplicaOwner(
+        generation,
+        "workspace",
+        "pane-a",
+        mirror as never,
+        { incarnation: `${generation}:0`, initialRevision: 0 },
+      );
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      await owner.subscribe((update) => {
+        updates.push(update);
+        const seed = update.type === "terminal.seed" ? update.snapshot : null;
+        if (seed) history = seed.history.length;
+      });
+      /** One burst of output, then the history check it schedules. */
+      const outputAndCheck = async () => {
+        const checks = readHistorySize.mock.calls.length;
+        request.onEvent({ type: "delta", data: new TextEncoder().encode("x") });
+        await vi.waitFor(() => expect(readHistorySize.mock.calls.length).toBeGreaterThan(checks), {
+          timeout: 2000,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      };
+      return { owner, state, reseed, outputAndCheck };
+    }
+
+    it("does not reseed again for the difference its own seed has", async () => {
+      const r = await rig("A\tB");
+      try {
+        for (let burst = 0; burst < 4; burst++) await r.outputAndCheck();
+        expect(r.reseed).not.toHaveBeenCalled();
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("reseeds once when the difference changes, then accepts the new one", async () => {
+      const r = await rig("A\tB");
+      try {
+        await r.outputAndCheck();
+        r.state.gap = 9;
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+        for (let burst = 0; burst < 3; burst++) await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("reseeds for a difference that appears after a seed that had none", async () => {
+      // The ordinary case: a saved tab and no reflow. Later tmux drops history
+      // (clear-history); that difference is not the seed's own.
+      const r = await rig("A\tB");
+      try {
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        await r.outputAndCheck();
+        r.state.gap = -5;
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("reseeds once when a recorded difference goes away", async () => {
+      const r = await rig("A\tB");
+      try {
+        await r.outputAndCheck();
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+        await r.outputAndCheck();
+        expect(r.reseed).toHaveBeenCalledTimes(1);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("leaves a seed without tabs alone while its history matches", async () => {
+      const r = await rig("AB");
+      try {
+        r.state.gap = 0;
+        await r.outputAndCheck();
+        await r.outputAndCheck();
+        expect(r.reseed).not.toHaveBeenCalled();
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+
+    it("still reseeds every time for a seed without tabs", async () => {
+      const r = await rig("AB");
+      try {
+        await r.outputAndCheck();
+        await r.outputAndCheck();
+        expect(r.reseed.mock.calls.length).toBeGreaterThanOrEqual(2);
+      } finally {
+        await r.owner.dispose();
+      }
+    });
+  });
+
   it("delegates interactive write priority synchronously", async () => {
     const delegated = vi.spyOn(TerminalReplicaInterpreter.prototype, "prioritizeNextWrite");
     const mirror = {
@@ -1242,16 +1368,14 @@ it.each(["seed", "delta"] as const)(
     );
     const updates: CanonicalTerminalReplicaUpdate[] = [];
     try {
-      if (kind === "seed") {
-        await expect(owner.subscribe((u) => updates.push(u))).rejects.toThrow("saved tab cells");
-        expect(updates).toHaveLength(0);
-        expect(faults).toHaveLength(1);
-        expect(reseeds).toBe(0);
-      } else {
-        await owner.subscribe((u) => updates.push(u));
-        expect(updates).toHaveLength(1);
-        expect(faults).toHaveLength(0);
-      }
+      // A captured tab is painted and a live one is cursor motion; neither faults.
+      await owner.subscribe((u) => updates.push(u));
+      expect(updates).toHaveLength(1);
+      expect(faults).toHaveLength(0);
+      expect(reseeds).toBe(0);
+      const update = updates[0]!;
+      const cells = update.type === "terminal.seed" ? update.snapshot.grid[0]!.cells : [];
+      expect([cells[0]?.grapheme, cells[7]?.grapheme]).toEqual(["A", "B"]);
     } finally {
       await owner.dispose();
     }

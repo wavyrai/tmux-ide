@@ -305,9 +305,6 @@ fn check(
 
 #[gpui::test]
 fn shell_text_reads_on_its_plate_in_every_catalog_theme(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(4096);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender, 3));
     cx.simulate_resize(size(px(1000.), px(700.)));

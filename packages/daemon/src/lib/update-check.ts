@@ -237,6 +237,40 @@ export function getUpdateStatus({
   return deriveStatus(cache?.latest ?? null, currentVersion);
 }
 
+/** Where a status came from: the registry just now, or the last answer on disk. */
+export type UpdateStatusSource = "registry" | "cache";
+
+/**
+ * io — the answer for a user who asked (`tmux-ide update`): fetch the registry
+ * now, with a short timeout, and store what it said. The cache alone can be
+ * weeks old on a machine that rarely runs the updater tick. Falls back to the
+ * cache when the registry cannot be reached, and says so in `source`.
+ */
+export async function refreshUpdateStatus({
+  currentVersion = getCurrentVersion(),
+  now = Date.now(),
+  timeoutMs = 3000,
+  fetchLatest = fetchLatestVersion,
+}: UpdateScope & {
+  now?: number;
+  timeoutMs?: number;
+  fetchLatest?: typeof fetchLatestVersion;
+} = {}): Promise<UpdateStatus & { source: UpdateStatusSource }> {
+  const fetched = await fetchLatest(timeoutMs, updateChannel(currentVersion));
+  const cache = readUpdateCache({ currentVersion });
+  if (fetched === null)
+    return { ...deriveStatus(cache?.latest ?? null, currentVersion), source: "cache" };
+  writeUpdateCache(
+    {
+      lastCheckedAt: now,
+      latest: fetched,
+      ...(cache?.notified ? { notified: cache.notified } : {}),
+    },
+    { currentVersion },
+  );
+  return { ...deriveStatus(fetched, currentVersion), source: "registry" };
+}
+
 /**
  * io — the throttled network refresh (called fire-and-forget from the updater
  * tick). Does nothing if the last check was inside {@link CHECK_INTERVAL_MS};

@@ -33,11 +33,20 @@ teams flag) are covered by the formula's caveats: run
    exactly `homebrew-tap`).
 2. Seed it: `scripts/publish-tap.sh` (clones the tap, copies
    `packaging/homebrew/Formula/tmux-ide.rb` → `Formula/tmux-ide.rb`, pushes).
-3. Add a repo secret `TAP_PUSH_TOKEN` to wavyrai/tmux-ide: a fine-grained PAT
-   with contents read/write on `wavyrai/homebrew-tap`. From then on the
-   `bump_tap` job in `.github/workflows/release.yml` rewrites the formula's
-   url + sha256 on every release and pushes it (it no-ops gracefully while
-   the secret or the repo is missing).
+3. Add a repo secret `TAP_PUSH_TOKEN` to wavyrai/tmux-ide (Settings → Secrets
+   and variables → Actions → New repository secret). Its value is a
+   fine-grained personal access token: resource owner `wavyrai`, repository
+   access "Only select repositories" → `wavyrai/homebrew-tap`, repository
+   permission Contents: Read and write, nothing else. Note its expiry date: an
+   expired token fails the job the same way a missing one does.
+   From then on the `bump_tap` job in `.github/workflows/release.yml` rewrites
+   the formula's url + sha256 on every stable release, pushes it, and reads the
+   formula back from the tap. A prerelease leaves the tap alone.
+   While the secret or the repo is missing, a stable release **fails** that job
+   (the npm release is already out by then). Add what is missing and re-run the
+   failed job from the release run; it is safe to run more than once. To move
+   the tap by hand instead: `scripts/publish-tap.sh` after setting the
+   formula's url and sha256.
 4. Flip the install docs: `docs/content/docs/getting-started.mdx` already
    contains the Homebrew section, marked with a "PENDING TAP PUBLICATION"
    comment — delete the comment.

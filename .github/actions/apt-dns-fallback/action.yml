@@ -2,29 +2,60 @@ name: Fall back to public DNS for package installs
 description: >-
   On a hosted Linux runner whose own resolver cannot resolve Ubuntu's package
   servers, put public resolvers in front of it so apt-get can run. Does nothing
-  when the lookup works, and nothing on macOS or Windows.
+  when the lookups work, and nothing on macOS or Windows.
+# Cost of the fallback, for the rest of that job only: with the public servers
+# first, systemd-resolved takes their NXDOMAIN as final, so names that only
+# Azure's resolver knows (*.internal.cloudapp.net) stop resolving. No job uses
+# such a name today. One that does must not run after this action has fallen
+# back, or the public servers must first be scoped to ubuntu.com.
+#
+# Workflows that check out a pull request's exact head run that head's copy of
+# this directory. See "CI on a branch older than a local action" in
+# CONTRIBUTING.md.
 runs:
   using: composite
   steps:
     - if: runner.os == 'Linux'
       shell: bash
       run: |
-        if timeout 10 getent hosts archive.ubuntu.com >/dev/null 2>&1; then
-          echo "The runner's resolver answers for archive.ubuntu.com; nothing to do."
+        # The runners' apt mirror list puts the Azure mirror first, so both names must resolve.
+        hosts="azure.archive.ubuntu.com archive.ubuntu.com"
+        find_unresolved() {
+          unresolved=""
+          for host in $hosts; do
+            timeout 10 getent hosts "$host" >/dev/null 2>&1 || unresolved="$unresolved $host"
+          done
+          unresolved="${unresolved# }"
+        }
+        find_unresolved
+        if [ -z "$unresolved" ]; then
+          echo "The runner's resolver answers for $hosts; nothing to do."
           exit 0
         fi
         if ! command -v resolvectl >/dev/null 2>&1; then
-          echo "::warning::archive.ubuntu.com does not resolve and resolvectl is missing; leaving DNS as it is."
+          echo "::warning::$unresolved does not resolve and resolvectl is missing; leaving DNS as it is."
           exit 0
         fi
-        iface="$(ip -o -4 route show to default | awk '{print $5; exit}')"
+        # A lookup that errors must reach its warning, not end the step (bash -e -o pipefail).
+        iface="$(ip -o -4 route show to default 2>/dev/null | awk '{print $5; exit}' || true)"
         if [ -z "$iface" ]; then
-          echo "::warning::archive.ubuntu.com does not resolve and no default interface was found; leaving DNS as it is."
+          echo "::warning::$unresolved does not resolve and no default interface was found; leaving DNS as it is."
           exit 0
         fi
-        current="$(resolvectl dns "$iface" | sed -E 's/^[^:]*:[[:space:]]*//')"
-        echo "::warning::The runner's resolver ($current) cannot resolve archive.ubuntu.com; adding 1.1.1.1 and 8.8.8.8 in front of it on $iface."
+        if ! current="$(resolvectl dns "$iface" 2>/dev/null)"; then
+          echo "::warning::$unresolved does not resolve and the resolvers of $iface could not be read; leaving DNS as it is."
+          exit 0
+        fi
+        current="$(printf '%s\n' "$current" | sed -E 's/^[^:]*:[[:space:]]*//')"
+        echo "::warning::The runner's resolver ($current) cannot resolve $unresolved; adding 1.1.1.1 and 8.8.8.8 in front of it on $iface."
         # shellcheck disable=SC2086 # $current is a space-separated server list
-        sudo resolvectl dns "$iface" 1.1.1.1 8.8.8.8 $current
-        sudo resolvectl flush-caches
-        timeout 10 getent hosts archive.ubuntu.com
+        if ! sudo resolvectl dns "$iface" 1.1.1.1 8.8.8.8 $current; then
+          echo "::warning::Could not change the resolvers of $iface; leaving DNS as it is."
+          exit 0
+        fi
+        sudo resolvectl flush-caches || true
+        find_unresolved
+        if [ -n "$unresolved" ]; then
+          echo "::error::$unresolved still does not resolve with 1.1.1.1 and 8.8.8.8 in front; apt-get cannot reach Ubuntu's package servers."
+          exit 1
+        fi

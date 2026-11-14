@@ -32,11 +32,11 @@ function fixture() {
   return { temp, prefix, root, release, cli };
 }
 
-test("managed update dry run preserves prefix and beta channel without downloading", () => {
+test("managed update dry run preserves prefix and beta channel without downloading", async () => {
   const f = fixture();
   try {
     const output: string[] = [];
-    runUpdate(
+    await runUpdate(
       { cliDir: f.cli, dryRun: true, json: true },
       {
         currentVersion: () => "3.0.0-beta.1",
@@ -80,7 +80,7 @@ test("unmarked release never gets an executable managed update plan", () => {
   }
 });
 
-test("installer receives literal prefix and channel; temporary download is removed", () => {
+test("installer receives literal prefix and channel; temporary download is removed", async () => {
   const f = fixture();
   let downloaded = "";
   const result = join(f.temp, "args");
@@ -97,7 +97,7 @@ test("installer receives literal prefix and channel; temporary download is remov
       });
     }) as typeof execFileSync;
     const output: string[] = [];
-    runUpdate(
+    await runUpdate(
       { cliDir: f.cli, dryRun: false, json: true },
       {
         execute,
@@ -149,3 +149,31 @@ for (const failure of ["download", "html", "syntax", "install"]) {
     }
   });
 }
+
+test("a failed installer run is reported as one line that names the installer", async () => {
+  const f = fixture();
+  try {
+    const execute = ((command: string, args: string[], options: object) => {
+      if (command === "curl") {
+        writeFileSync(args[args.indexOf("--output") + 1]!, "#!/bin/sh\nexit 7\n");
+        return Buffer.alloc(0);
+      }
+      return execFileSync(command, args, { ...options, stdio: "pipe" });
+    }) as typeof execFileSync;
+    const attempt = runUpdate(
+      { cliDir: f.cli, dryRun: false, json: true },
+      {
+        execute,
+        output: () => {},
+        currentVersion: () => "3.0.0",
+        status: () => ({ latest: "3.0.1", updateAvailable: true }),
+      },
+    );
+    await expect(attempt).rejects.toThrow(
+      /^The update did not finish: the installer exited with status 7\. Its own message is above\. Retry with: tmux-ide update$/,
+    );
+    await expect(attempt).rejects.toMatchObject({ name: "IdeError", exitCode: 1 });
+  } finally {
+    rmSync(f.temp, { recursive: true, force: true });
+  }
+});

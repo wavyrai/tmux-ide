@@ -95,18 +95,48 @@ case "$url" in *.tar.gz) [ -z "\${TEST_CORRUPT_ARCHIVE:-}" ] || printf bad >> "$
   return { run, receipt, downloads, temp, home, node, root };
 }
 
-test("pins the reviewed alpha assets and requires HTTPS redirects", () => {
-  assert.match(source, /releases\/download\/native-alpha-2026102701/);
-  assert.ok(source.includes("tmux-ide-gpui-0.1.9-macos-arm64.app.tar.gz"));
-  assert.match(
-    source,
-    /installer_sha=2f0072b5d843cfdc5328645350dc6d80c668615936155a71555735d5904bf5f4/,
-  );
-  assert.match(
-    source,
-    /archive_sha=c8b7aca6374284c57be25f7e8a4e80dd30c8bd767d94be36e3ba6f16d61b6124/,
-  );
+// The pins change with every native release. These tests read them from the
+// script and check that they agree with each other and with the dispatcher, so
+// a release edits the pins in one place and a half-made edit fails here.
+function pins(text) {
+  const all = (pattern) => [...text.matchAll(pattern)].map((match) => match.slice(1));
+  return {
+    base: all(
+      /^base=https:\/\/github\.com\/wavyrai\/tmux-ide\/releases\/download\/native-alpha-(\d{10})$/gm,
+    ),
+    backend: all(/^fetch "\$base\/tmux-ide-install-v(\d+)\.mjs" /gm),
+    archive: all(/fetch "\$base\/tmux-ide-gpui-(\d+\.\d+\.\d+)-macos-arm64\.app\.tar\.gz" /g),
+    version: all(/ --version (\d+\.\d+\.\d+)-(\d{10}) ;;$/gm),
+    installerSha: all(/^installer_sha=([a-f0-9]{64})$/gm),
+    archiveSha: all(/^archive_sha=([a-f0-9]{64})$/gm),
+  };
+}
+const pinned = pins(source);
+const pinnedVersion = pinned.version[0]?.join("-");
+test("pins one release, its assets by checksum, and requires HTTPS redirects", () => {
+  for (const [name, found] of Object.entries(pinned))
+    assert.equal(found.length, 1, `exactly one ${name} pin`);
+  const [build] = pinned.base[0];
+  assert.deepEqual(pinned.version[0], [pinned.archive[0][0], build], "archive, version and tag");
+  assert.notEqual(pinned.installerSha[0][0], pinned.archiveSha[0][0]);
   assert.match(source, /--proto '=https' --proto-redir '=https'/);
+  const dispatcher = readFileSync(resolve("docs/public/install.sh"), "utf8");
+  assert.match(
+    dispatcher,
+    new RegExp(`releases/download/native-alpha-${build}/install-native-alpha-v\\d+\\.sh `),
+    "the dispatcher fetches this script from the same release",
+  );
+});
+test("the unreleased maintenance candidate pins the same release as the public script", () => {
+  assert.deepEqual(pins(maintenanceSource), pinned);
+});
+test("both scripts give up on a stalled download, not a slow one", () => {
+  for (const text of [source, maintenanceSource])
+    assert.match(
+      text,
+      /^fetch\(\) \{ curl --proto '=https' --proto-redir '=https' -fLsS (--retry 3 --retry-max-time 900 )?--connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 900 --max-filesize 536870912 "\$1" -o "\$2"; \}$/m,
+    );
+  assert.match(maintenanceSource, /--retry 3 --retry-max-time 900 /, "the next asset retries");
 });
 for (const action of [[], ["--update"], ["--rollback"], ["--uninstall"]]) {
   test(`delegates ${action[0] || "install"} to exact installer and cleans staging`, (t) => {
@@ -127,7 +157,7 @@ for (const action of [[], ["--update"], ["--rollback"], ["--uninstall"]]) {
     const receipt = JSON.parse(readFileSync(f.receipt, "utf8"));
     assert.equal(receipt.args[0], action[0]?.slice(2) || "install");
     if (!action.length || action[0] === "--update")
-      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], "0.1.9-2026102701");
+      assert.equal(receipt.args[receipt.args.indexOf("--version") + 1], pinnedVersion);
     assert.equal(
       receipt.args[2],
       join(f.home, "Library/Application Support/tmux-ide/native-alpha"),
