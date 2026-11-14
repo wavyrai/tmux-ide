@@ -35,6 +35,12 @@ function fixture(t) {
     "find",
     'case "${MOCK_TAKEOVER_RACE:-}:$1" in ?*:*.takeover) printf "%s" "$MOCK_TAKEOVER_RACE" > "${1%.takeover}/owner" ;; esac; exec /usr/bin/find "$@"\n',
   );
+  // uutils coreutils' mkdir (Ubuntu 26.04) can exit 0 for a run that loses the
+  // race to create a directory. This one does so for any directory that exists.
+  script(
+    "mkdir",
+    'if [ -n "${MOCK_MKDIR_EXISTING_OK:-}" ] && [ "$#" -eq 1 ] && [ -d "$1" ]; then exit 0; fi; exec /bin/mkdir "$@"\n',
+  );
   script(
     "rm",
     'case "${MOCK_RM_FAIL:-}:$*" in 1:*/.install.*) exit 1 ;; esac; exec /bin/rm "$@"\n',
@@ -260,6 +266,9 @@ const startedAt = (pid) =>
 function heldLock(prefix, owner, { ageMinutes = 0 } = {}) {
   const lock = path.join(prefix, "share/tmux-ide/install.lock");
   fs.mkdirSync(lock, { recursive: true });
+  // A lock this installer made has its claim; one without an owner record is
+  // from an older installer and has none.
+  if (owner) fs.writeFileSync(path.join(lock, "claim"), "");
   if (owner) fs.writeFileSync(path.join(lock, "owner"), owner);
   const then = new Date(Date.now() - ageMinutes * 60000);
   fs.utimesSync(lock, then, then);
@@ -465,6 +474,7 @@ test("a takeover in progress blocks another; one that died stops blocking after 
   const lock = heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
   const guard = `${lock}.takeover`;
   fs.mkdirSync(guard);
+  fs.writeFileSync(path.join(guard, "claim"), "");
   const blocked = run();
   assert.notEqual(blocked.status, 0);
   assert.match(blocked.stderr, /Another installation may be running/);
@@ -493,104 +503,155 @@ test("a run that loses the takeover to another leaves the winner's lock alone", 
   assert.equal(fs.existsSync(`${lock}.takeover`), false, "the guard is released");
 });
 
-test("of many installers that find a dead owner's lock, one takes it and the rest refuse", async (t) => {
-  const { root, prefix, env } = fixture(t);
-  const lock = path.join(prefix, "share/tmux-ide/install.lock");
-  const children = [];
-  t.after(() => {
-    for (const { child } of children) killGroup(child);
+// uutils' mkdir exits 0 for a run that loses the race to create the lock; that
+// run must still see the lock as held.
+test("a mkdir that does not fail for an existing lock never hands out a held lock", async (t) => {
+  const { root, prefix, run, env } = fixture(t);
+  const ready = path.join(root, "curl-ready");
+  const holder = spawn(shell, [installer, "--prefix", prefix], {
+    env: { ...env, MOCK_CURL_HOLD: ready },
+    detached: true,
+    stdio: "ignore",
   });
-  for (let round = 0; round < 4; round++) {
-    heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
-    const ready = path.join(root, `curl-ready-${round}`);
-    const started = Array.from({ length: 8 }, () => {
-      const child = spawn(shell, [installer, "--prefix", prefix], {
-        env: { ...env, MOCK_CURL_HOLD: ready },
-        detached: true,
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      const entry = { child, stderr: "", code: undefined };
-      child.stderr.on("data", (chunk) => (entry.stderr += chunk));
-      entry.closed = new Promise((resolve) =>
-        child.once("close", (code, signal) => resolve((entry.code = code ?? signal))),
-      );
-      children.push(entry);
-      return entry;
-    });
-    // What the round came to, added to the message of whichever check fails.
-    const state = () => {
-      let owner = null;
-      try {
-        owner = fs.readFileSync(path.join(lock, "owner"), "utf8");
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
-      return [
-        `round ${round}: download ${fs.existsSync(ready) ? "reached" : "not reached"}`,
-        `owner record: ${JSON.stringify(owner)}`,
-        `takeover guard: ${fs.existsSync(`${lock}.takeover`)}`,
-        ...started.map(
-          (entry) =>
-            `pid ${entry.child.pid}: ${entry.code === undefined ? "running" : `ended ${entry.code}`} ${JSON.stringify(entry.stderr.trim())}`,
-        ),
-      ].join("\n");
-    };
-    // The round is decided by events, not by a clock: every run but one ends,
-    // and the one left reaches its download. The limit below only stops a
-    // round that can no longer be decided.
-    let limit;
-    const undecided = new Promise((_, reject) => {
-      limit = setTimeout(
-        () => reject(new Error("the installers did not settle on one holder")),
-        120000,
-      );
-    });
-    let holder;
-    try {
-      await Promise.race([
-        undecided,
-        new Promise((resolve) => {
-          let ended = 0;
-          for (const entry of started)
-            entry.closed.then(() => {
-              ended += 1;
-              if (ended >= started.length - 1) resolve();
-            });
-        }),
-      ]);
-      while (!fs.existsSync(ready)) {
-        // Eight ended: nobody holds, and no download will be reached.
-        assert.ok(
-          started.some((entry) => entry.code === undefined),
-          "every installer ended, none holds the lock",
-        );
-        await Promise.race([undecided, new Promise((resolve) => setTimeout(resolve, 20))]);
-      }
-      const holders = started.filter((entry) => entry.code === undefined);
-      assert.equal(holders.length, 1, "exactly one installer holds the lock");
-      [holder] = holders;
-      for (const entry of started.filter((entry) => entry !== holder)) {
-        assert.notEqual(entry.code, 0);
-        assert.match(entry.stderr, /Another installation (is|may be) running/);
-      }
-      // The refused runs have exited: none of them may have released the holder's lock.
-      assert.equal(
-        fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
-        String(holder.child.pid),
-      );
-      assert.equal(fs.existsSync(`${lock}.takeover`), false);
-    } catch (error) {
-      error.message = `${error.message}\n${state()}`;
-      throw error;
-    } finally {
-      clearTimeout(limit);
-    }
-    process.kill(-holder.child.pid, "SIGTERM");
-    await holder.closed;
-    assert.equal(fs.existsSync(lock), false, "the holder released its lock");
-    assert.equal(fs.existsSync(`${lock}.takeover`), false);
+  const closed = new Promise((resolve) => holder.once("close", resolve));
+  t.after(() => killGroup(holder));
+  const deadline = Date.now() + 10000;
+  while (!fs.existsSync(ready)) {
+    assert.ok(Date.now() < deadline, "the holder reached its download");
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
+  const lock = path.join(prefix, "share/tmux-ide/install.lock");
+  const blocked = run({ MOCK_MKDIR_EXISTING_OK: "1" });
+  assert.notEqual(blocked.status, 0, blocked.stdout);
+  assert.match(blocked.stderr, new RegExp(`Another installation is running \\(pid ${holder.pid};`));
+  assert.equal(
+    fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
+    String(holder.pid),
+  );
+  process.kill(-holder.pid, "SIGTERM");
+  await closed;
+  assert.equal(fs.existsSync(lock), false, "the holder released its lock");
 });
+
+test("a mkdir that does not fail for an existing guard never lets two runs take over", (t) => {
+  const { prefix, run } = fixture(t);
+  const lock = heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
+  // Another run is taking the dead owner's lock over right now.
+  const guard = `${lock}.takeover`;
+  fs.mkdirSync(guard);
+  fs.writeFileSync(path.join(guard, "claim"), "");
+  const blocked = run({ MOCK_MKDIR_EXISTING_OK: "1" });
+  assert.notEqual(blocked.status, 0, blocked.stdout);
+  assert.match(blocked.stderr, /Another installation may be running/);
+  assert.ok(fs.existsSync(path.join(lock, "owner")), "the lock was not taken");
+  assert.ok(fs.existsSync(path.join(guard, "claim")), "the other run keeps its guard");
+});
+
+// A holder that has not written its record yet and a holder whose mkdir lied
+// both look the same from outside, so a mkdir that exits 0 for a directory that
+// exists (uutils, on Ubuntu 26.04) is covered on every system.
+for (const [label, mkdirEnv] of [
+  ["", {}],
+  [", even where mkdir does not fail for a directory that exists", { MOCK_MKDIR_EXISTING_OK: "1" }],
+])
+  test(`of many installers that find a dead owner's lock, one takes it and the rest refuse${label}`, async (t) => {
+    const { root, prefix, env } = fixture(t);
+    const lock = path.join(prefix, "share/tmux-ide/install.lock");
+    const children = [];
+    t.after(() => {
+      for (const { child } of children) killGroup(child);
+    });
+    for (let round = 0; round < 4; round++) {
+      heldLock(prefix, `${deadPid()}\nMon Jan  1 00:00:00 2024\n`);
+      const ready = path.join(root, `curl-ready-${round}`);
+      const started = Array.from({ length: 8 }, () => {
+        const child = spawn(shell, [installer, "--prefix", prefix], {
+          env: { ...env, ...mkdirEnv, MOCK_CURL_HOLD: ready },
+          detached: true,
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        const entry = { child, stderr: "", code: undefined };
+        child.stderr.on("data", (chunk) => (entry.stderr += chunk));
+        entry.closed = new Promise((resolve) =>
+          child.once("close", (code, signal) => resolve((entry.code = code ?? signal))),
+        );
+        children.push(entry);
+        return entry;
+      });
+      // What the round came to, added to the message of whichever check fails.
+      const state = () => {
+        let owner = null;
+        try {
+          owner = fs.readFileSync(path.join(lock, "owner"), "utf8");
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        return [
+          `round ${round}: download ${fs.existsSync(ready) ? "reached" : "not reached"}`,
+          `owner record: ${JSON.stringify(owner)}`,
+          `takeover guard: ${fs.existsSync(`${lock}.takeover`)}`,
+          ...started.map(
+            (entry) =>
+              `pid ${entry.child.pid}: ${entry.code === undefined ? "running" : `ended ${entry.code}`} ${JSON.stringify(entry.stderr.trim())}`,
+          ),
+        ].join("\n");
+      };
+      // The round is decided by events, not by a clock: every run but one ends,
+      // and the one left reaches its download. The limit below only stops a
+      // round that can no longer be decided.
+      let limit;
+      const undecided = new Promise((_, reject) => {
+        limit = setTimeout(
+          () => reject(new Error("the installers did not settle on one holder")),
+          120000,
+        );
+      });
+      let holder;
+      try {
+        await Promise.race([
+          undecided,
+          new Promise((resolve) => {
+            let ended = 0;
+            for (const entry of started)
+              entry.closed.then(() => {
+                ended += 1;
+                if (ended >= started.length - 1) resolve();
+              });
+          }),
+        ]);
+        while (!fs.existsSync(ready)) {
+          // Eight ended: nobody holds, and no download will be reached.
+          assert.ok(
+            started.some((entry) => entry.code === undefined),
+            "every installer ended, none holds the lock",
+          );
+          await Promise.race([undecided, new Promise((resolve) => setTimeout(resolve, 20))]);
+        }
+        const holders = started.filter((entry) => entry.code === undefined);
+        assert.equal(holders.length, 1, "exactly one installer holds the lock");
+        [holder] = holders;
+        for (const entry of started.filter((entry) => entry !== holder)) {
+          assert.notEqual(entry.code, 0);
+          assert.match(entry.stderr, /Another installation (is|may be) running/);
+        }
+        // The refused runs have exited: none of them may have released the holder's lock.
+        assert.equal(
+          fs.readFileSync(path.join(lock, "owner"), "utf8").split("\n")[0],
+          String(holder.child.pid),
+        );
+        assert.equal(fs.existsSync(`${lock}.takeover`), false);
+      } catch (error) {
+        error.message = `${error.message}\n${state()}`;
+        throw error;
+      } finally {
+        clearTimeout(limit);
+      }
+      process.kill(-holder.child.pid, "SIGTERM");
+      await holder.closed;
+      assert.equal(fs.existsSync(lock), false, "the holder released its lock");
+      assert.equal(fs.existsSync(`${lock}.takeover`), false);
+    }
+  });
 
 test("a failure whose staging files cannot be removed at first still releases the lock", (t) => {
   const { prefix, run } = fixture(t);
