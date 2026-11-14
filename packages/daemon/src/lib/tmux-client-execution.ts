@@ -151,11 +151,20 @@ export function resolveOrdinaryTmuxClient(
   }
   const candidates = configured
     ? [configured]
-    : (environment.PATH ?? "/usr/bin:/bin")
-        .split(delimiter)
-        .map((entry) =>
-          resolve(cwd instanceof URL ? fileURLToPath(cwd) : (cwd ?? process.cwd()), entry, "tmux"),
-        );
+    : (environment.PATH ?? "/usr/bin:/bin").split(delimiter).map((entry) => {
+        if (isAbsolute(entry)) return resolve(entry, "tmux");
+        // A relative or empty entry needs the current directory; a deleted
+        // one (#585) skips it instead of failing every tmux call.
+        try {
+          return resolve(
+            cwd instanceof URL ? fileURLToPath(cwd) : (cwd ?? process.cwd()),
+            entry,
+            "tmux",
+          );
+        } catch {
+          return "";
+        }
+      });
   let executable: string | undefined;
   for (const candidate of candidates) {
     try {

@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import type { CanonicalDaemonInfo } from "./canonical-daemon.ts";
@@ -278,6 +279,48 @@ describe("canonical daemon bootstrap adapter", () => {
 
     expect(result).toMatchObject({ source: "existing", candidate: current });
     expect(shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+
+  it("starts the daemon from the home directory when the current one was deleted (#585)", async () => {
+    // `tmux-ide app` from a shell whose directory was deleted, with no daemon running.
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT: process.cwd failed, uv_cwd"), { code: "ENOENT" });
+    });
+    try {
+      let spawned = false;
+      const spawnOwner = vi.fn(async () => {
+        spawned = true;
+      });
+      const result = await ensureCanonicalDaemon(
+        { entryPath: "/tmp/cli.js", timeoutMs: 100 },
+        {
+          inspect: () =>
+            spawned
+              ? { status: "valid" as const, info, observation: { path: "/tmp/daemon.json" } }
+              : { status: "missing" as const, observation: { path: "/tmp/daemon.json" } },
+          alive: async () => true,
+          identity: async (candidate) => ({
+            ok: true,
+            pid: candidate.pid,
+            protocolVersion: candidate.protocolVersion,
+            productVersion: candidate.productVersion,
+            instanceId: candidate.instanceId,
+            startedAt: candidate.startedAt,
+          }),
+          health: async (candidate) => ({
+            ok: true,
+            protocolVersion: candidate.protocolVersion,
+            productVersion: candidate.productVersion,
+            uptime: 1,
+          }),
+          spawnOwner,
+        },
+      );
+      expect(result).toMatchObject({ source: "started" });
+      expect(spawnOwner).toHaveBeenCalledWith("/tmp/cli.js", homedir());
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it("starts current after a concurrent upgrader removes the old record", async () => {
