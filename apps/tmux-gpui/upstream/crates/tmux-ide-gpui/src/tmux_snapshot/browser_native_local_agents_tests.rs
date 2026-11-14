@@ -76,14 +76,12 @@ fn observed_rows_keep_context_and_private_revision_bound_selection() {
             .is_none()
     );
     assert!(gate.resolve("unknown", updated.revision).is_none());
-    // A different observation replaces this one: its old keys stop resolving.
+    // A newer observation of the same agent in the same pane keeps the row
+    // (#764): a click on the row as painted still resolves.
     gate.slots[0].epoch = Some(uuid::Uuid::new_v4());
     let refreshed = gate.publication();
-    assert!(gate.resolve(&roster.rows[0].key, roster.revision).is_none());
-    assert!(
-        gate.resolve(&refreshed.rows[0].key, roster.revision)
-            .is_none()
-    );
+    assert_eq!(refreshed.rows[0].key, roster.rows[0].key);
+    assert!(gate.resolve(&roster.rows[0].key, roster.revision).is_some());
 }
 #[test]
 fn unproven_agents_are_visible_but_cannot_be_opened() {
@@ -345,9 +343,12 @@ fn a_pushing_daemon_replaces_the_agent_timer_with_its_notices() {
 }
 
 /// Card #716: a re-read keeps the shown rows until each replacement arrives,
-/// and the same agents again neither publish nor re-key; a changed agent does.
+/// and the same agents again do not publish. #764 (PM, 14 Nov): a change of
+/// an agent's state keeps its row key, so a click on the row as painted still
+/// opens it; only the agent in another pane is another row, and a click on
+/// the old one is refused, never opened in the new pane.
 #[test]
-fn a_reread_keeps_rows_and_only_a_change_rekeys() {
+fn a_reread_keeps_rows_and_a_change_of_state_keeps_the_key() {
     let mut gate = ready();
     let shown = gate.publication();
     let Observed::Ready(observation) = &gate.slots[0].observed else {
@@ -368,14 +369,12 @@ fn a_reread_keeps_rows_and_only_a_change_rekeys() {
         "the same agents published"
     );
     let same = gate.publication();
-    assert_eq!(
-        same.rows[0].key, shown.rows[0].key,
-        "the same agents were re-keyed"
-    );
+    assert_eq!(same.rows[0].key, shown.rows[0].key);
     assert!(gate.resolve(&shown.rows[0].key, same.revision).is_some());
 
     let mut blocked = observation.clone();
     blocked.agents[0].attention = true;
+    blocked.agents[0].activity = AgentActivity::Idle;
     assert!(
         !gate.apply(&key, uuid::Uuid::new_v4(), Ok(blocked.clone())),
         "an old batch applied"
@@ -383,8 +382,65 @@ fn a_reread_keeps_rows_and_only_a_change_rekeys() {
     assert!(gate.apply(&key, next, Ok(blocked)), "a change was dropped");
     let changed = gate.publication();
     assert!(changed.rows[0].attention);
-    assert_ne!(changed.rows[0].key, shown.rows[0].key);
-    assert!(gate.resolve(&shown.rows[0].key, changed.revision).is_none());
+    assert_eq!(
+        changed.rows[0].key, shown.rows[0].key,
+        "a change of state re-keyed"
+    );
+    assert!(gate.resolve(&shown.rows[0].key, shown.revision).is_some());
+    assert!(!gate.moved(&shown.rows[0].key));
+
+    // The same agent in another pane: a new row, and the old one is refused.
+    let mut elsewhere = observation;
+    elsewhere.agents[0]
+        .native_identity
+        .as_mut()
+        .unwrap()
+        .pane_birth_id = "2".into();
+    let later = uuid::Uuid::new_v4();
+    gate.epoch = Some(later);
+    assert!(gate.apply(&key, later, Ok(elsewhere)));
+    let moved = gate.publication();
+    assert_ne!(moved.rows[0].key, shown.rows[0].key);
+    assert!(gate.resolve(&shown.rows[0].key, moved.revision).is_none());
+    assert!(gate.moved(&shown.rows[0].key));
+    assert!(!gate.moved("unknown"));
+}
+
+/// #764: a click on a row whose agent moved to another pane is refused with
+/// a notice, not dropped without a word.
+#[test]
+fn a_click_on_an_agent_that_moved_says_so() {
+    let (mut local, _events) = reconnect::tests::attached();
+    local.state.surface = Surface::Home;
+    local.foreground = true;
+    local.stage = None;
+    local.agents = ready();
+    let shown = local.agents.publication();
+    let key = local.agents.slots[0].context.key.clone();
+    let Observed::Ready(observed) = &local.agents.slots[0].observed else {
+        unreachable!()
+    };
+    let mut elsewhere = observed.clone();
+    elsewhere.agents[0]
+        .native_identity
+        .as_mut()
+        .unwrap()
+        .pane_birth_id = "2".into();
+    let later = uuid::Uuid::new_v4();
+    local.agents.epoch = Some(later);
+    assert!(local.agents.apply(&key, later, Ok(elsewhere)));
+    let moved = local.agents.publication();
+    let from = local.state.request;
+    local
+        .open_agent(Command::OpenAgent {
+            request: from + 1,
+            from_request: from,
+            roster_revision: moved.revision,
+            key: shown.rows[0].key.clone(),
+        })
+        .unwrap();
+    assert_eq!(local.state.home_notice.as_deref(), Some(AGENT_MOVED));
+    assert!(local.stage.is_none(), "nothing was opened");
 }
 
 /// Review round 1, item 1: rows now outlive a re-read, so a re-read that
