@@ -202,7 +202,7 @@ impl TerminalSelection {
         if !crate::tmux_stream::valid_identity(&self.workspace_name)
             || !self.visible_panes.contains(&self.selected_pane)
             || self.visible_panes.is_empty()
-            || self.visible_panes.len() > 24
+            || self.visible_panes.len() > crate::tmux_stream::MAX_PANES
             || self
                 .visible_panes
                 .iter()

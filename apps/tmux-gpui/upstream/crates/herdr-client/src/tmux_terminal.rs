@@ -178,7 +178,7 @@ impl TerminalState {
             || workspace.is_empty()
             || workspace.len() > 512
             || panes.is_empty()
-            || panes.len() > 24
+            || panes.len() > tmux_stream::MAX_PANES
             || panes.iter().any(|p| p.is_empty() || p.len() > 128)
             || panes
                 .iter()

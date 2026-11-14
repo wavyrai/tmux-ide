@@ -42,7 +42,7 @@ impl Topology {
     pub fn new(generation: String, issued_panes: Vec<String>) -> Result<Self, Error> {
         if uuid::Uuid::parse_str(&generation).is_err()
             || issued_panes.is_empty()
-            || issued_panes.len() > 24
+            || issued_panes.len() > crate::tmux_stream::MAX_PANES
             || issued_panes.iter().any(|pane| !wire::identity(pane))
         {
             return Err(Error::Identity);
@@ -161,7 +161,9 @@ impl Topology {
                     }
                     return Ok(true);
                 }
-                if !self.layouts.contains_key(&id) && self.layouts.len() >= 24 {
+                if !self.layouts.contains_key(&id)
+                    && self.layouts.len() >= crate::tmux_stream::MAX_PANES
+                {
                     return Err(Error::Bounds);
                 }
                 self.layouts.insert(id, layout);

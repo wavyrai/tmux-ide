@@ -10,6 +10,11 @@ pub use worker::{Command, PaneStream};
 pub const SUBPROTOCOL: &str = "tmux-ide-pane-stream.v2";
 pub const MAX_CLIENT_BYTES: usize = 4096;
 pub const MAX_SERVER_BYTES: usize = 1024 * 1024;
+/// The most panes one pane stream carries, and the most windows its layout
+/// snapshot lists. It mirrors `PANE_STREAM_MAX_PANES` in
+/// packages/contracts/src/pane-stream.ts, which the daemon enforces when it
+/// issues a stream; the app's drift test keeps the two equal.
+pub const MAX_PANES: usize = 24;
 
 #[derive(thiserror::Error)]
 pub enum Error {
