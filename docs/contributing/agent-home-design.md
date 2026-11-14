@@ -77,7 +77,10 @@ both the normal renderer gate and the OpenTUI release gate.
 
 The catalog can list an ordinary tmux session before the daemon has registered an
 application-shell resource for it. That resource returns 404 until the user opens
-the session. Home therefore says how many sessions it has observed and offers an
+the session. This is by design (owner decision, 14 Nov 2026): the daemon registers a
+session only when a client opens it, never on a read. A client that gets 404 for a
+listed session opens it (`POST …/sessions/:liveSessionId/open`) and asks again; it
+must not report the session as gone. Home therefore says how many sessions it has observed and offers an
 explicit recovery through the existing Terminals sidebar/command palette. It does
 not silently promote sessions or imply that an unavailable session has no agents.
 

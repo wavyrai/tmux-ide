@@ -424,6 +424,9 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
       const resource = await options.owners.withOwner(server, async (owner) => {
         const sessions = await owner.catalog();
         const workspace = owner.workspaceRegistry.get(workspaceName);
+        // 404 for a session the catalog lists but no client has opened: by
+        // design, a read never registers a session (owner decision, 14 Nov 2026;
+        // docs/contributing/agent-home-design.md). The client opens it first.
         if (!workspace) return null;
         if (
           !sessions.some(

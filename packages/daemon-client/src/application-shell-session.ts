@@ -20,6 +20,14 @@ import {
 export type ApplicationShellTransportErrorKind =
   | "descriptor-invalid"
   | "daemon-identity-mismatch"
+  /**
+   * The daemon has no application-shell resource for this workspace. For a
+   * session that the catalog lists but no client has opened yet, this is by
+   * design (owner decision, 14 Nov 2026): the daemon registers a session only
+   * when a client opens it (`POST …/sessions/:liveSessionId/open`) and never on
+   * a read. Open the session, then ask again; do not treat it as a session that
+   * is gone. See docs/contributing/agent-home-design.md.
+   */
   | "not-found"
   | "network-error"
   | "http-error"
