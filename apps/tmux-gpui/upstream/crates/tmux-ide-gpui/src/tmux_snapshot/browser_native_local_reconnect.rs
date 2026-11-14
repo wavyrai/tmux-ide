@@ -271,7 +271,9 @@ impl Local {
             fleet_refreshed: false,
         });
         if fresh {
+            // A new episode: the backoff and the one fleet retry start over.
             recovery.attempts = 0;
+            recovery.fleet_refreshed = false;
         }
         match cause {
             // The generation is gone with the retired owner, and a restarting
