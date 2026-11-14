@@ -127,9 +127,10 @@ describe("Unix socket authority", () => {
     /**
      * `<root>/a` links to a directory deep enough that the socket's canonical
      * path is `over` bytes past the limit. The socket is bound through the link.
+     * `<root>` is made under `base`.
      */
-    async function aliased(over: number, prefix = "") {
-      const root = mkdtempSync("/tmp/usa-");
+    async function aliased(over: number, prefix = "", base = "/tmp") {
+      const root = mkdtempSync(join(base, "usa-"));
       roots.push(root);
       const canonicalRoot = realpathSync(root);
       const pad =
@@ -215,11 +216,12 @@ describe("Unix socket authority", () => {
       );
     });
 
-    it.runIf(process.platform === "darwin")(
-      "finds the /tmp spelling of an overlong /private/tmp path",
-      async () => {
-        const { alias, canonical } = await aliased(8);
-        expect(canonical.startsWith("/private/tmp/")).toBe(true);
+    // macOS's own temp folders are under /var, a link to /private/var.
+    it.runIf(process.platform === "darwin").each(["/tmp", "/var/tmp"])(
+      "finds the %s spelling of an overlong /private path",
+      async (base) => {
+        const { alias, canonical } = await aliased(8, "", base);
+        expect(canonical.startsWith(`/private${base}/`)).toBe(true);
         const identity = captureUnixSocketIdentity(canonical);
         expect(identity.path).toBe(canonical.slice("/private".length));
         expect(revalidateUnixSocketIdentity(identity)).toBe(identity.path);
