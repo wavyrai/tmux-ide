@@ -35,7 +35,8 @@ test("npm release workflow keeps Electron outside both beta and GM gates", () =>
   assert.doesNotMatch(releaseGate, /pnpm run check|electron-shell|smoke:desktop/u);
   assert.doesNotMatch(releaseGate, /if: steps\.npm\.outputs\.tag/u);
   assert.match(workflow, /if: steps\.npm\.outputs\.tag == 'latest'[\s\S]+download-artifact/u);
-  assert.match(workflow, /if \[\[ "\$npm_tag" != "latest" \]\]; then[\s\S]+enabled=false/u);
+  // The tap's prerelease rule lives in tap-bump-gate.mjs (tested beside it).
+  assert.match(workflow, /node scripts\/lib\/tap-bump-gate\.mjs "\$version"/u);
 });
 
 test("npm publish proves the release tag and every runtime manifest belong to its checkout", () => {

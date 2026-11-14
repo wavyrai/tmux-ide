@@ -234,6 +234,10 @@ struct Inflater {
     busy: Arc<std::sync::atomic::AtomicBool>,
     stopped: Arc<std::sync::atomic::AtomicBool>,
     started: std::sync::OnceLock<()>,
+    /// Test seam: the worker takes this before each decode, so a test that
+    /// holds it keeps a decode in flight for as long as it needs.
+    #[cfg(test)]
+    gate: Arc<Mutex<()>>,
 }
 
 impl Drop for Inflater {
@@ -491,6 +495,8 @@ impl Store {
             let wake = inflater.wake.clone();
             let busy = inflater.busy.clone();
             let stopped = inflater.stopped.clone();
+            #[cfg(test)]
+            let gate = inflater.gate.clone();
             std::thread::spawn(move || {
                 loop {
                     let next = {
@@ -506,6 +512,8 @@ impl Store {
                             queue = wake.wait(queue).unwrap_or_else(PoisonError::into_inner);
                         }
                     };
+                    #[cfg(test)]
+                    drop(gate.lock().unwrap_or_else(PoisonError::into_inner));
                     let image = next.1.image.clone();
                     let ready = Ready::from(next.1);
                     if let (Some(inner), Some(ready)) = (inner.upgrade(), ready) {
@@ -518,6 +526,12 @@ impl Store {
                 }
             });
         });
+    }
+
+    /// Test seam: no queued image finishes decoding while the guard lives.
+    #[cfg(test)]
+    pub(super) fn hold_decodes(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.1.gate.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Test seam: wait until queued images are inflated.

@@ -181,6 +181,10 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile --side-effects-cache=false
+      # The hosted account's shell is bash and the fixture requires zsh. Without
+      # this step the job failed before the fixture on every run (#749).
+      - name: Prepare disposable macOS SSH account
+        run: node scripts/lib/macos-ssh-account.mjs
       - name: Private short root and required native tools
         run: |
           test "$(id -u)" -ne 0

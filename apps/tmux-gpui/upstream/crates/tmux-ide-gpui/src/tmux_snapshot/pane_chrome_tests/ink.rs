@@ -75,9 +75,6 @@ fn bezels_own_roles_miss_on_the_header_somewhere() {
 
 #[gpui::test]
 fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(256);
     cx.update(|cx| cx.set_global(InkProbes::default()));
     let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
@@ -160,7 +157,6 @@ fn header_text_reads_on_its_plate_in_every_catalog_variant(cx: &mut TestAppConte
 fn header_buttons_rest_muted_on_the_focused_card_and_at_the_icon_tier_elsewhere(
     cx: &mut TestAppContext,
 ) {
-    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(256);
     cx.update(|cx| cx.set_global(InkProbes::default()));
     let (view, cx) = cx.add_window_view(|window, cx| header_view(window, cx, sender));
@@ -219,9 +215,6 @@ fn header_buttons_rest_muted_on_the_focused_card_and_at_the_icon_tier_elsewhere(
 /// ink, inked on the header's plates, in every catalog variant (#746).
 #[gpui::test]
 fn the_headers_state_glyph_wears_the_headers_ink(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     use crate::tmux_snapshot::agent_indicator::{Plate, color};
     let (sender, _receiver) = mpsc::sync_channel(256);
     cx.update(|cx| cx.set_global(InkProbes::default()));

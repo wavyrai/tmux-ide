@@ -158,10 +158,10 @@ fn window_drag_preserves_painted_grid_until_latest_viewport_settles(cx: &mut Tes
             fit,
             v.last_resize,
             false,
-            std::time::Instant::now() - std::time::Duration::from_millis(151)
+            geometry::fit_now() - std::time::Duration::from_millis(151)
         ));
         assert!(
-            v.fit_settle.due(std::time::Instant::now()),
+            v.fit_settle.due(geometry::fit_now()),
             "browser tick must wake the final paint"
         );
         (cols, rows)
