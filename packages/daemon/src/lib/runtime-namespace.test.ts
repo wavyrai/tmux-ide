@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -14,6 +14,38 @@ const userHome = "/Users/runtime-test";
 const cwd = "/checkout/tmux-ide";
 
 describe("RuntimeNamespace", () => {
+  describe("started from a directory that was deleted (#585)", () => {
+    const deletedCwd = () =>
+      vi.spyOn(process, "cwd").mockImplementation(() => {
+        throw Object.assign(
+          new Error("ENOENT: process.cwd failed with error no such file or directory, uv_cwd"),
+          { code: "ENOENT" },
+        );
+      });
+
+    it("resolves when no configured path is relative", () => {
+      const spy = deletedCwd();
+      try {
+        expect(resolveRuntimeNamespace({ env: {}, userHome })).toMatchObject({
+          stateHome: `${userHome}/.tmux-ide`,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("names the relative setting it cannot resolve", () => {
+      const spy = deletedCwd();
+      try {
+        expect(() =>
+          resolveRuntimeNamespace({ env: { TMUX_IDE_HOME: "relative-state" }, userHome }),
+        ).toThrow(/TMUX_IDE_HOME is relative and the current directory no longer exists/u);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   it("classifies an actual Unix socket without realpathing its leaf", async () => {
     const root = mkdtempSync(join(tmpdir(), "tmux-ide-runtime-socket-"));
     const socketPath = join(root, "t.sock");
