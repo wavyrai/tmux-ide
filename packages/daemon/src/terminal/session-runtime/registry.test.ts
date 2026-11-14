@@ -13,7 +13,7 @@ import {
   fixtureAutoReply,
   fixtureState,
 } from "../mirror/__tests__/simulated-channel.ts";
-import { SessionRuntimeRegistry } from "./registry.ts";
+import { SessionRuntimeInputLifetimeEndedError, SessionRuntimeRegistry } from "./registry.ts";
 import { PARK_AFTER_MS } from "./terminal-replica-owner.ts";
 import {
   SYSTEM_SESSION_RUNTIME_SCHEDULER,
@@ -187,6 +187,33 @@ async function finishSeed(sim: SimulatedChannel): Promise<void> {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("names input fenced to a pane lifetime that has no owner as an ended lifetime", async () => {
+    const { registry, sims } = rig();
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const subscribing = editor.subscribe("pane.alpha", () => {});
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    await finishSeed(sims[0]!);
+    await subscribing;
+    const lease = editor.acquireController();
+    // A pane with no replica owner, as after the control client exited.
+    expect(() =>
+      editor.sendInput(
+        lease,
+        "pane.beta",
+        { kind: "text", data: "x" },
+        undefined,
+        undefined,
+        undefined,
+        {
+          generation: GENERATION_A,
+          incarnation: `${GENERATION_A}:0`,
+        },
+      ),
+    ).toThrow(SessionRuntimeInputLifetimeEndedError);
+    await editor.close();
+    await registry.dispose();
+  });
+
   it("publishes a passive client connection to existing consumers without stealing authority", async () => {
     const { registry } = rig();
     try {
