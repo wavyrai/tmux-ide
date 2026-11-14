@@ -16,6 +16,9 @@ use tungstenite::{
 
 use super::{ConnectOptions, Error, Event, MAX_CLIENT_BYTES, MAX_SERVER_BYTES, SUBPROTOCOL, wire};
 
+/// How long one read waits for the rest of a frame. Between frames the worker
+/// sleeps in [`wait`] instead (#855); only where that cannot be done does this
+/// pace the loop.
 const POLL: Duration = Duration::from_millis(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,6 +67,10 @@ impl Command {
 struct Cancellation {
     cancelled: AtomicBool,
     socket: Mutex<Option<TcpStream>>,
+    bell: Bell,
+    /// How often the worker went round its loop: an idle stream must not.
+    #[cfg(test)]
+    wakes: std::sync::atomic::AtomicU64,
 }
 
 impl Cancellation {
@@ -121,6 +128,9 @@ impl PaneStream {
         let cancellation = Arc::new(Cancellation {
             cancelled: AtomicBool::new(false),
             socket: Mutex::new(None),
+            bell: Bell::new()?,
+            #[cfg(test)]
+            wakes: std::sync::atomic::AtomicU64::new(0),
         });
         let worker_cancellation = Arc::clone(&cancellation);
         thread::Builder::new()
@@ -154,7 +164,16 @@ impl PaneStream {
             .map_err(|error| match error {
                 TrySendError::Full(_) => Error::CommandBacklog,
                 TrySendError::Disconnected(_) => Error::Disconnected,
-            })
+            })?;
+        // After the command is queued, so a worker that wakes finds it.
+        self.cancellation.bell.ring();
+        Ok(())
+    }
+
+    /// How often the worker has gone round its loop so far.
+    #[cfg(test)]
+    pub(super) fn wakes(&self) -> u64 {
+        self.cancellation.wakes.load(Ordering::Relaxed)
     }
 
     pub fn events(&self) -> &Receiver<Event> {
@@ -328,12 +347,22 @@ fn run(
     }
     socket.send(Message::Text(redeem.into()))?;
     let mut verified = false;
+    // Whether the socket may have bytes, or tungstenite a whole frame read
+    // ahead: true until a read finds nothing.
+    let mut readable = true;
     loop {
         cancel.check()?;
+        #[cfg(test)]
+        cancel.wakes.fetch_add(1, Ordering::Relaxed);
         if !verified && Instant::now() >= deadline {
             return Err(Error::ReadyTimeout);
         }
-        match socket.read() {
+        let read = if readable {
+            socket.read()
+        } else {
+            Err(tungstenite::Error::Io(io::ErrorKind::WouldBlock.into()))
+        };
+        match read {
             Ok(Message::Text(text)) => {
                 let event = wire::parse(&text, &options, verified)?;
                 verified = true;
@@ -360,9 +389,12 @@ fn run(
             {
                 // Checked only after a read that found nothing, so bytes that
                 // waited in the buffer (the app was suspended) count first.
-                if silence.is_some_and(|limit| socket.get_ref().heard.elapsed() >= limit) {
+                if readable
+                    && silence.is_some_and(|limit| socket.get_ref().heard.elapsed() >= limit)
+                {
                     return Err(Error::Silent);
                 }
+                readable = false;
             }
             Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
                 return Err(Error::Disconnected);
@@ -371,17 +403,89 @@ fn run(
         }
         // A fragmented message is retained by tungstenite. A timeout cannot release
         // application commands against the state preceding that unfinished message.
-        if !verified || socket.get_ref().boundary.is_partial() {
-            continue;
+        let fenced = !verified || socket.get_ref().boundary.is_partial();
+        if !fenced {
+            for _ in 0..16 {
+                cancel.check()?;
+                let Ok(command) = commands.try_recv() else {
+                    break;
+                };
+                socket.send(Message::Text(command.0.into()))?;
+            }
         }
-        for _ in 0..16 {
-            cancel.check()?;
-            let Ok(command) = commands.try_recv() else {
-                break;
-            };
-            socket.send(Message::Text(command.0.into()))?;
+        if !readable && (fenced || commands.is_empty()) {
+            let quiet = silence.map(|limit| socket.get_ref().heard + limit);
+            let until = quiet
+                .into_iter()
+                .chain((!verified).then_some(deadline))
+                .min();
+            readable = wait(&socket.get_ref().socket, &cancel.bell, until)?;
         }
     }
+}
+
+/// Wakes the worker from [`wait`] when a command is queued (a cancelled
+/// stream's socket is shut down, which wakes it too). Rung after the fact: a ring that finds the worker awake leaves
+/// a byte that ends its next wait at once, where it finds the command.
+struct Bell {
+    #[cfg(unix)]
+    ring: std::os::unix::net::UnixStream,
+    #[cfg(unix)]
+    hear: std::os::unix::net::UnixStream,
+}
+
+impl Bell {
+    #[cfg(unix)]
+    fn new() -> io::Result<Self> {
+        let (ring, hear) = std::os::unix::net::UnixStream::pair()?;
+        ring.set_nonblocking(true)?;
+        hear.set_nonblocking(true)?;
+        Ok(Self { ring, hear })
+    }
+    #[cfg(not(unix))]
+    fn new() -> io::Result<Self> {
+        Ok(Self {})
+    }
+    fn ring(&self) {
+        // A full buffer means rings are already waiting to be heard.
+        #[cfg(unix)]
+        let _ = (&self.ring).write(&[0]);
+    }
+    #[cfg(unix)]
+    fn silence(&self) {
+        let mut rings = [0; 64];
+        while matches!((&self.hear).read(&mut rings), Ok(read) if read > 0) {}
+    }
+}
+
+/// Sleeps until the socket has bytes or is closed, the bell rings, or `until`
+/// passes (#855: the read timeout alone woke an idle stream 200 times a
+/// second). Whether the socket is worth reading; at `until` it is, so that the
+/// read that finds nothing checks the deadlines.
+#[cfg(unix)]
+fn wait(socket: &TcpStream, bell: &Bell, until: Option<Instant>) -> Result<bool, Error> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let timeout = until
+        .and_then(|until| Timespec::try_from(until.saturating_duration_since(Instant::now())).ok());
+    let mut fds = [
+        PollFd::new(socket, PollFlags::IN),
+        PollFd::new(&bell.hear, PollFlags::IN),
+    ];
+    match poll(&mut fds, timeout.as_ref()) {
+        Ok(0) | Err(rustix::io::Errno::INTR) => return Ok(true),
+        Ok(_) => {}
+        Err(error) => return Err(io::Error::from(error).into()),
+    }
+    if !fds[1].revents().is_empty() {
+        bell.silence();
+    }
+    Ok(!fds[0].revents().is_empty())
+}
+
+/// Elsewhere the read timeout paces the loop, as before #855.
+#[cfg(not(unix))]
+fn wait(_: &TcpStream, _: &Bell, _: Option<Instant>) -> Result<bool, Error> {
+    Ok(true)
 }
 
 // A burst cannot drop terminal frames. Bounded retention and a finite stall deadline

@@ -37,7 +37,7 @@ fn accept(listener: TcpListener, heartbeat: Option<&'static str>) -> WebSocket<T
     socket
 }
 /// A peer that is ready and then does `then` until the client is gone.
-fn peer(
+pub(super) fn peer(
     heartbeat: Option<&'static str>,
     then: impl FnOnce(&mut WebSocket<TcpStream>) + Send + 'static,
 ) -> (PaneStream, thread::JoinHandle<()>) {
@@ -54,7 +54,7 @@ fn peer(
     ));
     (client, peer)
 }
-fn hold_open(socket: &mut WebSocket<TcpStream>) {
+pub(super) fn hold_open(socket: &mut WebSocket<TcpStream>) {
     socket
         .get_mut()
         .set_read_timeout(Some(Duration::from_secs(10)))
