@@ -104,11 +104,16 @@ it("finds tmux on an absolute PATH entry when the current directory was deleted 
     mkdirSync(join(directory, "bin"));
     writeFileSync(join(directory, "bin/tmux"), "#!/bin/sh\nexit 0\n");
     chmodSync(join(directory, "bin/tmux"), 0o755);
-    const selected = resolveOrdinaryTmuxClient({
-      // A relative entry cannot be resolved without a current directory; it is skipped.
-      PATH: ["relative-bin", join(directory, "bin")].join(":"),
-      TMUX: "/private/socket,1,0",
-    });
+    const selected = resolveOrdinaryTmuxClient(
+      {
+        // A relative entry cannot be resolved without a current directory; it is skipped.
+        PATH: ["relative-bin", join(directory, "bin")].join(":"),
+        TMUX: "/private/socket,1,0",
+      },
+      undefined,
+      // Never probe a server or look for a bundled tmux from this test.
+      { bundled: () => null, serverRunning: () => true },
+    );
     expect(selected.executable).toBe(realpathSync(join(directory, "bin/tmux")));
   } finally {
     cwd.mockRestore();

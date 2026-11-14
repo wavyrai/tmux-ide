@@ -292,7 +292,8 @@ describe("canonical daemon bootstrap adapter", () => {
         spawned = true;
       });
       const result = await ensureCanonicalDaemon(
-        { entryPath: "/tmp/cli.js", timeoutMs: 100 },
+        // No server intent: the test must not ask a real tmux server (TMUX).
+        { entryPath: "/tmp/cli.js", timeoutMs: 100, tmuxServerIntent: null },
         {
           inspect: () =>
             spawned
