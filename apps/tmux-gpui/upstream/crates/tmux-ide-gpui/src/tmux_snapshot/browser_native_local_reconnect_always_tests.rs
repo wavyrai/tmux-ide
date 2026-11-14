@@ -584,3 +584,32 @@ fn a_recovery_asks_the_fleet_to_retry_its_machines_once() {
     }
     assert_eq!(refreshes, 1);
 }
+
+/// Review of #395: a close the daemon sends restarts the backoff of a
+/// recovery already under way; that restart is a new episode and asks the
+/// fleet again.
+#[test]
+fn a_fresh_restart_of_the_same_recovery_asks_the_fleet_again() {
+    let (mut local, _events) = attached();
+    local.reconnect_after(Cause::ServerRetired).unwrap();
+    local.reconnect_tick().unwrap();
+    assert!(local.background_fleet.take_refresh_request());
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    assert!(local.recovery.is_some());
+    // A stream of the same recovery opened again and the daemon closed it.
+    let (mut fresh, _more) = attached();
+    local.active = fresh.active.take();
+    assert!(local.active.is_some());
+    local.reconnect_after(Cause::ServerRetired).unwrap();
+    assert_eq!(
+        local.recovery.as_ref().unwrap().attempts,
+        0,
+        "not a fresh start"
+    );
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(
+        local.background_fleet.take_refresh_request(),
+        "the new episode did not ask the fleet"
+    );
+}
