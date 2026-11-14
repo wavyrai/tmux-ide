@@ -1498,6 +1498,8 @@ export class PaneStreamLiveConnection {
       ...(this.#heldInput === null ? {} : { heldInput: this.#heldInput }),
     });
     this.#closed = true;
+    this.#ownershipHeld.length = 0;
+    this.#ownershipWake?.();
     for (const demand of this.#surfaceDemands.values()) demand.close();
     this.#surfaceDemands.clear();
     this.#surfaceViewer?.close();
@@ -2799,17 +2801,23 @@ export class PaneStreamLiveConnection {
     if (frame.type === "presence") {
       if (!this.#acceptAuthorityGeneration(frame.generation)) return;
       this.#usesExplicitAuthority = true;
-      if (!this.#sessionRuntimeBinding?.updatePresence) return this.#failProtocol("protocol-error");
-      const snapshot = this.#sessionRuntimeBinding.updatePresence(frame.state);
-      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      const binding = this.#sessionRuntimeBinding;
+      if (!binding?.updatePresence) return this.#failProtocol("protocol-error");
+      this.#afterHeldFrames(() => {
+        const snapshot = binding.updatePresence!(frame.state);
+        if (!binding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      });
       return;
     }
     if (frame.type === "activity") {
       if (!this.#acceptAuthorityGeneration(frame.generation)) return;
       this.#usesExplicitAuthority = true;
-      if (!this.#sessionRuntimeBinding?.noteActivity) return this.#failProtocol("protocol-error");
-      const snapshot = this.#sessionRuntimeBinding.noteActivity(frame.activity);
-      if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      const binding = this.#sessionRuntimeBinding;
+      if (!binding?.noteActivity) return this.#failProtocol("protocol-error");
+      this.#afterHeldFrames(() => {
+        const snapshot = binding.noteActivity!(frame.activity);
+        if (!binding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot);
+      });
       return;
     }
     if (frame.type === "authority-request") {
@@ -2854,17 +2862,20 @@ export class PaneStreamLiveConnection {
     if (frame.type === "authority-release") {
       if (!this.#acceptAuthorityGeneration(frame.generation)) return;
       this.#usesExplicitAuthority = true;
-      this.#requestedAuthorities.delete(frame.authority);
-      if (!this.#sessionRuntimeBinding?.releaseAuthority)
-        return this.#failProtocol("protocol-error");
-      const snapshot = this.#sessionRuntimeBinding.releaseAuthority(frame.authority);
-      this.#sendFrame(null, {
-        type: "authority-receipt",
-        requestId: frame.requestId,
-        authority: frame.authority,
-        status: "released",
-        lease: null,
-        snapshot,
+      const binding = this.#sessionRuntimeBinding;
+      if (!binding?.releaseAuthority) return this.#failProtocol("protocol-error");
+      // After any held request or input: a release must not overtake them.
+      this.#afterHeldFrames(() => {
+        this.#requestedAuthorities.delete(frame.authority);
+        const snapshot = binding.releaseAuthority!(frame.authority);
+        this.#sendFrame(null, {
+          type: "authority-receipt",
+          requestId: frame.requestId,
+          authority: frame.authority,
+          status: "released",
+          lease: null,
+          snapshot,
+        });
       });
       return;
     }
@@ -2907,7 +2918,7 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (frame.type === "semantic-intent") {
-      this.#acceptSemanticIntent(frame.operationId, frame.intent);
+      this.#afterHeldFrames(() => this.#acceptSemanticIntent(frame.operationId, frame.intent));
       return;
     }
     if (frame.type === "terminal-surface-watch") {
@@ -3535,9 +3546,24 @@ export class PaneStreamLiveConnection {
    */
   #ownershipHeld: (() => void)[] = [];
   #ownershipDraining = false;
+  /** Ends the drain's wait when the stream closes. */
+  #ownershipWake: (() => void) | null = null;
 
   #afterWindowOwnership(run: () => void): void {
     if (this.#ownershipHeld.length === 0 && !this.#mirror.windowOwnershipPending?.()) {
+      run();
+      return;
+    }
+    this.#holdUntilWindowOwnership(run);
+  }
+
+  /**
+   * Frames whose effect depends on authority order (release, presence,
+   * activity, intents) are not held for the read themselves, but must not
+   * overtake frames that are.
+   */
+  #afterHeldFrames(run: () => void): void {
+    if (this.#ownershipHeld.length === 0) {
       run();
       return;
     }
@@ -3586,16 +3612,24 @@ export class PaneStreamLiveConnection {
           this.#fail("window-ownership-unverified");
           return;
         }
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([
-          (this.#mirror.verifyWindowOwnership?.() ?? Promise.resolve()).catch(
-            () => new Promise<void>((resolve) => setTimeout(resolve, 25)),
-          ),
+        const timers: ReturnType<typeof setTimeout>[] = [];
+        const wait = (ms: number) =>
           new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, left);
+            const timer = setTimeout(resolve, ms);
+            timer.unref?.();
+            timers.push(timer);
+          });
+        const read = this.#mirror.verifyWindowOwnership?.();
+        await Promise.race([
+          // Without a read to wait on, poll instead of spinning.
+          read ? read.catch(() => wait(25)) : wait(25),
+          wait(left),
+          new Promise<void>((resolve) => {
+            this.#ownershipWake = resolve;
           }),
         ]);
-        clearTimeout(timer);
+        this.#ownershipWake = null;
+        for (const timer of timers) clearTimeout(timer);
         continue;
       }
       const run = this.#ownershipHeld.shift()!;

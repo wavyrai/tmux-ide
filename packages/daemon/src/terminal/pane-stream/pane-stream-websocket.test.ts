@@ -4537,6 +4537,135 @@ describe("input while registered-window ownership is read again", () => {
     expect(socket.closed).toBeNull();
   });
 
+  it("does not let a release overtake a held request (review of #394, P1)", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    const grant = h.requestAuthority.getMockImplementation()!;
+    h.requestAuthority.mockImplementation((authority) => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      return grant(authority);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "geometry",
+    });
+    socket.message({
+      type: "authority-release",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000093",
+      authority: "geometry",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() => expect(socket.framesOfType("authority-receipt")).toHaveLength(2));
+    expect(socket.framesOfType("authority-receipt").map((frame) => frame.status)).toEqual([
+      "granted",
+      "released",
+    ]);
+    // Released last: a viewport now is refused (input-rejected), as without geometry.
+    socket.message({ type: "viewport", seq: 1, cols: 90, rows: 30, authorityLease: geometryLease });
+    expect(h.fitViewport).not.toHaveBeenCalled();
+  });
+
+  it("holds at most 256 frames, delivers them in order, and closes on the 257th", async () => {
+    for (const count of [256, 257]) {
+      const h = harness({ maxInputFramesPerWindow: 1000 });
+      const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+      const state = ownership(h, true);
+      for (let seq = 1; seq <= count; seq += 1)
+        socket.message({ type: "input", kind: "text", pane: "pane.editor", seq, data: "a" });
+      await settled();
+      if (count === 257) {
+        await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+        expect(h.sendInput).not.toHaveBeenCalled();
+        continue;
+      }
+      expect(socket.closed).toBeNull();
+      state.settle();
+      await vi.waitFor(() => expect(socket.framesOfType("input-ack")).toHaveLength(256));
+      expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual(
+        Array.from({ length: 256 }, (_, index) => index + 1),
+      );
+      expect(socket.closed).toBeNull();
+    }
+  });
+
+  it("checks a held frame again after the read: a conflict found then closes, with no ack", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    let conflict = false;
+    h.sendInput.mockImplementation(() => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      if (conflict)
+        throw new SessionRuntimeControllerLeaseError(
+          "controller-conflict",
+          "Linked windows across registered sessions are unsupported.",
+        );
+    });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    await settled();
+    conflict = true;
+    state.settle();
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+    expect(socket.framesOfType("input-ack")).toHaveLength(0);
+  });
+
+  it("holds a viewport the runtime refused because ownership became pending", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, false);
+    h.fitViewport.mockImplementationOnce(() => {
+      state.pending = true;
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+    });
+    socket.message({
+      type: "viewport",
+      seq: 1,
+      cols: 100,
+      rows: 30,
+      authorityLease: geometryLease,
+    });
+    await settled();
+    expect(socket.closed).toBeNull();
+    expect(socket.framesOfType("viewport-ack")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() => expect(socket.framesOfType("viewport-ack")).toHaveLength(1));
+    expect(socket.framesOfType("viewport-ack")[0]?.outcome).toBe("ok");
+    expect(h.fitViewport).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds an authority request the runtime refused because ownership became pending", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, false);
+    h.requestAuthority.mockImplementationOnce(() => {
+      state.pending = true;
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "input",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("authority-receipt")).toEqual([
+        expect.objectContaining({ authority: "input", status: "granted" }),
+      ]),
+    );
+    expect(h.requestAuthority).toHaveBeenCalledTimes(2);
+  });
+
   it("closes as before when ownership is not read again in time", async () => {
     const h = harness({ ownershipWaitMs: 40 });
     const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
