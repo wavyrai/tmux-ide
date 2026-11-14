@@ -77,8 +77,20 @@ function semanticPaneIds(session: string): ReadonlyMap<string, string> {
 }
 
 export function listTmuxSessions(): string[] {
-  const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
-  if (!raw) return [];
+  return readTmuxSessions() ?? [];
+}
+
+/**
+ * {@link listTmuxSessions}, but null when tmux could not be asked. Only a
+ * server that is not running has no sessions (#753).
+ */
+export function readTmuxSessions(): string[] | null {
+  let raw: string;
+  try {
+    raw = _tmuxRunner(["list-sessions", "-F", "#{session_name}"]);
+  } catch (error) {
+    return serverNotRunning(error) ? [] : null;
+  }
   return raw.split("\n").filter(Boolean);
 }
 
@@ -480,7 +492,13 @@ function assembleAdoptedFleet(
 }
 
 export function discoverSessions(): SessionInfo[] {
-  const sessionNames = listTmuxSessions();
+  return readSessions() ?? [];
+}
+
+/** {@link discoverSessions}, but null when tmux could not be asked (#753). */
+export function readSessions(): SessionInfo[] | null {
+  const sessionNames = readTmuxSessions();
+  if (sessionNames === null) return null;
   const results: SessionInfo[] = [];
 
   // Once the workspace registry is loaded (post daemon-embed startup),
