@@ -190,10 +190,11 @@ impl Recovery {
 }
 
 impl Local {
+    /// Home is the window's surface, in front or not: a window that is not
+    /// the key window recovers its list too, as a session stream does
+    /// (owner, 12 Nov: decision 1; review N4).
     fn home_visible(&self) -> bool {
-        self.foreground
-            && self.state.surface == Surface::Home
-            && self.state.home_phase == HomePhase::Live
+        self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live
     }
     /// Home's catalog failed: keep the list, drop the dead link, and retry.
     pub(super) fn home_catalog_failed(&mut self, error: DaemonError) -> Result<(), Error> {
@@ -225,8 +226,8 @@ impl Local {
         self.publish()
     }
     /// How long the idle actor may park before Home's next retry.
-    /// None in the background or off Home: nothing runs there, so a due retry
-    /// must not keep the actor awake.
+    /// None off Home: nothing runs there, so a due retry must not keep the
+    /// actor awake.
     pub(super) fn home_recovery_wait(&self) -> Option<Duration> {
         let quiet = self.home.quiet.wait(Instant::now());
         (self.home_visible().then(|| self.home.wait(Instant::now())))
