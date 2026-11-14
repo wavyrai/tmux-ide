@@ -262,7 +262,7 @@ impl Local {
             return Ok(false);
         }
         let Some(token) = self.history_target(key) else {
-            self.unavailable("Visited session identity changed or disappeared — select a session")?;
+            self.unavailable(reconnect::SESSION_GONE)?;
             return Ok(true);
         };
         let request = *request;

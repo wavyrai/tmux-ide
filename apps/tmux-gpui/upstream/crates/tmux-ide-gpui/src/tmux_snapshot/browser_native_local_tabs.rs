@@ -407,7 +407,7 @@ impl Local {
             return Ok(false);
         }
         if !self.tab_targets().iter().any(|fresh| same(fresh, &target)) {
-            self.unavailable("Tab session identity changed or disappeared — select a session")?;
+            self.unavailable(reconnect::SESSION_GONE)?;
             return Ok(true);
         }
         let token = self

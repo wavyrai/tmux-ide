@@ -176,6 +176,9 @@ pub(super) const SSH_IDENTITY: &str =
 /// The daemon now speaks a protocol this app does not: only an app update helps.
 pub(super) const UPDATE_APP: &str = "Tmux IDE's background service was updated and this app can no longer talk to it. Update the app to reconnect.";
 pub(super) const RECONNECTING: &str = "Connection lost. Reconnecting…";
+/// A session the app was showing, or was asked to show again, is not in
+/// the list any more, or is a new session under the same name (#649).
+pub(super) const SESSION_GONE: &str = "That session is gone or was replaced. Choose a session.";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Failure {
     /// Retried with backoff, for as long as the window is open.
@@ -544,9 +547,7 @@ impl Local {
                 self.recovery = Some(recovery);
                 self.reconnect_retry(Failure::Away)?;
             } else {
-                self.unavailable(
-                    "Previous session identity changed or disappeared — select a session",
-                )?;
+                self.unavailable(SESSION_GONE)?;
             }
             return Ok(true);
         };

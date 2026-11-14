@@ -96,7 +96,7 @@ fn fell_back(local: &Local) {
     assert!(local.state.home_phase == HomePhase::Unavailable);
     assert_eq!(
         local.state.status,
-        "Previous session identity changed or disappeared — select a session"
+        "That session is gone or was replaced. Choose a session."
     );
 }
 #[test]
