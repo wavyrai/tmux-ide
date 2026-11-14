@@ -20,7 +20,16 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { runTmux } from "@tmux-ide/tmux-bridge";
-import { readProcessTable, resolveAgentCommand, type ProcEntry } from "../detect/process-tree.ts";
+import {
+  readProcessTable,
+  readProcessTableAsync,
+  resolveAgentCommand,
+  type ProcEntry,
+} from "../detect/process-tree.ts";
+import {
+  snapshotIsRestorePoint,
+  type CrashSnapshotSource,
+} from "../../lib/daemon-crash-snapshot.ts";
 import { isListableSession } from "../team/sessions.ts";
 
 // ---------------------------------------------------------------------------
@@ -384,22 +393,20 @@ export function snapshotEvery(): number {
   return Number.isInteger(n) && n > 0 ? n : SNAPSHOT_EVERY;
 }
 
+export { snapshotIsRestorePoint };
+
 /**
- * Is `existing` a restore point: the snapshot of a tmux server that is gone,
- * naming at least one session the running server lacks? That file is what
- * `tmux-ide restore` rebuilds from, so no writer may replace it. It stops
- * being one when its sessions run again (after a restore) or the user deletes
- * the file. A server's own snapshot is never one: it was saved after the
- * server started.
+ * The file and builder the daemon's own writer uses (#783). The process that
+ * owns a headless daemon passes this in; the engine may not import it.
  */
-export function snapshotIsRestorePoint(
-  existing: { readonly savedAt: string; readonly sessions: readonly { name: string }[] } | null,
-  live: { readonly serverStartMs: number; readonly sessions: readonly string[] },
-): boolean {
-  if (!existing || !(live.serverStartMs > Date.parse(existing.savedAt))) return false;
-  const running = new Set(live.sessions);
-  return existing.sessions.some((session) => !running.has(session.name));
-}
+export const fleetCrashSnapshotSource: CrashSnapshotSource<FleetSnapshot> = {
+  sessionFormat: SNAPSHOT_SESSION_FORMAT,
+  paneFormat: SNAPSHOT_PANE_FORMAT,
+  build: async (panes, sessions) => buildSnapshot(panes, sessions, await readProcessTableAsync()),
+  read: () => readSnapshot(),
+  write: writeSnapshot,
+  fingerprint: snapshotFingerprint,
+};
 
 /** Deps for {@link createSnapshotter} — injectable so the throttle is unit-tested. */
 export interface SnapshotterDeps {

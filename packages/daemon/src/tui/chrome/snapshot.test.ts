@@ -335,6 +335,21 @@ describe("createSnapshotter", () => {
       s.onTick();
       expect(write).toHaveBeenCalledTimes(1);
     });
+
+    it("keeps writing when tmux cannot say when the server started", () => {
+      const write = vi.fn();
+      const s = createSnapshotter({
+        collect: () => fleet("fresh"),
+        read: () => fleet("a", "b"),
+        write,
+        every: 1,
+        serverStartMs: () => {
+          throw new Error("no server running");
+        },
+      });
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("never fires when every <= 0", () => {

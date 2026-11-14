@@ -6,6 +6,9 @@ import {
   startDaemonCrashSnapshot,
 } from "./daemon-crash-snapshot.ts";
 import {
+  buildSnapshot,
+  fleetCrashSnapshotSource,
+  snapshotFingerprint,
   SNAPSHOT_PANE_FORMAT,
   SNAPSHOT_SESSION_FORMAT,
   type FleetSnapshot,
@@ -40,15 +43,18 @@ function world(initial: { sessions: string[]; panes: string[] }) {
     expect(args).toEqual(["list-panes", "-a", "-F", SNAPSHOT_PANE_FORMAT]);
     return state.panes.join("\n");
   });
-  const deps = {
-    run,
-    processTable,
+  // The chrome adapter's source with the process table and the file faked.
+  const source = {
+    ...fleetCrashSnapshotSource,
+    build: async (panes: string[], sessions: string[]) =>
+      buildSnapshot(panes, sessions, await processTable()),
     read: () => state.file,
     write: (snapshot: FleetSnapshot) => {
       written.push(snapshot);
       state.file = snapshot;
     },
   };
+  const deps = { run, source };
   return { state, written, processTable, run, deps };
 }
 
@@ -221,5 +227,32 @@ describe("the crash snapshot timer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("does not run without a snapshot source, which only the daemon's owner can pass", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = world({ sessions: ["work"], panes: [pane("work")] });
+      expect(
+        startDaemonCrashSnapshot({
+          run: w.run,
+          source: undefined,
+          launcher: "headless",
+          retired: () => false,
+        }),
+      ).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(w.run).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is given the chrome adapter's own formats, file and fingerprint", () => {
+    expect(fleetCrashSnapshotSource).toMatchObject({
+      sessionFormat: SNAPSHOT_SESSION_FORMAT,
+      paneFormat: SNAPSHOT_PANE_FORMAT,
+      fingerprint: snapshotFingerprint,
+    });
   });
 });

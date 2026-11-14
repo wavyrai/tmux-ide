@@ -1,6 +1,6 @@
 import { createPaneReaderResolver } from "./tmux-pane-reader.ts";
 import { createNativeBrowserResolver } from "./tmux-native-browser.ts";
-import { startDaemonCrashSnapshot } from "./daemon-crash-snapshot.ts";
+import { startDaemonCrashSnapshot, type CrashSnapshotSource } from "./daemon-crash-snapshot.ts";
 import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
 import { NativeSurfaceProviderRegistry } from "../terminal/graphics/native-surface-provider.ts";
 import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
@@ -249,6 +249,12 @@ export interface EmbeddedDaemonOptions {
    * Stamped into the daemon record for triage; defaults to "embedded".
    */
   launcher?: "headless" | "embedded";
+  /**
+   * @internal The crash snapshot's file and builder (#783). They live in the
+   * chrome adapter, so the process that owns a headless daemon passes them in;
+   * without them the daemon writes no snapshot.
+   */
+  crashSnapshotSource?: CrashSnapshotSource;
   /** @internal Successful previous generation stop in this same process. */
   predecessor?: CanonicalDaemonPredecessor;
   /** @internal Let the foreground lifecycle owner serialize settings restarts. */
@@ -1847,6 +1853,7 @@ async function startEmbeddedDaemonGeneration(
       const snapshotInventory = terminalInventoryRuntime;
       startDaemonCrashSnapshot({
         launcher: opts.launcher ?? "embedded",
+        source: opts.crashSnapshotSource,
         run: (args) => fleetFactsTmuxRunner(args),
         retired: () => ["disposed", "failed"].includes(snapshotInventory.lifecycleState()),
       });
