@@ -4507,6 +4507,36 @@ describe("input while registered-window ownership is read again", () => {
     expect(socket.closed).toBeNull();
   });
 
+  it("grants an authority request after the read instead of rejecting it", async () => {
+    // Soak, 14 Nov: after a churn the app's next two streams were refused input
+    // authority and never became ready; the terminal was back after 19 s.
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    const grant = h.requestAuthority.getMockImplementation()!;
+    h.requestAuthority.mockImplementation((authority) => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      return grant(authority);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "input",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    expect(socket.closed).toBeNull();
+    state.settle();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("authority-receipt")).toEqual([
+        expect.objectContaining({ authority: "input", status: "granted" }),
+      ]),
+    );
+    expect(socket.closed).toBeNull();
+  });
+
   it("closes as before when ownership is not read again in time", async () => {
     const h = harness({ ownershipWaitMs: 40 });
     const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });

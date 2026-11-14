@@ -2820,27 +2820,35 @@ export class PaneStreamLiveConnection {
         !this.#sessionRuntimeBinding.authoritySnapshot
       )
         return this.#failProtocol("protocol-error");
-      let lease: SessionRuntimeAuthorityLease | null = null;
-      try {
-        lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
-      } catch (error) {
-        // Topology changes can temporarily prevent ownership. Reject this
-        // request without letting an expected conflict terminate the daemon.
-        if (
-          !(error instanceof SessionRuntimeControllerLeaseError) ||
-          error.code !== "controller-conflict"
-        )
-          return this.#failProtocol("input-rejected");
-      }
-      if (lease) this.#requestedAuthorities.add(frame.authority);
-      this.#sendFrame(null, {
-        type: "authority-receipt",
-        requestId: frame.requestId,
-        authority: frame.authority,
-        status: lease ? "granted" : "rejected",
-        lease,
-        snapshot: this.#sessionRuntimeBinding.authoritySnapshot(),
-      });
+      const binding = this.#sessionRuntimeBinding;
+      // While ownership is read again the request waits for it, in order with
+      // input, instead of being rejected: a rejected request left a new stream
+      // without input until the client gave up on it.
+      const request = (): void => {
+        let lease: SessionRuntimeAuthorityLease | null = null;
+        try {
+          lease = binding.requestAuthority!(frame.authority);
+        } catch (error) {
+          if (this.#holdForWindowOwnership(error, request)) return;
+          // Topology changes can temporarily prevent ownership. Reject this
+          // request without letting an expected conflict terminate the daemon.
+          if (
+            !(error instanceof SessionRuntimeControllerLeaseError) ||
+            error.code !== "controller-conflict"
+          )
+            return this.#failProtocol("input-rejected");
+        }
+        if (lease) this.#requestedAuthorities.add(frame.authority);
+        this.#sendFrame(null, {
+          type: "authority-receipt",
+          requestId: frame.requestId,
+          authority: frame.authority,
+          status: lease ? "granted" : "rejected",
+          lease,
+          snapshot: binding.authoritySnapshot!(),
+        });
+      };
+      this.#afterWindowOwnership(request);
       return;
     }
     if (frame.type === "authority-release") {
