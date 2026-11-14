@@ -136,9 +136,24 @@ if (info && Number.isInteger(info.pid) && typeof info.productVersion === 'string
     const result = run(launcher, ['update', '--daemon', '--if-running', '--json'], 120000);
     let status;
     try { status = JSON.parse(String(result.stdout).trim().split('\n').at(-1)); } catch {}
-    if (result.status === 0 && status?.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
-    else if (result.status !== 0 || status?.status !== 'not-running')
-      warn(`The tmux-ide ${info.productVersion} daemon could not be moved to ${version}; your sessions are safe. Retry: ${command} update --daemon`);
+    // The command gives up after its own deadline (15 s), while a supervisor such
+    // as launchd may still be starting the new daemon. Wait up to a minute for
+    // it to publish its record, unless the old daemon is still the owner.
+    const arrived = () => {
+      for (let i = 0; i < 300; i++) {
+        const current = readInfo();
+        if (current?.productVersion === version && Number.isInteger(current.pid) && alive(current.pid)) return true;
+        if (current?.pid === info.pid && current.productVersion === info.productVersion && alive(info.pid)) return false;
+        sleep(200);
+      }
+      return false;
+    };
+    const succeeded = result.status === 0 && (status?.status === 'ready' || status?.status === 'not-running');
+    if (succeeded && status.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
+    else if (!succeeded) {
+      if (arrived()) note(`Restarted the daemon on ${version}; tmux sessions kept running.`);
+      else warn(`The tmux-ide ${info.productVersion} daemon could not be moved to ${version}; your sessions are safe. Retry: ${command} update --daemon`);
+    }
   }
 }
 JS
