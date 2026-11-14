@@ -566,3 +566,21 @@ fn a_daemon_that_no_longer_knows_the_generation_is_rediscovered_at_once() {
     local.reconnect_retry(Failure::Other).unwrap();
     assert_eq!(delay(&local, before), 5000);
 }
+
+/// Review N3: every rediscovery try used to ask the background fleet to retry
+/// every failed saved machine, every 5 s for as long as the daemon stayed
+/// away. One recovery asks once.
+#[test]
+fn a_recovery_asks_the_fleet_to_retry_its_machines_once() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().rebind = None;
+    let mut refreshes = 0;
+    for _ in 0..4 {
+        local.recovery.as_mut().unwrap().due = Some(Instant::now());
+        local.reconnect_tick().unwrap();
+        refreshes += usize::from(local.background_fleet.take_refresh_request());
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+    }
+    assert_eq!(refreshes, 1);
+}

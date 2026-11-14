@@ -387,13 +387,31 @@ impl Gate {
         }
         None
     }
+    /// A row is its agent in one pane: the session context, the agent id and
+    /// the pane's native identity (server epoch and pane birth id). A change of
+    /// state (activity, attention) keeps the key, so a click on the row as it
+    /// was painted still opens that agent (#764: a busy agent changed state
+    /// between paint and click, and the click was dropped). The same agent in
+    /// another pane is another row.
     fn row_key(&self, slot: &Slot, agent: &ObservedAgent) -> String {
-        format!(
-            "{}\0{}\0{}",
-            slot.epoch.map_or_else(String::new, |e| e.to_string()),
-            slot.context.key,
-            agent.id
-        )
+        let pane = (agent.native_identity.as_ref()).map_or_else(String::new, |pane| {
+            format!("{}/{}", pane.server_epoch, pane.pane_birth_id)
+        });
+        format!("{}\0{}\0{pane}", slot.context.key, agent.id)
+    }
+    /// The row's agent is still observed, but in another pane than the row
+    /// named: the click is refused with a notice, never opened elsewhere.
+    pub(super) fn moved(&self, key: &str) -> bool {
+        self.enabled
+            && self.slots.iter().any(|slot| {
+                let Observed::Ready(result) = &slot.observed else {
+                    return false;
+                };
+                result.agents.iter().any(|agent| {
+                    key.starts_with(&format!("{}\0{}\0", slot.context.key, agent.id))
+                        && self.row_key(slot, agent) != key
+                })
+            })
     }
 }
 fn contexts(
@@ -723,7 +741,16 @@ impl Local {
             return Ok(());
         }
         let Some((context, agent)) = self.agents.resolve(&key, revision) else {
-            return Ok(());
+            if !self.agents.moved(&key) {
+                return Ok(());
+            }
+            if self.state.surface == Surface::Home {
+                self.state.request = request;
+                self.state.home_notice = Some(AGENT_MOVED.into());
+            } else {
+                self.state.status = AGENT_MOVED.into();
+            }
+            return self.publish();
         };
         if session
             .as_ref()
@@ -765,6 +792,9 @@ impl Local {
         self.open_observed_agent(request, context.scope, selection)
     }
 }
+
+/// A clicked agent row whose agent is now in another pane.
+pub(super) const AGENT_MOVED: &str = "That agent is now in another pane. Select it again.";
 
 #[cfg(test)]
 #[path = "browser_native_local_agents_tests.rs"]

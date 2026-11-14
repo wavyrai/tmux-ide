@@ -52,21 +52,22 @@ fn a_dropped_catalog_keeps_the_list_and_reconnects_quietly() {
     assert!(local.stage.is_none(), "nothing is read before the delay");
 }
 
+/// Review N4: Home's retry used to wait for the key window, so a window on
+/// Home behind another kept "Reconnecting…" until it was clicked.
 #[test]
-fn a_due_retry_is_a_fresh_catalog_read_only_while_home_is_in_front() {
-    let (mut local, events) = home_with_a_session();
-    local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
-    local.home_recovery_tick().unwrap();
-    assert!(local.stage.is_none(), "not yet due");
-    local.home.retry_now(Instant::now());
-    local.foreground = false;
-    local.home_recovery_tick().unwrap();
-    assert!(local.stage.is_none(), "paused in the background");
-    local.foreground = true;
-    local.home_recovery_tick().unwrap();
-    assert!(matches!(local.stage, Some(Stage::Servers)));
-    assert!(!local.submitted);
-    assert_eq!(published(&events).sessions.len(), 1);
+fn a_due_retry_is_a_fresh_catalog_read_in_front_or_behind() {
+    for foreground in [true, false] {
+        let (mut local, events) = home_with_a_session();
+        local.foreground = foreground;
+        local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
+        local.home_recovery_tick().unwrap();
+        assert!(local.stage.is_none(), "not yet due");
+        local.home.retry_now(Instant::now());
+        local.home_recovery_tick().unwrap();
+        assert!(matches!(local.stage, Some(Stage::Servers)), "{foreground}");
+        assert!(!local.submitted);
+        assert_eq!(published(&events).sessions.len(), 1);
+    }
 }
 
 #[test]
@@ -121,28 +122,23 @@ fn refresh_ends_a_reconnect_in_progress() {
 }
 
 #[test]
-fn a_due_retry_does_not_wake_the_actor_while_home_is_hidden() {
+fn a_due_retry_does_not_wake_the_actor_off_home() {
     let (mut local, _events) = home_with_a_session();
     local.home_catalog_failed(DaemonError::OwnerExited).unwrap();
     local.home.retry_now(Instant::now());
+    assert_eq!(local.home_recovery_wait(), Some(Duration::ZERO), "due now");
+    local.foreground = false;
     assert_eq!(
         local.home_recovery_wait(),
         Some(Duration::ZERO),
-        "due now, in front"
+        "due behind another window too"
     );
-    local.foreground = false;
+    local.state.surface = Surface::Workspace;
     for _ in 0..3 {
         local.home_recovery_tick().unwrap();
         assert!(local.stage.is_none());
-        assert_eq!(
-            local.home_recovery_wait(),
-            None,
-            "no timer in the background"
-        );
+        assert_eq!(local.home_recovery_wait(), None, "no timer off Home");
     }
-    local.foreground = true;
-    local.state.surface = Surface::Workspace;
-    assert_eq!(local.home_recovery_wait(), None, "no timer off Home");
     local.state.surface = Surface::Home;
     local.home_recovery_tick().unwrap();
     assert!(

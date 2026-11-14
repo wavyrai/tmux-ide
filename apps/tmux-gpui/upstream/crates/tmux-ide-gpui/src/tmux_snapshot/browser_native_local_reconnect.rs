@@ -51,6 +51,9 @@ pub(super) struct Recovery {
     ended: bool,
     /// A stream of this recovery already failed its identity check once.
     identity_retried: bool,
+    /// This recovery already asked the background fleet to retry its saved
+    /// machines: once per recovery, not on every try (review N3).
+    fleet_refreshed: bool,
 }
 /// A daemon record's modification time and size. A restarted daemon writes a
 /// new record, so a change means the next try need not wait out its backoff.
@@ -127,6 +130,7 @@ impl Recovery {
             missing_since: None,
             ended: false,
             identity_retried: false,
+            fleet_refreshed: false,
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -264,6 +268,7 @@ impl Local {
             missing_since: None,
             ended: false,
             identity_retried: false,
+            fleet_refreshed: false,
         });
         if fresh {
             recovery.attempts = 0;
@@ -317,6 +322,7 @@ impl Local {
             missing_since: None,
             ended: false,
             identity_retried: false,
+            fleet_refreshed: false,
         });
         self.reconnect_retry(failure)
     }
@@ -426,7 +432,9 @@ impl Local {
             return self.publish();
         }
         // Rediscovery keeps the window as it was: no Home, no loading state.
-        self.background_fleet.refresh();
+        if !std::mem::replace(&mut recovery.fleet_refreshed, true) {
+            self.background_fleet.refresh();
+        }
         self.restart_discovery(false)?;
         self.state.status = RECONNECTING.into();
         self.recovery = Some(recovery);
