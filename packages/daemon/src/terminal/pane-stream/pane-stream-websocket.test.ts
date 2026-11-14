@@ -45,6 +45,7 @@ import { SessionRuntimeIntentError } from "../session-runtime/semantic-mutation-
 import { registerTerminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import {
   SessionRuntimeControllerLeaseError,
+  SessionRuntimeInputLifetimeEndedError,
   SessionRuntimeRegistry,
 } from "../session-runtime/registry.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
@@ -4686,6 +4687,69 @@ describe("input while registered-window ownership is read again", () => {
       );
     });
     socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+  });
+});
+
+describe("input fenced to a pane lifetime that has ended", () => {
+  // The control client exited (source restarted) while the user typed: the
+  // pane's owner was gone, a key carrying the old lifetime closed the stream
+  // with 1011 "Input target lifetime unavailable" (soak x723j; harness 3/3).
+  // The fence means "do not deliver to another lifetime": the key is not
+  // delivered and not acknowledged, and the pane's own delivery tells the
+  // client its lifetime ended. The stream stays.
+  it("is not delivered, not acknowledged, and does not close the stream", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+      protocolVersions: [1, 105],
+    });
+    const expectedLifetime = { generation: INSTANCE, incarnation: `${INSTANCE}:0` };
+    h.sendInput.mockImplementationOnce(() => {
+      throw new SessionRuntimeInputLifetimeEndedError("Input target lifetime unavailable");
+    });
+    socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 1,
+      data: "a",
+      expectedLifetime,
+    });
+    await settled();
+    expect(socket.closed).toBeNull();
+    expect(socket.framesOfType("input-ack")).toHaveLength(0);
+    socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 2,
+      data: "b",
+      expectedLifetime,
+    });
+    expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([2]);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("still closes for any other failure of the input", async () => {
+    const h = harness();
+    const { socket } = await connect(h, {
+      viewerMode: "interactive",
+      semanticDelivery: true,
+      protocolVersions: [1, 105],
+    });
+    h.sendInput.mockImplementationOnce(() => {
+      throw new Error("Causal-cell capacity exhausted");
+    });
+    socket.message({
+      type: "input",
+      kind: "text",
+      pane: "pane.editor",
+      seq: 1,
+      data: "a",
+      expectedLifetime: { generation: INSTANCE, incarnation: `${INSTANCE}:0` },
+    });
     await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
   });
 });
