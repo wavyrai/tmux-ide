@@ -58,7 +58,7 @@ const root=path.join(prefix,'lib/node_modules/tmux-ide');
 for (const dir of ['bin','scripts','packages/daemon/dist/native/tmux/${target}']) fs.mkdirSync(path.join(root,dir),{recursive:true});
 const version = process.env.MOCK_VERSION || '2.9.0';
 fs.writeFileSync(path.join(root,'package.json'),JSON.stringify({version}));
-fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.argv.includes('--daemon')){ require('node:fs').appendFileSync(process.env.HOME+'/daemon-upgrades', process.argv.slice(2).join(' ')+'\\\\n'); console.log(JSON.stringify({ok:true,status:'ready',productVersion:'"+version+"'})); process.exit(0); } if(process.argv.includes('agent-teams')){ if(process.env.MOCK_TEAMS_FAIL) process.exit(1); const r=require('node:child_process').spawnSync(process.execPath,['${path.resolve("bin/cli.js")}',...process.argv.slice(2)],{stdio:'inherit'}); process.exit(r.status ?? 1); } if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
+fs.writeFileSync(path.join(root,'bin/cli.js'), "if(process.argv.includes('--daemon') && process.env.MOCK_DAEMON_UPGRADE) require(process.env.MOCK_DAEMON_UPGRADE); if(process.argv.includes('--daemon')){ require('node:fs').appendFileSync(process.env.HOME+'/daemon-upgrades', process.argv.slice(2).join(' ')+'\\\\n'); console.log(JSON.stringify({ok:true,status:'ready',productVersion:'"+version+"'})); process.exit(0); } if(process.argv.includes('agent-teams')){ if(process.env.MOCK_TEAMS_FAIL) process.exit(1); const r=require('node:child_process').spawnSync(process.execPath,['${path.resolve("bin/cli.js")}',...process.argv.slice(2)],{stdio:'inherit'}); process.exit(r.status ?? 1); } if(process.env.MOCK_RELOCATED_FAIL && !__filename.includes('.install.')) process.exit(1); if(process.env.MOCK_TUI_FAIL && process.argv.includes('--tui-binary')) process.exit(1); console.log(process.env.MOCK_BAD_VERSION ? 'tmux-ide v0.0.0' : 'tmux-ide v"+version+"');");
 fs.writeFileSync(path.join(root,'scripts/postinstall.js'), "if(process.env.MOCK_POSTINSTALL_HOLD) { require('node:fs').writeFileSync(process.env.MOCK_POSTINSTALL_HOLD, 'ready'); setInterval(()=>{}, 1000); } if(process.env.MOCK_POSTINSTALL_FAIL) process.exit(1); if(process.env.npm_config_global === 'true') throw new Error('must not update the daemon implicitly'); require('node:fs').appendFileSync(process.env.HOME+'/postinstall', 'installed\\\\n');");
 
 if (!process.env.MOCK_MISSING_TMUX) fs.writeFileSync(path.join(root,'packages/daemon/dist/native/tmux/${target}/tmux'),'#!/bin/sh\\necho tmux '+(process.env.MOCK_OLD_TMUX ? '3.4' : '3.7c')+'\\n');
@@ -842,6 +842,52 @@ test("install restarts a running older daemon on the new release", (t) => {
     fs.readFileSync(path.join(root, "daemon-upgrades"), "utf8"),
     "update --daemon --if-running --json\n",
   );
+});
+// `update --daemon` as the CLI runs it, played by a script: the old daemon retires
+// and the command gives up, and the new daemon publishes its record later (a
+// supervisor restarting it, a slow start), or never (the old one stays).
+function daemonUpgrade(root, { publishAfterMs = null } = {}) {
+  const script = path.join(root, "daemon-upgrade.cjs");
+  const record = path.join(root, ".tmux-ide/daemon.json");
+  const fresh = JSON.stringify({ pid: process.pid, productVersion: "2.9.0" });
+  fs.writeFileSync(
+    script,
+    publishAfterMs === null
+      ? "console.error('The older canonical daemon did not retire.'); process.exit(1);\n"
+      : `const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ pid: ${2 ** 22 + 1}, productVersion: '2.8.0', supervisionId: 'launchd-user' }));
+require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(
+          `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(record)}, ${JSON.stringify(fresh)}), ${publishAfterMs})`,
+        )}], { detached: true, stdio: 'ignore' }).unref();
+console.error('The canonical daemon control plane did not become ready within 15000ms.');
+process.exit(1);
+`,
+  );
+  return script;
+}
+test("a daemon that reports the new version after the upgrade command gave up counts as moved", (t) => {
+  const { root, run } = fixture(t);
+  writeDaemonRecord(root, {
+    pid: process.pid,
+    productVersion: "2.8.0",
+    supervisionId: "launchd-user",
+  });
+  const result = run({ MOCK_DAEMON_UPGRADE: daemonUpgrade(root, { publishAfterMs: 1500 }) });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /could not be moved/);
+  assert.match(result.stdout, /Restarted the daemon on 2\.9\.0; tmux sessions kept running/);
+});
+test("an older daemon that is still running after a failed upgrade is reported at once", (t) => {
+  const { root, run } = fixture(t);
+  writeDaemonRecord(root, { pid: process.pid, productVersion: "2.8.0" });
+  const started = Date.now();
+  const result = run({ MOCK_DAEMON_UPGRADE: daemonUpgrade(root) });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    result.stdout,
+    /The tmux-ide 2\.8\.0 daemon could not be moved to 2\.9\.0; your sessions are safe/,
+  );
+  assert.ok(Date.now() - started < 20000, "no wait for a daemon that never left");
 });
 test("install leaves a current or stopped daemon alone", (t) => {
   const { root, run } = fixture(t);
