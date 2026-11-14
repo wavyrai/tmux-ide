@@ -51,6 +51,47 @@ impl SnapshotView {
             .position(|focus| focus.is_focused(window))
     }
 
+    /// One of the machines' text actions has the keyboard.
+    pub(in crate::tmux_snapshot) fn home_aside_focused(&self, window: &Window) -> bool {
+        self.browser_state.surface == browser::Surface::Home
+            && self
+                .home_filter
+                .as_ref()
+                .is_some_and(|controls| controls.asides.borrow().focused(window))
+    }
+
+    /// Drops the stops of machine actions that no longer exist. If one of
+    /// them had the keyboard, Home takes it back, so the next key is heard.
+    pub(in crate::tmux_snapshot) fn reconcile_home_asides(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(controls) = &self.home_filter else {
+            return;
+        };
+        let groups = self.browser_state.fleet.as_ref().map(|f| &f.groups[..]);
+        let home = self.browser_state.surface == browser::Surface::Home;
+        let stranded = controls.asides.borrow_mut().retain(window, |group, slot| {
+            home && groups
+                .and_then(|groups| groups.get(group))
+                .is_some_and(|group| {
+                    if slot == aside_link::DISCONNECT {
+                        group.disconnect.is_some()
+                    } else {
+                        // The default server shows a label, not the button.
+                        group.servers.get(slot).is_some_and(|server| {
+                            server.selection.is_some()
+                                && !self.fleet_server_is_default(group, server)
+                        })
+                    }
+                })
+        });
+        if stranded {
+            self.terminal_focus.focus(window, cx);
+        }
+    }
+
     pub(super) fn home_action_key(
         &mut self,
         event: &KeyDownEvent,
@@ -69,8 +110,14 @@ impl SnapshotView {
         }
         let selected = self.home_action_index(window);
         let card = self.whats_new_focused(window);
+        let aside = self.home_aside_focused(window);
         match event.keystroke.key.as_str() {
-            "tab" if selected.is_some() || card || self.terminal_focus.is_focused(window) => {
+            "tab"
+                if selected.is_some()
+                    || card
+                    || aside
+                    || self.terminal_focus.is_focused(window) =>
+            {
                 self.prepare_home_filter(cx);
                 let Some(controls) = &self.home_filter else {
                     return false;
@@ -85,6 +132,11 @@ impl SnapshotView {
                     })
                     .map(|slot| controls.actions[slot].clone())
                     .collect();
+                // Then each machine's text actions (#803), Disconnect last
+                // in its machine and never the first stop.
+                if !order.is_empty() {
+                    order.extend(controls.asides.borrow().order());
+                }
                 // The What's new card's buttons follow Home's own.
                 order.extend(self.whats_new_stops(cx).into_iter().flatten());
                 if order.is_empty() {
@@ -99,7 +151,7 @@ impl SnapshotView {
                 };
                 order[next].focus(window, cx);
             }
-            "escape" if selected.is_some() => self.terminal_focus.focus(window, cx),
+            "escape" if selected.is_some() || aside => self.terminal_focus.focus(window, cx),
             // Escape closes the What's new card from the card or from Home.
             "escape" if card || self.terminal_focus.is_focused(window) => {
                 if self.whats_new_stops(cx).is_none() {

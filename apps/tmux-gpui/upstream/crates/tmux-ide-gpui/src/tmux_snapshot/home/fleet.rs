@@ -356,6 +356,12 @@ impl SnapshotView {
                     true,
                     &bezel,
                 )
+                .stop(self.home_filter.as_ref().map(|controls| {
+                    controls
+                        .asides
+                        .borrow_mut()
+                        .stop(index, aside_link::DISCONNECT, true, cx)
+                }))
                 .danger()
                 .on_press(cx.listener(move |view, _: &(), window, cx| {
                     cx.stop_propagation();
@@ -508,7 +514,7 @@ impl SnapshotView {
     }
 
     /// Whether new sessions go to `server`.
-    fn fleet_server_is_default(
+    pub(super) fn fleet_server_is_default(
         &self,
         group: &browser::fleet::Group,
         server: &browser::fleet::Server,
@@ -570,6 +576,12 @@ impl SnapshotView {
             enabled,
             &bezel,
         )
+        .stop(self.home_filter.as_ref().map(|controls| {
+            controls
+                .asides
+                .borrow_mut()
+                .stop(index, server_index, enabled, cx)
+        }))
         .on_press(cx.listener(move |view, _: &(), window, cx| {
             cx.stop_propagation();
             view.open_fleet_server(request, &token, window, cx);
@@ -611,6 +623,7 @@ impl SnapshotView {
         let fleet = self.browser_state.fleet.as_ref()?;
         if let Some(controls) = &self.home_filter {
             controls.rows.observe(window);
+            controls.asides.borrow_mut().begin();
         }
         let bezel = self.home_palette();
         let view = self.home_fleet_view();

@@ -163,3 +163,159 @@ fn disconnect_stands_apart_and_reads_as_the_destructive_one(cx: &mut TestAppCont
     });
     assert_ne!(use_ink, Some(danger));
 }
+
+/// #803: Home's own Tab reaches each machine's text actions after the
+/// action row, "Use for new sessions" before Disconnect; Return presses the
+/// focused one and nothing else; Escape gives the keyboard back.
+#[gpui::test]
+fn homes_tab_reaches_the_machine_actions_after_the_action_row(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = fleet_home(cx);
+    let on = |cx: &mut VisualTestContext, selector: &'static str| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds(selector).is_some()
+    };
+    let action = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| view.read(cx).home_action_index(window))
+    };
+    let aside = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| view.read(cx).home_aside_focused(window))
+    };
+    // The first stops are the action row's.
+    cx.simulate_keystrokes("tab");
+    assert!(action(cx).is_some() && !aside(cx), "the action row leads");
+    let mut order = Vec::new();
+    for _ in 0..40 {
+        cx.simulate_keystrokes("tab");
+        if !aside(cx) {
+            if !order.is_empty() {
+                break;
+            }
+            continue;
+        }
+        for selector in [
+            "fleet-use-server-action-0-0:focused",
+            "fleet-use-server-action-0-1:focused",
+            "fleet-disconnect-0:focused",
+            "fleet-disconnect-1:focused",
+        ] {
+            if on(cx, selector) {
+                order.push(selector);
+            }
+        }
+    }
+    assert!(order.len() >= 2, "{order:?}");
+    let disconnect = order
+        .iter()
+        .position(|s| *s == "fleet-disconnect-0:focused")
+        .unwrap();
+    assert!(
+        disconnect > 0,
+        "Disconnect is not the first stop: {order:?}"
+    );
+    assert!(
+        order[..disconnect]
+            .iter()
+            .all(|s| s.starts_with("fleet-use-server-action-0-")),
+        "a machine's own actions come before its Disconnect: {order:?}"
+    );
+    // Back to a "Use for new sessions" and press it with Return.
+    for _ in 0..40 {
+        if on(cx, order[0]) {
+            break;
+        }
+        cx.simulate_keystrokes("tab");
+    }
+    assert!(on(cx, order[0]));
+    receiver.try_iter().for_each(drop);
+    // Keys that act on Home's table do nothing here.
+    cx.simulate_keystrokes("d f ]");
+    assert!(receiver.try_recv().is_err());
+    assert!(on(cx, order[0]), "the action keeps the keyboard");
+    // Shift-Tab steps back and Tab returns.
+    cx.simulate_keystrokes("shift-tab");
+    assert!(!on(cx, order[0]));
+    cx.simulate_keystrokes("tab");
+    assert!(on(cx, order[0]));
+    cx.simulate_keystrokes("enter");
+    let sent: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(sent.len(), 1, "one press, one command");
+    assert!(matches!(sent[0], browser::Command::FleetServer { .. }));
+    // Escape gives the keyboard back.
+    cx.simulate_keystrokes("escape");
+    assert!(!aside(cx));
+    let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
+    cx.update(|window, _| assert!(terminal.is_focused(window)));
+}
+
+/// A focused machine action whose machine goes away does not keep the
+/// keyboard on nothing: the next Tab lands on the action row.
+#[gpui::test]
+fn a_focused_machine_action_that_disappears_does_not_strand_tab(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    let aside = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| view.read(cx).home_aside_focused(window))
+    };
+    for _ in 0..40 {
+        cx.simulate_keystrokes("tab");
+        if aside(cx) {
+            break;
+        }
+    }
+    assert!(aside(cx), "fixture: a machine action has the keyboard");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.fleet.as_mut().unwrap().groups.clear();
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    cx.simulate_keystrokes("tab");
+    assert!(!aside(cx));
+    let on_row = cx.update(|window, cx| view.read(cx).home_action_index(window));
+    assert!(on_row.is_some(), "Tab lands on the action row");
+}
+
+/// Pressing "Use for new sessions" makes that server the default, and the
+/// button gives way to "Default for new sessions". The keyboard does not
+/// stay on the button that is gone: Home takes it back in the same frame.
+#[gpui::test]
+fn a_focused_server_action_that_becomes_the_default_hands_the_keyboard_back(
+    cx: &mut TestAppContext,
+) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    let marker = "fleet-use-server-action-0-0:focused";
+    let mut found = false;
+    for _ in 0..40 {
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        if cx.debug_bounds(marker).is_some() {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "fixture: the first server's action has the keyboard");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            let fleet = v.browser_state.fleet.as_ref().unwrap();
+            let group = &fleet.groups[0];
+            let server = &group.servers[0];
+            v.browser_state.selected_server = Some(browser::fleet::SelectedServer {
+                machine_id: group.id.clone(),
+                machine_label: group.label.clone(),
+                server_id: server.id.clone(),
+                generation: server.generation.clone().unwrap(),
+                label: server.label.clone(),
+            });
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(
+        cx.debug_bounds("fleet-server-default-0-0").is_some(),
+        "fixture: the server is now the default"
+    );
+    let aside = cx.update(|window, cx| view.read(cx).home_aside_focused(window));
+    assert!(!aside, "the keyboard is not on a button that is gone");
+    let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
+    cx.update(|window, _| assert!(terminal.is_focused(window)));
+}
