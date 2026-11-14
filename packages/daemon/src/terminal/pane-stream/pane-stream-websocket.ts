@@ -221,6 +221,9 @@ const BindingIdSchemaZ = z
 /** The mirror surface the endpoint consumes (MirrorService satisfies it). */
 export interface PaneStreamMirror {
   describeSession(session: string): Promise<MirrorSessionDescription>;
+  /** Registered-window ownership is being read again (a session came or went). */
+  windowOwnershipPending?(): boolean;
+  verifyWindowOwnership?(): Promise<void>;
   describeSessionAuthority?(
     session: string,
     expectedSemanticPaneIds?: readonly string[],
@@ -332,6 +335,8 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly flowBudgets?: PaneStreamFlowBudgets;
   /** Cadence of the send-buffer drain check while frames are in flight. */
   readonly drainTickMs?: number;
+  /** How long input waits for registered-window ownership to be read again. */
+  readonly ownershipWaitMs?: number;
   /** Hard whole-socket ceiling; the ledger should stall panes far earlier. */
   readonly maxSocketBufferedBytes?: number;
   /** Input flood budget for one rolling admission window, never a lifetime quota. */
@@ -477,6 +482,7 @@ export class PaneStreamAdmissionCoordinator {
   readonly #redemptionTimeoutMs: number;
   readonly #flowBudgets: PaneStreamFlowBudgets;
   readonly #drainTickMs: number;
+  readonly #ownershipWaitMs: number;
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
   readonly #maxInputBytes: number;
@@ -517,6 +523,7 @@ export class PaneStreamAdmissionCoordinator {
     this.#flowBudgets = options.flowBudgets ?? DEFAULT_PANE_STREAM_FLOW_BUDGETS;
     this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
     this.#drainTickMs = boundedInteger(options.drainTickMs, 15, 1_000);
+    this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
     this.#maxSocketBufferedBytes = boundedInteger(
       options.maxSocketBufferedBytes,
       32 << 20,
@@ -905,6 +912,7 @@ export class PaneStreamAdmissionCoordinator {
             leaseManager: this.#leaseManager,
             ledger: this.#ledger,
             drainTickMs: this.#drainTickMs,
+            ownershipWaitMs: this.#ownershipWaitMs,
             maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
             maxInputFrames: this.#maxInputFrames,
             maxInputBytes: this.#maxInputBytes,
@@ -1127,6 +1135,7 @@ interface LiveConnectionOptions {
   readonly leaseManager: PaneStreamLeaseAuthority;
   readonly ledger: PaneStreamWireLedger;
   readonly drainTickMs: number;
+  readonly ownershipWaitMs: number;
   readonly maxSocketBufferedBytes: number;
   readonly maxInputFrames: number;
   readonly maxInputBytes: number;
@@ -1145,6 +1154,11 @@ interface SeedBatch {
   held: Uint8Array[];
   guardArmed: boolean;
 }
+
+/** Input waits this long for ownership to be read again before the stream closes. */
+export const PANE_STREAM_OWNERSHIP_WAIT_MS = 2_000;
+/** At most this many input and geometry frames wait for it. */
+export const PANE_STREAM_OWNERSHIP_HELD_FRAMES = 256;
 
 interface PaneChannel {
   readonly semanticPaneId: string;
@@ -1228,6 +1242,7 @@ export class PaneStreamLiveConnection {
   readonly #leaseManager: PaneStreamLeaseAuthority;
   readonly #ledger: PaneStreamWireLedger;
   readonly #drainTickMs: number;
+  readonly #ownershipWaitMs: number;
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
   readonly #maxInputBytes: number;
@@ -1364,6 +1379,7 @@ export class PaneStreamLiveConnection {
     this.#leaseManager = options.leaseManager;
     this.#ledger = options.ledger;
     this.#drainTickMs = options.drainTickMs;
+    this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
     this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
     this.#maxInputFrames = options.maxInputFrames;
     this.#maxInputBytes = options.maxInputBytes;
@@ -3065,41 +3081,45 @@ export class PaneStreamLiveConnection {
       }
       if (!this.#prepareInputAuthority(true)) return;
       this.#nextViewportSeq += 1;
-      try {
-        if (frame.semanticWindowId === undefined)
-          this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
-        else
-          this.#sessionRuntimeBinding!.fitViewport(
-            frame.authorityLease,
-            frame.cols,
-            frame.rows,
-            frame.semanticWindowId,
-          );
-        this.#sendFrame(null, {
-          type: "viewport-ack",
-          seq: frame.seq,
-          cols: frame.cols,
-          rows: frame.rows,
-          outcome: "ok",
-          authorityLease: frame.authorityLease,
-        });
-      } catch (error) {
-        if (
-          error instanceof SessionRuntimeControllerLeaseError &&
-          (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")
-        ) {
+      const fit = (): void => {
+        try {
+          if (frame.semanticWindowId === undefined)
+            this.#sessionRuntimeBinding!.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+          else
+            this.#sessionRuntimeBinding!.fitViewport(
+              frame.authorityLease,
+              frame.cols,
+              frame.rows,
+              frame.semanticWindowId,
+            );
           this.#sendFrame(null, {
             type: "viewport-ack",
             seq: frame.seq,
             cols: frame.cols,
             rows: frame.rows,
-            outcome: "geometry-authority-conflict",
+            outcome: "ok",
             authorityLease: frame.authorityLease,
           });
-          return;
+        } catch (error) {
+          if (
+            error instanceof SessionRuntimeControllerLeaseError &&
+            (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")
+          ) {
+            this.#sendFrame(null, {
+              type: "viewport-ack",
+              seq: frame.seq,
+              cols: frame.cols,
+              rows: frame.rows,
+              outcome: "geometry-authority-conflict",
+              authorityLease: frame.authorityLease,
+            });
+            return;
+          }
+          if (this.#holdForWindowOwnership(error, fit)) return;
+          this.#failProtocol("input-rejected");
         }
-        this.#failProtocol("input-rejected");
-      }
+      };
+      this.#afterWindowOwnership(fit);
       return;
     }
     this.#acceptInput(
@@ -3405,92 +3425,176 @@ export class PaneStreamLiveConnection {
     this.#inputWindowFrames += 1;
     this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;
-    try {
-      this.#sessionRuntimeBinding!.assertController(pane);
-      if (semanticDelivery)
-        this.#sessionRuntimeBinding!.sendInput(
-          pane,
-          { kind, data },
-          performanceTraceId,
-          causalProbe,
-          causalProbe
-            ? (result) => {
-                if (this.#closed) return;
-                if (result.status === "proved") {
-                  this.#sendFrame(null, { type: "causal-cell-proof", proof: result.proof });
-                } else {
-                  this.#sendFrame(null, {
-                    type: "causal-cell-failure",
-                    failure: {
-                      version: 1,
-                      capability: "causal-cell-v1",
-                      traceId: result.traceId,
-                      reason: result.reason,
-                      ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
-                    },
-                  });
+    const deliver = (): void => {
+      try {
+        this.#sessionRuntimeBinding!.assertController(pane);
+        if (semanticDelivery)
+          this.#sessionRuntimeBinding!.sendInput(
+            pane,
+            { kind, data },
+            performanceTraceId,
+            causalProbe,
+            causalProbe
+              ? (result) => {
+                  if (this.#closed) return;
+                  if (result.status === "proved") {
+                    this.#sendFrame(null, { type: "causal-cell-proof", proof: result.proof });
+                  } else {
+                    this.#sendFrame(null, {
+                      type: "causal-cell-failure",
+                      failure: {
+                        version: 1,
+                        capability: "causal-cell-v1",
+                        traceId: result.traceId,
+                        reason: result.reason,
+                        ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+                      },
+                    });
+                  }
                 }
-              }
-            : undefined,
-          expectedLifetime,
-        );
-      else if (kind === "text") channel.sub!.sendText(data);
-      else if (kind === "key") channel.sub!.sendKey(data);
-      else throw new Error("Byte input requires semantic runtime");
-      let ackStartedAtMicros: number | null = null;
-      let ackStartedAtSharedMicros: number | null = null;
-      if (trace) {
-        try {
-          ackStartedAtMicros = this.#observability!.nowMicros();
-        } catch {
-          // Diagnostics cannot alter protocol truth.
-        }
-        if (this.#diagnosticSharedRawMicros) {
+              : undefined,
+            expectedLifetime,
+          );
+        else if (kind === "text") channel.sub!.sendText(data);
+        else if (kind === "key") channel.sub!.sendKey(data);
+        else throw new Error("Byte input requires semantic runtime");
+        let ackStartedAtMicros: number | null = null;
+        let ackStartedAtSharedMicros: number | null = null;
+        if (trace) {
           try {
-            ackStartedAtSharedMicros = this.#sharedMicros();
-          } catch {
-            // Preserve process-local ACK diagnostics.
-          }
-        }
-      }
-      sendControl(this.#socket, { type: "input-ack", pane, seq });
-      if (trace && ackStartedAtMicros !== null) {
-        let ackEndedAtMicros: number | null = null;
-        try {
-          ackEndedAtMicros = this.#observability!.nowMicros();
-        } catch {
-          // Diagnostics cannot alter protocol truth.
-        }
-        let ackEndedAtSharedMicros: number | null = null;
-        if (ackStartedAtSharedMicros !== null) {
-          try {
-            ackEndedAtSharedMicros = this.#sharedMicros();
-          } catch {
-            // Preserve process-local ACK diagnostics.
-          }
-        }
-        if (ackEndedAtMicros !== null) {
-          try {
-            this.#observability!.recordSpan(
-              "transport",
-              "pane-stream-input-ack-socket-send",
-              ackStartedAtMicros,
-              ackEndedAtMicros,
-              trace,
-              ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null
-                ? undefined
-                : {
-                    startedAtMicros: ackStartedAtSharedMicros,
-                    endedAtMicros: ackEndedAtSharedMicros,
-                  },
-            );
+            ackStartedAtMicros = this.#observability!.nowMicros();
           } catch {
             // Diagnostics cannot alter protocol truth.
           }
+          if (this.#diagnosticSharedRawMicros) {
+            try {
+              ackStartedAtSharedMicros = this.#sharedMicros();
+            } catch {
+              // Preserve process-local ACK diagnostics.
+            }
+          }
         }
+        sendControl(this.#socket, { type: "input-ack", pane, seq });
+        if (trace && ackStartedAtMicros !== null) {
+          let ackEndedAtMicros: number | null = null;
+          try {
+            ackEndedAtMicros = this.#observability!.nowMicros();
+          } catch {
+            // Diagnostics cannot alter protocol truth.
+          }
+          let ackEndedAtSharedMicros: number | null = null;
+          if (ackStartedAtSharedMicros !== null) {
+            try {
+              ackEndedAtSharedMicros = this.#sharedMicros();
+            } catch {
+              // Preserve process-local ACK diagnostics.
+            }
+          }
+          if (ackEndedAtMicros !== null) {
+            try {
+              this.#observability!.recordSpan(
+                "transport",
+                "pane-stream-input-ack-socket-send",
+                ackStartedAtMicros,
+                ackEndedAtMicros,
+                trace,
+                ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null
+                  ? undefined
+                  : {
+                      startedAtMicros: ackStartedAtSharedMicros,
+                      endedAtMicros: ackEndedAtSharedMicros,
+                    },
+              );
+            } catch {
+              // Diagnostics cannot alter protocol truth.
+            }
+          }
+        }
+      } catch (error) {
+        if (this.#holdForWindowOwnership(error, deliver)) return;
+        this.#fail("control-frame-handler-failed", error);
       }
-    } catch (error) {
-      this.#fail("control-frame-handler-failed", error);
+    };
+    this.#afterWindowOwnership(deliver);
+  }
+
+  /**
+   * Input and geometry frames that arrive while registered-window ownership is
+   * being read again (another session was created or killed) wait for that
+   * read, in arrival order, instead of closing the stream. The mirror refuses
+   * them meanwhile; before, the stream closed with 1011 and the client had to
+   * reconnect. Bounded: a read that does not settle in time closes as before.
+   */
+  #ownershipHeld: (() => void)[] = [];
+  #ownershipDraining = false;
+
+  #afterWindowOwnership(run: () => void): void {
+    if (this.#ownershipHeld.length === 0 && !this.#mirror.windowOwnershipPending?.()) {
+      run();
+      return;
+    }
+    this.#holdUntilWindowOwnership(run);
+  }
+
+  /** A refusal while ownership is pending holds the frame; anything else is the caller's. */
+  #holdForWindowOwnership(error: unknown, run: () => void): boolean {
+    if (
+      !(error instanceof SessionRuntimeControllerLeaseError) ||
+      error.code !== "controller-conflict" ||
+      !this.#mirror.windowOwnershipPending?.()
+    )
+      return false;
+    this.#ownershipHeld.unshift(run);
+    if (!this.#ownershipDraining) void this.#drainWindowOwnership();
+    return true;
+  }
+
+  #holdUntilWindowOwnership(run: () => void): void {
+    if (this.#ownershipHeld.length >= PANE_STREAM_OWNERSHIP_HELD_FRAMES) {
+      this.#ownershipHeld.length = 0;
+      this.#fail("window-ownership-held-overflow");
+      return;
+    }
+    this.#ownershipHeld.push(run);
+    if (!this.#ownershipDraining) void this.#drainWindowOwnership();
+  }
+
+  async #drainWindowOwnership(): Promise<void> {
+    this.#ownershipDraining = true;
+    try {
+      await this.#drainWindowOwnershipOnce();
+    } finally {
+      this.#ownershipDraining = false;
+    }
+  }
+
+  async #drainWindowOwnershipOnce(): Promise<void> {
+    const deadline = Date.now() + this.#ownershipWaitMs;
+    while (!this.#closed && this.#ownershipHeld.length > 0) {
+      if (this.#mirror.windowOwnershipPending?.()) {
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          this.#ownershipHeld.length = 0;
+          this.#fail("window-ownership-unverified");
+          return;
+        }
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          (this.#mirror.verifyWindowOwnership?.() ?? Promise.resolve()).catch(
+            () => new Promise<void>((resolve) => setTimeout(resolve, 25)),
+          ),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, left);
+          }),
+        ]);
+        clearTimeout(timer);
+        continue;
+      }
+      const run = this.#ownershipHeld.shift()!;
+      const before = this.#ownershipHeld.length;
+      run();
+      // A refusal inside run() put it back at the front: wait again.
+      if (this.#ownershipHeld.length > before) continue;
     }
   }
 
