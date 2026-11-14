@@ -5,6 +5,8 @@ import {
   TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION,
   TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION,
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
+  PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
+  PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PaneStreamInputLifetimeSchemaZ,
   type PaneStreamInputLifetime,
   PANE_STREAM_PROTOCOL_VERSION,
@@ -292,6 +294,14 @@ export interface OpenPaneStreamClientOptions {
   readonly onLayoutSnapshot?: (
     frame: Extract<PaneStreamServerFrame, { type: "layout-snapshot" }>,
   ) => void;
+  /**
+   * Capability 119 (#723): the stream's pane set changed in place. Offer 119
+   * in `stream.terminalDelivery.protocolVersions` only together with this
+   * handler; without it a `topology` frame fails the stream. The frame was
+   * checked against the live pane set. A removed pane gets no further frames;
+   * an added pane's `onNegotiated` and deliveries follow the next layout.
+   */
+  readonly onTopology?: (frame: Extract<PaneStreamServerFrame, { type: "topology" }>) => void;
   readonly onInputAck?: (event: {
     readonly pane: string;
     readonly sequence: number;
@@ -335,6 +345,7 @@ export type ConnectIssuedPaneStreamRuntimeClientOptions = Pick<
   | "onTerminalGraphics"
   | "onTerminalGraphicsBlob"
   | "onLayoutSnapshot"
+  | "onTopology"
   | "onInputAck"
   | "onCausalCellProof"
   | "onCausalCellFailure"
@@ -483,6 +494,10 @@ export async function connectIssuedPaneStreamRuntimeClient(
   let closed = false;
   let verified = false;
   const binaryPanes = new Set<string>();
+  // The stream's pane set. It starts as the issued one and changes only by a
+  // `topology` frame from a daemon that confirmed capability 119 (#723).
+  let livePanes: readonly string[] = [...descriptor.panes];
+  let topologyInPlace = false;
   const binaryGraphicsPanes = new Set<string>();
   const offeredBinary = options.stream.terminalDelivery.protocolVersions.some(
     (version) =>
@@ -1022,7 +1037,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
     if (input.kind === "bytes" && !supportsInputBytes)
       return Promise.reject(new Error("Byte input capability unavailable"));
     const pane = target.semanticPaneId;
-    if (!descriptor.panes.includes(pane)) {
+    if (!livePanes.includes(pane)) {
       return Promise.reject(
         new PaneStreamOperationError("invalid-pane", "Terminal input target is outside the lease"),
       );
@@ -1278,7 +1293,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
       try {
         if (data[0] === 84 && data[1] === 68 && data[2] === 67 && data[3] === 49) {
           const { header, bytes } = decodeTerminalDeliveryBinaryChunk(data);
-          if (!descriptor.panes.includes(header.pane) || !binaryPanes.has(header.pane))
+          if (!livePanes.includes(header.pane) || !binaryPanes.has(header.pane))
             return fail("Unnegotiated binary terminal delivery");
           options.onTerminalDelivery(header.pane, {
             type: "terminal.delivery.chunk",
@@ -1291,7 +1306,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
           });
         } else {
           const { header, bytes } = decodeTerminalGraphicsBinary(data);
-          if (!descriptor.panes.includes(header.pane) || !binaryGraphicsPanes.has(header.pane))
+          if (!livePanes.includes(header.pane) || !binaryGraphicsPanes.has(header.pane))
             return fail("Unnegotiated binary graphics delivery");
           options.onTerminalGraphicsBlob?.(header.pane, header.blob, bytes);
         }
@@ -1351,6 +1366,13 @@ export async function connectIssuedPaneStreamRuntimeClient(
         return fail("Pane-stream peer client identity did not match the redeemed connection");
       connectionClientId = frame.connectionClientId ?? null;
       supportsInputLifetime = frame.inputLifetime === true;
+      topologyInPlace =
+        frame.topologyInPlace === true &&
+        options.stream.terminalDelivery.protocolVersions.some(
+          (version) =>
+            version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION ||
+            version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
+        );
       supportsInputBytes =
         frame.inputBytes === true &&
         options.stream.terminalDelivery.protocolVersions.includes(
@@ -1441,13 +1463,33 @@ export async function connectIssuedPaneStreamRuntimeClient(
       options.onCausalCellFailure?.(frame.failure);
       return;
     }
+    if (frame.type === "topology") {
+      if (!topologyInPlace || !options.onTopology) return fail("Unsolicited pane-stream topology");
+      const expected = new Set(livePanes.filter((pane) => !frame.removed.includes(pane)));
+      for (const pane of frame.added) expected.add(pane);
+      if (
+        frame.removed.some((pane) => !livePanes.includes(pane)) ||
+        frame.added.some((pane) => livePanes.includes(pane)) ||
+        expected.size !== frame.panes.length ||
+        frame.panes.some((pane) => !expected.has(pane))
+      )
+        return fail("Pane-stream topology did not match the live pane set");
+      livePanes = [...frame.panes];
+      for (const pane of frame.removed) {
+        binaryPanes.delete(pane);
+        binaryGraphicsPanes.delete(pane);
+        negotiatedDeliveries.delete(pane);
+      }
+      options.onTopology(frame);
+      return;
+    }
     if (frame.type === "terminal-graphics") {
-      if (!descriptor.panes.includes(frame.pane)) return fail("Unissued graphics pane");
+      if (!livePanes.includes(frame.pane)) return fail("Unissued graphics pane");
       if (frame.state.binaryBlobs === true) binaryGraphicsPanes.add(frame.pane);
       else binaryGraphicsPanes.delete(frame.pane);
     }
     if (frame.type === "terminal-delivery-ready") {
-      if (!descriptor.panes.includes(frame.pane)) return fail("Unissued terminal pane");
+      if (!livePanes.includes(frame.pane)) return fail("Unissued terminal pane");
       binaryPanes.delete(frame.pane);
       if (
         frame.negotiation.accepted &&
