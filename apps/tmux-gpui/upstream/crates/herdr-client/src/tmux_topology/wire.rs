@@ -194,7 +194,7 @@ impl LayoutSnapshot {
         if self.kind != "layout-snapshot"
             || self.topology_epoch > SAFE
             || self.layouts.is_empty()
-            || self.layouts.len() > 24
+            || self.layouts.len() > crate::tmux_stream::MAX_PANES
         {
             return Err(Error::Bounds);
         }

@@ -41,10 +41,10 @@ pub(super) enum NameSource {
     Title,
     Generated,
 }
-/// The most panes the native app streams for one session. It mirrors
-/// `PANE_STREAM_MAX_PANES` in packages/contracts/src/pane-stream.ts, which the
-/// daemon enforces when it issues a pane stream; keep the two equal.
-pub(super) const NATIVE_STREAM_MAX_PANES: u64 = 24;
+/// The most panes the native app streams for one session: the stream client's
+/// own limit, which mirrors `PANE_STREAM_MAX_PANES` in
+/// packages/contracts/src/pane-stream.ts (the daemon enforces it at issue).
+pub(super) const NATIVE_STREAM_MAX_PANES: u64 = herdr_client::tmux_stream::MAX_PANES as u64;
 /// What a session row says after its pane count when the native app cannot
 /// open that session.
 pub(super) const TOO_MANY_PANES: &str = "too many";

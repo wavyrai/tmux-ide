@@ -75,8 +75,8 @@ function nonEmpty(env: NodeJS.ProcessEnv, key: string): string | undefined {
   return value ? value : undefined;
 }
 
-function absolutePath(value: string, cwd: string, key: string): string {
-  const path = isAbsolute(value) ? value : resolve(cwd, value);
+function absolutePath(value: string, cwd: () => string, key: string): string {
+  const path = isAbsolute(value) ? value : resolve(cwd(), value);
   if (!isAbsolute(path)) throw new TypeError(`${key} must resolve to an absolute path`);
   return path;
 }
@@ -138,7 +138,18 @@ export function resolveRuntimeNamespace(
   const within = (path: string, parent: string) => isInsideOrEqual(path, parent, identity);
   const env = options.env ?? process.env;
   const userHome = options.userHome ?? homedir();
-  const cwd = options.cwd ?? process.cwd();
+  // Read only for a relative setting (#585): `tmux-ide app` started from a
+  // deleted directory has no current directory, and needs none otherwise.
+  const cwd = (key: string) => (): string => {
+    if (options.cwd !== undefined) return options.cwd;
+    try {
+      return process.cwd();
+    } catch (error) {
+      throw new TypeError(`${key} is relative and the current directory no longer exists`, {
+        cause: error,
+      });
+    }
+  };
   const mode = runtimeMode(env);
   const isolated = ISOLATED_MODES.has(mode);
   const canonicalHome = join(userHome, ".tmux-ide");
@@ -184,10 +195,14 @@ export function resolveRuntimeNamespace(
     throw new TypeError(`${mode} runtime requires an explicit ${STATE_HOME_ENV}`);
   }
 
-  const stateHome = absolutePath(configuredHome ?? canonicalHome, cwd, STATE_HOME_ENV);
+  const stateHome = absolutePath(
+    configuredHome ?? canonicalHome,
+    cwd(STATE_HOME_ENV),
+    STATE_HOME_ENV,
+  );
   const registryDir = absolutePath(
     nonEmpty(env, REGISTRY_DIR_ENV) ?? stateHome,
-    cwd,
+    cwd(REGISTRY_DIR_ENV),
     REGISTRY_DIR_ENV,
   );
   const daemonInfoDir = absolutePath(
@@ -196,7 +211,7 @@ export function resolveRuntimeNamespace(
     // This also keeps an explicitly empty DAEMON_INFO_DIR equivalent to
     // "unset" instead of silently escaping a caller's isolated registry.
     nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? registryDir,
-    cwd,
+    cwd(DAEMON_INFO_DIR_ENV),
     DAEMON_INFO_DIR_ENV,
   );
   const tmuxSocketName = nonEmpty(env, TMUX_SOCKET_NAME_ENV);
@@ -212,7 +227,10 @@ export function resolveRuntimeNamespace(
     throw new TypeError(`${TMUX_SOCKET_NAME_ENV} is invalid`);
   }
   const tmuxSocket = tmuxSocketPath
-    ? ({ kind: "path", path: absolutePath(tmuxSocketPath, cwd, TMUX_SOCKET_PATH_ENV) } as const)
+    ? ({
+        kind: "path",
+        path: absolutePath(tmuxSocketPath, cwd(TMUX_SOCKET_PATH_ENV), TMUX_SOCKET_PATH_ENV),
+      } as const)
     : ({ kind: "name", name: tmuxSocketName ?? "default" } as const);
   if (isolated && tmuxSocket.kind === "name" && tmuxSocket.name === "default") {
     throw new TypeError(`${mode} runtime requires a non-default ${TMUX_SOCKET_NAME_ENV}`);

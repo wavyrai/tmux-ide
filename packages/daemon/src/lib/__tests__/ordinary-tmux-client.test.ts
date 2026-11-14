@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { resolveOrdinaryTmuxClient } from "../tmux-client-execution.ts";
 
 it("resolves relative and empty PATH entries against the supplied child cwd", () => {
@@ -91,6 +91,27 @@ it("starts a new server with bundled tmux, but keeps the PATH client for a runni
         .executable,
     ).toBe(pathTmux);
   } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("finds tmux on an absolute PATH entry when the current directory was deleted (#585)", () => {
+  const directory = mkdtempSync(join(tmpdir(), "ordinary-tmux-deleted-cwd-"));
+  const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+    throw Object.assign(new Error("ENOENT: process.cwd failed, uv_cwd"), { code: "ENOENT" });
+  });
+  try {
+    mkdirSync(join(directory, "bin"));
+    writeFileSync(join(directory, "bin/tmux"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(directory, "bin/tmux"), 0o755);
+    const selected = resolveOrdinaryTmuxClient({
+      // A relative entry cannot be resolved without a current directory; it is skipped.
+      PATH: ["relative-bin", join(directory, "bin")].join(":"),
+      TMUX: "/private/socket,1,0",
+    });
+    expect(selected.executable).toBe(realpathSync(join(directory, "bin/tmux")));
+  } finally {
+    cwd.mockRestore();
     rmSync(directory, { recursive: true, force: true });
   }
 });

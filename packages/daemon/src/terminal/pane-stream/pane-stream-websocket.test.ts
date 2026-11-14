@@ -462,6 +462,7 @@ function harness(
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    openRetryDelaysMs?: readonly number[];
     graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
@@ -527,6 +528,8 @@ function harness(
     };
   });
   const coordinator = new PaneStreamAdmissionCoordinator({
+    // Existing tests fail a step once and expect the close; retries are opt-in here.
+    openRetryDelaysMs: options.openRetryDelaysMs ?? [],
     nativeSurfaces: options.nativeSurfaces,
     localImages: options.localImages,
     daemonInstanceId: INSTANCE,
@@ -4364,6 +4367,177 @@ it("delivers reader names only with capability 118, which also carries 117's bro
     expect(JSON.stringify(panes)).not.toContain("/");
     socket.close();
   }
+  // #585: on a loaded host one slow answer closed the whole stream with 1011,
+  // and nothing was tried twice.
+});
+
+describe("a step of the opening that fails", () => {
+  const negotiation = {
+    accepted: true as const,
+    negotiated: {
+      protocolVersion: 1 as const,
+      encoding: "semantic-v1" as const,
+      richPlacements: false,
+      generation: INSTANCE,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+    },
+  };
+  function flaky(failures: number, error: () => Error = () => new Error("tmux timed out")) {
+    const attempts = new Map<string, number>();
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane, _offer, onMessage) => {
+        const attempt = (attempts.get(pane) ?? 0) + 1;
+        attempts.set(pane, attempt);
+        if (pane === "pane.two" && attempt <= failures) throw error();
+        h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+        return {
+          negotiation,
+          ack: vi.fn(),
+          nack: vi.fn(),
+          setVisibility: vi.fn(),
+          close: async () => undefined,
+        };
+      },
+    });
+    return { h, attempts };
+  }
+
+  it("is tried again, and the stream opens when the second try works", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(1);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(Object.fromEntries(attempts)).toEqual({ "pane.one": 1, "pane.two": 2 });
+    expect(
+      logged.mock.calls.filter(
+        ([, message]) => message === "stream open step failed; trying again",
+      ),
+    ).toEqual([
+      [
+        "pane-stream",
+        "stream open step failed; trying again",
+        expect.objectContaining({
+          step: "pane-delivery-open",
+          attempt: 1,
+          error: "tmux timed out",
+        }),
+      ],
+    ]);
+    logged.mockRestore();
+  });
+
+  it("closes with its cause once every try has failed", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(99);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    // One try and one per delay.
+    expect(attempts.get("pane.two")).toBe(3);
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ cause: "delivery-negotiation-failed", error: "tmux timed out" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("is not repeated when it was a refusal of authority", async () => {
+    const { h, attempts } = flaky(
+      99,
+      () =>
+        new SessionRuntimeControllerLeaseError("invalid-source-pane-binding", "outside the grant"),
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+  });
+
+  it("logs the cause when the ready frame cannot be sent", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const h = harness({ panes: ["pane.one"] });
+    const requestId = freshRequestId();
+    const descriptor = await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.one"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const socket = new FakeSocket();
+    const send = socket.send.bind(socket);
+    socket.send = (data, options) => {
+      if (typeof data === "string" && data.includes('"type":"ready"')) {
+        throw new Error("socket write failed");
+      }
+      send(data, options);
+    };
+    decision.admission.bind(socket);
+    socket.message({
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+    });
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ cause: "ready-frame-failed", error: "socket write failed" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("reads the session again when the first read fails", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"], openRetryDelaysMs: [1, 1] });
+    // The first read is the admission's, answered over HTTP; the second is the opening's.
+    const original = h.mirror.describeSession.bind(h.mirror);
+    let reads = 0;
+    const describe = vi.spyOn(h.mirror, "describeSession").mockImplementation(async (session) => {
+      reads += 1;
+      if (reads === 2) throw new Error("tmux timed out");
+      return original(session);
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(describe.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 it.each([[[1, 117]], [[1, 118]]])(
