@@ -833,6 +833,10 @@ try {
       json,
       expectedVersion: pkg.version,
       supervisionId: values.supervised,
+      // The crash snapshot's file and builder live in the chrome adapter,
+      // which the daemon engine may not import (#783).
+      crashSnapshotSource: (await import("../packages/daemon/src/tui/chrome/snapshot.ts"))
+        .fleetCrashSnapshotSource,
     });
     // The daemon cleanup is complete here. Exit explicitly because stores and
     // native adapters may retain harmless timers/handles that must not turn a

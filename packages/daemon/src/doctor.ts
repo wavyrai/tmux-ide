@@ -6,7 +6,7 @@ import { accessSync, constants, existsSync, mkdtempSync, realpathSync, rmSync } 
 import { tmpdir } from "node:os";
 import { delimiter, resolve, dirname, join } from "node:path";
 import { resolveBundledTmux } from "./lib/bundled-tmux.ts";
-import { readSnapshot } from "./tui/chrome/snapshot.ts";
+import { readSnapshot, snapshotIsRestorePoint } from "./tui/chrome/snapshot.ts";
 import { isListableSession } from "./tui/team/sessions.ts";
 import { nativeCommands, type NativeAnswer, type TmuxProbe } from "./lib/tmux-server-features.ts";
 import { fileURLToPath } from "node:url";
@@ -235,17 +235,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * PURE — is the crash snapshot fresh enough to restore from? It fails when it
- * is missing a live session, or is over a day old while sessions run. Only the
- * chrome updater writes it, and that runs only while a session is adopted.
+ * is missing a live session, or is over a day old while sessions run. The
+ * chrome updater writes it while a session is adopted; otherwise the background
+ * service does, for its default server (lib/daemon-crash-snapshot.ts).
  */
 export function snapshotRow(
   snapshot: { savedAt: string; sessions: readonly { name: string }[] } | null,
   liveSessions: readonly string[] | null,
   nowMs: number,
+  /** When the running tmux server started, if known. */
+  serverStartMs: number | null = null,
 ): CheckResult {
   const label = "crash snapshot (restore)";
   const hint =
-    "Only the chrome updater writes it, while a session is adopted: `tmux-ide adopt --all` starts it";
+    "The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer";
   if (!snapshot) {
     return liveSessions?.length
       ? { label, pass: false, detail: `none yet. ${hint}`, optional: true }
@@ -256,6 +259,22 @@ export function snapshotRow(
     ageMs >= DAY_MS
       ? `${Math.floor(ageMs / DAY_MS)} days old`
       : `${Math.max(0, Math.round(ageMs / 60_000))} min old`;
+  if (
+    liveSessions &&
+    serverStartMs !== null &&
+    snapshotIsRestorePoint(snapshot, { serverStartMs, sessions: liveSessions })
+  ) {
+    // No writer replaces this file: it is the only record of the server that died.
+    const gone = snapshot.sessions
+      .map((session) => session.name)
+      .filter((name) => !liveSessions.includes(name));
+    return {
+      label,
+      pass: false,
+      detail: `restore point kept: saved ${age}, before this tmux server started; ${gone.length} of its sessions ${gone.length === 1 ? "is" : "are"} not running (${gone.slice(0, 5).join(", ")}${gone.length > 5 ? ", …" : ""}). \`tmux-ide restore\` brings them back; delete snapshot.json to let a new snapshot replace it`,
+      optional: true,
+    };
+  }
   const saved = new Set(snapshot.sessions.map((session) => session.name));
   const missing = (liveSessions ?? []).filter((name) => !saved.has(name));
   if (missing.length)
@@ -291,12 +310,34 @@ function safeBundledTmux(): string | null {
   }
 }
 
+/** The `-S`/`-L` arguments that name the server doctor reads. */
+function doctorTmuxServer(): string[] {
+  const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+  const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+  return socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+}
+
+/** `#{start_time}` of the server doctor reads, or null when it cannot be asked. */
+function liveServerStartMs(): number | null {
+  try {
+    const server = doctorTmuxServer();
+    const seconds = Number(
+      execFileSync(resolveTmuxExecutable(), [...server, "display-message", "-p", "#{start_time}"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 3000,
+      }).trim(),
+    );
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The sessions the snapshot should hold, on the server doctor reads; null when unreadable. */
 function liveListableSessions(): string[] | null {
   try {
-    const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
-    const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
-    const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+    const server = doctorTmuxServer();
     return execFileSync(
       resolveTmuxExecutable(),
       [...server, "list-sessions", "-F", "#{session_name}"],
@@ -451,7 +492,7 @@ export async function doctor({
     // The tmux version row above already reports a missing executable.
   }
   checks.push(plainTmuxRow(firstOnPath("tmux"), safeBundledTmux()));
-  checks.push(snapshotRow(readSnapshot(), liveListableSessions(), Date.now()));
+  checks.push(snapshotRow(readSnapshot(), liveListableSessions(), Date.now(), liveServerStartMs()));
 
   checks.push(nodeVersionRow(process.versions.node));
 

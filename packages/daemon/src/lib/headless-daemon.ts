@@ -29,6 +29,7 @@ import { DaemonStartupError, IdeError } from "./errors.ts";
 import { logger, reserveStdoutForProtocol } from "./log.ts";
 import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
+import type { CrashSnapshotSource } from "./daemon-crash-snapshot.ts";
 
 export interface HeadlessDaemonOptions {
   readonly tmuxServerIntent?: ReturnType<typeof resolveTmuxServerIntent>;
@@ -41,6 +42,8 @@ export interface HeadlessDaemonOptions {
   readonly sessionName?: string;
   /** Product version is diagnostic only; protocol compatibility is authoritative. */
   readonly expectedVersion?: string;
+  /** The crash snapshot's file and builder, from the chrome adapter (#783). */
+  readonly crashSnapshotSource?: CrashSnapshotSource;
 }
 
 export interface HeadlessDaemonDependencies {
@@ -512,6 +515,9 @@ async function runHeadlessDaemonGeneration(
         handle = await deps.startEmbeddedDaemon({
           launcher: "headless",
           plugins: true,
+          ...(options.crashSnapshotSource
+            ? { crashSnapshotSource: options.crashSnapshotSource }
+            : {}),
           ...(options.supervisionId
             ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor }
             : {}),
