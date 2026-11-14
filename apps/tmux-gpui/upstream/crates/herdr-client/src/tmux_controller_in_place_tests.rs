@@ -158,6 +158,31 @@ fn a_window_that_cannot_follow_a_frame_within_two_seconds_ends_the_stream() {
     ));
 }
 
+/// The two seconds count from the first frame whose window was not painted:
+/// a second frame does not buy more time.
+#[test]
+fn frames_that_keep_coming_do_not_put_off_the_limit() {
+    let (mut c, _observed, _response, _peer) = in_place();
+    c.session
+        .push_control(topology(4, &["left", "right", "third"], &[], &["third"]));
+    c.session
+        .push_control(snapshot(4, &["left", "right", "third"], "left"));
+    c.poll(1_000).unwrap();
+    c.session.push_control(topology(
+        5,
+        &["left", "right", "third", "fourth"],
+        &[],
+        &["fourth"],
+    ));
+    c.session
+        .push_control(snapshot(5, &["left", "right", "third", "fourth"], "left"));
+    c.poll(2_500).unwrap();
+    assert!(matches!(
+        c.poll(3_000),
+        Err(Error::Topology(tmux_topology::Error::Unissued))
+    ));
+}
+
 /// tmux gives the room of a closed pane to its neighbour. The layout says so
 /// before the neighbour's cells arrive at the new size: the window as it was
 /// stays up for that moment.

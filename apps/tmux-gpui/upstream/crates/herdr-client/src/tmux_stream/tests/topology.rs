@@ -136,6 +136,10 @@ fn a_frame_that_disagrees_with_this_sides_set_ends_the_stream() {
             topology(1, &["pane.a", "pane.b"], &[], &["pane.b"]),
         ),
         (
+            "removes a pane and adds it back",
+            topology(1, &["pane.a", "pane.b"], &["pane.b"], &["pane.b"]),
+        ),
+        (
             "panes lacks one we keep",
             topology(1, &["pane.a"], &[], &[]),
         ),
