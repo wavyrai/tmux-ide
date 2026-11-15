@@ -522,6 +522,44 @@ fn an_agent_proven_by_its_endpoint_alone_that_moved_is_another_row() {
     assert_eq!(gate.moved(&shown.rows[0].key), Some(AGENT_MOVED));
 }
 
+/// Each proof alone tells the pane apart: the same lifetime under another
+/// pane id, and the same pane id with a new lifetime (the pane was closed
+/// and a configured pane of the same id opened).
+#[test]
+fn each_proof_of_an_endpoint_only_pane_alone_makes_another_row() {
+    for (pane, lifetime) in [("pane.two", "life-1"), ("pane.one", "life-2")] {
+        let mut gate = ready();
+        let key = gate.slots[0].context.key.clone();
+        let Observed::Ready(observation) = &gate.slots[0].observed else {
+            unreachable!()
+        };
+        let mut first = observation.clone();
+        first.agents[0].native_identity = None;
+        first.agents[0].pane_id = Some("pane.one".into());
+        first.agents[0].interaction_endpoint = Some(endpoint("life-1", "pane.one"));
+        let e1 = uuid::Uuid::new_v4();
+        gate.epoch = Some(e1);
+        assert!(gate.apply(&key, e1, Ok(first.clone())));
+        let shown = gate.publication();
+        let mut next = first;
+        next.agents[0].pane_id = Some(pane.into());
+        next.agents[0].interaction_endpoint = Some(endpoint(lifetime, pane));
+        let e2 = uuid::Uuid::new_v4();
+        gate.epoch = Some(e2);
+        assert!(gate.apply(&key, e2, Ok(next)));
+        let now = gate.publication();
+        assert!(
+            gate.resolve(&shown.rows[0].key, now.revision).is_none(),
+            "{pane} {lifetime}: the old row opens the new pane"
+        );
+        assert_eq!(
+            gate.moved(&shown.rows[0].key),
+            Some(AGENT_MOVED),
+            "{pane} {lifetime}"
+        );
+    }
+}
+
 /// Review of 8f3e460f (item 3): the same pane that only lost its native
 /// identity is refused too, but not as "another pane".
 #[test]
