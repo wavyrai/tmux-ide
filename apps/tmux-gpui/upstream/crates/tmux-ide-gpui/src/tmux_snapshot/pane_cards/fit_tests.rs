@@ -219,6 +219,10 @@ fn a_window_another_client_holds_is_noticed(cx: &mut TestAppContext) {
     assert_eq!(sent(&receiver), None);
     answer(cx, cols, rows);
     view.read_with(cx, |view, _| assert_eq!(view.window_size.held(), None));
+    // A frame held over a reconnect is not tmux's answer to this window's fit.
+    view.update(cx, |view, _| view.browser_state.retained_preview = true);
+    answer(cx, 160, 40);
+    view.read_with(cx, |view, _| assert_eq!(view.window_size.held(), None));
 }
 
 /// For any layout, canvas and advance (whole or fractional), the fitted grid
