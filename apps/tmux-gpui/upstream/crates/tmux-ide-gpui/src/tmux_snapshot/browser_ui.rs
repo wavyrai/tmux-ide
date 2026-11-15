@@ -444,7 +444,7 @@ impl SnapshotView {
         if !show_sidebar {
             self.sidebar_unmounted();
         }
-        let status = self.status_line();
+        let status = self.status_or_window_size_notice();
         // Routine window navigation must not insert a notice beside the tabs:
         // its width would move the entire strip during every retained frame.
         // Keep failures and developer diagnostics visible without rearming input.

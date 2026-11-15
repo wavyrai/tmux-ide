@@ -169,6 +169,58 @@ fn the_grid_sent_for_two_panes_is_the_grid_the_cards_hold(cx: &mut TestAppContex
     });
 }
 
+/// #695: when tmux paints the window at a size this window did not fit (another
+/// client holds it), the view notices; when tmux shows the fitted grid again,
+/// the notice is gone.
+#[gpui::test]
+fn a_window_another_client_holds_is_noticed(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = fit_test_support::fixture_view(
+            window,
+            cx,
+            sender,
+            7,
+            browser::State {
+                request: 7,
+                surface: browser::Surface::Workspace,
+                input_ready: true,
+                sessions: vec![choice("s1")],
+                panes: vec![choice("pane-a"), choice("pane-b")],
+                selected_session: Some("s1".into()),
+                ..Default::default()
+            },
+        );
+        view.browser_state.regions = side_by_side(132, 44);
+        view.browser_state.frame = Some(frame(132, 44));
+        view.frame = view.browser_state.frame.clone();
+        view
+    });
+    cx.simulate_resize(size(px(1560.), px(1010.)));
+    draw(cx);
+    receiver.try_iter().for_each(drop);
+    let (cols, rows) = fit_test_support::settle(&view, cx, &receiver);
+    let answer = |cx: &mut VisualTestContext, cols: u16, rows: u16| {
+        view.update(cx, |view, cx| {
+            view.browser_state.regions = side_by_side(cols, rows);
+            view.browser_state.frame = Some(frame(cols, rows));
+            view.frame = view.browser_state.frame.clone();
+            cx.notify();
+        });
+        draw(cx);
+    };
+    answer(cx, cols, rows);
+    view.read_with(cx, |view, _| assert_eq!(view.window_size.held(), None));
+    answer(cx, 160, 40);
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.window_size.held(), Some((160, 40)))
+    });
+    // The view does not fit again on its own: no fight with the other client.
+    assert_eq!(sent(&receiver), None);
+    answer(cx, cols, rows);
+    view.read_with(cx, |view, _| assert_eq!(view.window_size.held(), None));
+}
+
 /// For any layout, canvas and advance (whole or fractional), the fitted grid
 /// never puts a cell outside the canvas, and one more column would not fit.
 #[test]

@@ -123,6 +123,7 @@ fn browser_fixture(
         resize_gesture: Default::default(),
         last_resize: None,
         fit_settle: Default::default(),
+        window_size: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: None,

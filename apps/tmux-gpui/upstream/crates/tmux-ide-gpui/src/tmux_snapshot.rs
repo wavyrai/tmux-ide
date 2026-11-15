@@ -77,6 +77,7 @@ mod tests;
 #[cfg(feature = "visual-capture")]
 pub(crate) mod visual_capture;
 mod welcome;
+mod window_size_notice;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
@@ -388,6 +389,7 @@ fn show_owned(
                         resize_gesture: Default::default(),
                         last_resize: None,
                         fit_settle: Default::default(),
+                        window_size: Default::default(),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -486,6 +488,7 @@ struct SnapshotView {
     resize_gesture: divider::Owner,
     last_resize: Option<(u64, u16, u16)>,
     fit_settle: geometry::FitSettle,
+    window_size: window_size_notice::Watch,
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
@@ -752,6 +755,7 @@ impl SnapshotView {
                             } else {
                                 view.fit_settle.clear();
                             }
+                            view.observe_window_size(&frame);
                         });
                         if let Some(preview) = &resize_preview
                             && cards.is_none()
