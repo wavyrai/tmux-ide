@@ -187,6 +187,37 @@ async function finishSeed(sim: SimulatedChannel): Promise<void> {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("keeps a fenced key away from a pane whose lifetime was replaced or is of another generation", async () => {
+    // #397 drops such a key instead of closing the stream, so this fence must hold:
+    // a reused pane id must never receive input fenced to its predecessor.
+    const { registry, sims } = rig();
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const subscribing = editor.subscribe("pane.alpha", () => {});
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    await finishSeed(sims[0]!);
+    await subscribing;
+    const lease = editor.acquireController();
+    // An unfenced key creates the pane's owner, as the pane's current lifetime.
+    editor.sendInput(lease, "pane.alpha", { kind: "text", data: "a" });
+    for (const fence of [
+      { generation: GENERATION_A, incarnation: `${GENERATION_A}:5` },
+      { generation: "22222222-2222-4222-8222-222222222222", incarnation: `${GENERATION_A}:0` },
+    ])
+      expect(() =>
+        editor.sendInput(
+          lease,
+          "pane.alpha",
+          { kind: "text", data: "x" },
+          undefined,
+          undefined,
+          undefined,
+          fence,
+        ),
+      ).toThrow(SessionRuntimeInputLifetimeEndedError);
+    await editor.close();
+    await registry.dispose();
+  });
+
   it("names input fenced to a pane lifetime that has no owner as an ended lifetime", async () => {
     const { registry, sims } = rig();
     const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");

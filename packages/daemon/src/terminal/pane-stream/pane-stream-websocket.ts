@@ -1499,6 +1499,10 @@ export class PaneStreamLiveConnection {
       // Whether this connection held input when it went: the next stream of
       // the same client can only be granted input once that is released.
       ...(this.#heldInput === null ? {} : { heldInput: this.#heldInput }),
+      // Keys not delivered because their pane lifetime had ended (#397).
+      ...(this.#inputLifetimeEndedDropped > 0
+        ? { droppedEndedLifetimeInputs: this.#inputLifetimeEndedDropped }
+        : {}),
     });
     this.#closed = true;
     this.#ownershipHeld.length = 0;
@@ -3650,7 +3654,9 @@ export class PaneStreamLiveConnection {
   }
 
   #inputLifetimeEndedLogged = new Set<string>();
+  #inputLifetimeEndedDropped = 0;
   #noteInputLifetimeEnded(pane: string, error: Error): void {
+    this.#inputLifetimeEndedDropped += 1;
     if (this.#inputLifetimeEndedLogged.has(pane)) return;
     this.#inputLifetimeEndedLogged.add(pane);
     logger.info("pane-stream", "input for an ended pane lifetime not delivered", {
