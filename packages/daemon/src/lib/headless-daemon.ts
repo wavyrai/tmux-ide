@@ -1,6 +1,7 @@
 import {
   assertCanonicalDaemonServerIntent,
   daemonServerProofPending,
+  type CanonicalDaemonBootstrapDependencies,
 } from "./canonical-daemon-bootstrap.ts";
 import { resolveTmuxServerIntent } from "./runtime-namespace.ts";
 import {
@@ -69,6 +70,12 @@ export interface HeadlessDaemonDependencies {
   readonly signalStopDeadlineMs?: number;
   /** How long a signalled stop may take in all. Defaults to SIGNAL_STOP_MAX_MS. */
   readonly signalStopMaxMs?: number;
+  /** This side's proof of the requested tmux server. Defaults to the bootstrap's own tmux read. */
+  readonly serverProof?: CanonicalDaemonBootstrapDependencies["serverProof"];
+  /** How long a just-published generation may take to become attachable. Defaults to 15 s. */
+  readonly attachabilityTimeoutMs?: number;
+  /** The pause before a generation that could not prove its server is started again. */
+  readonly delay?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -215,6 +222,7 @@ async function assertAttachableDaemon(
   // or they would only ever see this identity without its proof.
   let first = true;
   await assertCanonicalDaemonServerIntent(info, options.tmuxServerIntent ?? null, {
+    ...(deps.serverProof ? { serverProof: deps.serverProof } : {}),
     identity: async () => {
       if (first) {
         first = false;
@@ -304,7 +312,9 @@ export const OWN_SERVER_PROOF_RESTARTS = 4;
  * in place). That is not another daemon managing another server, so the
  * process must not exit at once: the generation is started again after a
  * short, growing pause, a bounded number of times. A server intent that is
- * really wrong still ends the process, after the last try.
+ * really wrong still ends the process, after the last try. A proof that names
+ * another server (mismatch) is not retried: it ends the process at once, as
+ * before.
  */
 export function ownServerProofRetry(
   error: unknown,
@@ -312,7 +322,7 @@ export function ownServerProofRetry(
 ): { delayMs: number } | null {
   if (
     !(error instanceof DaemonBootstrapError) ||
-    (error.reason !== "tmux-server-unproven" && error.reason !== "tmux-server-mismatch") ||
+    error.reason !== "tmux-server-unproven" ||
     state.restarts >= OWN_SERVER_PROOF_RESTARTS
   )
     return null;
@@ -697,7 +707,7 @@ async function runHeadlessDaemonGeneration(
         deps,
         info,
         options,
-        DAEMON_ATTACHABILITY_TIMEOUT_MS,
+        deps.attachabilityTimeoutMs ?? DAEMON_ATTACHABILITY_TIMEOUT_MS,
         () => signalRequested,
       );
       options.onOwnedReady?.(info);
@@ -724,7 +734,7 @@ async function runHeadlessDaemonGeneration(
           delayMs: retry.delayMs,
         },
       );
-      await delay(retry.delayMs);
+      await (deps.delay ?? delay)(retry.delayMs);
       if (signalRequested) return "stopped";
       lifecycle.startReason = "tmux-server-unproven";
       return "restart";

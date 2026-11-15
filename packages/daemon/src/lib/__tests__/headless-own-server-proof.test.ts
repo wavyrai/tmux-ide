@@ -25,13 +25,14 @@ describe("a generation that cannot prove its own tmux server", () => {
       delayMs: 250,
     });
     expect(
-      ownServerProofRetry(mismatch, { startReason: "tmux-server-unproven", restarts: 2 }),
+      ownServerProofRetry(unproven, { startReason: "tmux-server-unproven", restarts: 2 }),
     ).toEqual({
       delayMs: 750,
     });
   });
 
-  it("is not started again past the bound or for another error", () => {
+  it("is not started again past the bound, for a server mismatch, or for another error", () => {
+    expect(ownServerProofRetry(mismatch, { startReason: "initial", restarts: 0 })).toBeNull();
     expect(
       ownServerProofRetry(unproven, {
         startReason: "tmux-authority-replaced",
