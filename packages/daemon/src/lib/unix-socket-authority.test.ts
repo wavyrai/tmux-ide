@@ -128,12 +128,13 @@ describe("Unix socket authority", () => {
      * `<root>/a` links to a directory deep enough that the socket's canonical
      * path is `over` bytes past the limit. The socket is bound through the link.
      */
-    async function aliased(over: number) {
+    async function aliased(over: number, prefix = "") {
       const root = mkdtempSync("/tmp/usa-");
       roots.push(root);
       const canonicalRoot = realpathSync(root);
-      const pad = limit + over - Buffer.byteLength(join(canonicalRoot, "r", "", "d", "t.sock")) - 1;
-      const deep = join(root, "r", "p".repeat(pad));
+      const pad =
+        limit + over - Buffer.byteLength(join(canonicalRoot, "r", `${prefix}p`, "d", "t.sock")) + 1;
+      const deep = join(root, "r", prefix + "p".repeat(pad));
       mkdirSync(join(deep, "d"), { recursive: true });
       symlinkSync(deep, join(root, "a"));
       const alias = join(root, "a", "d", "t.sock");
@@ -148,6 +149,26 @@ describe("Unix socket authority", () => {
       expect(unixSocketPathLimit("darwin")).toBe(103);
       expect(unixSocketPathLimit("freebsd")).toBe(103);
       expect(unixSocketPathLimit("linux")).toBe(107);
+    });
+
+    it("keeps a canonical path of exactly the limit", async () => {
+      // No link here: the path given is already canonical.
+      const root = realpathSync(mkdtempSync("/tmp/usa-"));
+      roots.push(root);
+      const pad = limit - Buffer.byteLength(join(root, "p", "t.sock")) + 1;
+      const dir = join(root, "p".repeat(pad));
+      mkdirSync(dir);
+      const exact = join(dir, "t.sock");
+      expect(Buffer.byteLength(exact)).toBe(limit);
+      await socketAt(exact);
+      expect(captureUnixSocketIdentity(exact).path).toBe(exact);
+    });
+
+    it("measures the canonical path in bytes, not characters", async () => {
+      // Ten two-byte letters: 8 bytes over the limit, yet 2 characters under it.
+      const { alias, canonical } = await aliased(8, "é".repeat(10));
+      expect(canonical.length).toBeLessThan(limit);
+      expect(captureUnixSocketIdentity(alias).path).toBe(alias);
     });
 
     it("connects through the caller's spelling and revalidates it", async () => {

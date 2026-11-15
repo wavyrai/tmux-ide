@@ -144,9 +144,6 @@ fn rendered_after(
 // the paths that change what it draws without a spinner tick.
 #[gpui::test]
 fn a_published_theme_change_repaints_the_cached_view_and_the_spinner(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     let (snapshot, cx) = open(cx);
     period(&snapshot, cx);
     let before = cx.update(|_, cx| slot_colors(snapshot.read(cx)));

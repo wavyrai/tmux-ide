@@ -29,6 +29,11 @@ jobs:
       - name: Build and verify universal adaptive app
         run: node scripts/build-macos-notifier.mjs --output "$RUNNER_TEMP/TmuxIdeNotifier.app" --version 0.0.0
 
+      # These need macOS (plutil, the Applications entry) and no dependencies.
+      # They went unrun and stale for weeks before this step (#729).
+      - name: Native installer script tests
+        run: npm run test:installer-native
+
   cli:
     name: CLI checks (Node ${{ matrix.node }})
     runs-on: ubuntu-latest

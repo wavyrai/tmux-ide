@@ -696,6 +696,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
     await this.#mirror.verifyRegisteredWindows();
   }
 
+  /** Ownership is being read again: input and geometry wait, they are not refused for good. */
+  windowOwnershipPending(): boolean {
+    return !this.#disposed && this.#mirror.windowOwnershipPending();
+  }
+
   /** Install the bounded registered-session membership reader. */
   setRegisteredWindowReader(
     reader: import("../mirror/registered-window-guard.ts").RegisteredWindowReader,

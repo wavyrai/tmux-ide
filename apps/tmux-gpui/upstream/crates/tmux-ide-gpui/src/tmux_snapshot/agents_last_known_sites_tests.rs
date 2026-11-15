@@ -423,7 +423,6 @@ fn inks(cx: &mut TestAppContext, state: browser::State, when: When) -> BTreeMap<
 }
 #[gpui::test]
 fn other_states_are_muted_only_when_last_known(cx: &mut TestAppContext) {
-    let _appearance = bezel_theme::lock_appearance();
     let theme = crate::config::Theme::default();
     let row: Row = serde_json::from_value({
         let mut row = agent("session-a");

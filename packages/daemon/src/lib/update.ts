@@ -11,11 +11,15 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   getCurrentVersion,
-  getUpdateStatus,
+  refreshUpdateStatus,
   deriveStatus,
   updateChannel,
+  type fetchLatestVersion,
   type UpdateChannel,
+  type UpdateStatus,
+  type UpdateStatusSource,
 } from "./update-check.ts";
+import { IdeError } from "./errors.ts";
 import {
   installOrigin,
   detectPackageManager,
@@ -99,14 +103,22 @@ export function planUpdate(input: {
 }
 export function renderPlan(
   plan: UpdatePlan,
-  { current, latest, dryRun }: { current: string; latest: string | null; dryRun: boolean },
+  {
+    current,
+    latest,
+    dryRun,
+    source = "registry",
+  }: { current: string; latest: string | null; dryRun: boolean; source?: UpdateStatusSource },
 ): string {
+  // "Up to date" is the registry's word only; a cached answer can be weeks old.
   const status =
     latest && deriveStatus(latest, current).updateAvailable
       ? `tmux-ide v${current} → v${latest} available`
-      : latest
-        ? `tmux-ide v${current} is up to date (registry: v${latest})`
-        : `tmux-ide v${current} (latest version unknown)`;
+      : source === "cache"
+        ? `tmux-ide v${current}: could not reach the npm registry (last known release: ${latest ? `v${latest}` : "unknown"})`
+        : latest
+          ? `tmux-ide v${current} is up to date (registry: v${latest})`
+          : `tmux-ide v${current} (latest version unknown)`;
   return [
     status,
     "",
@@ -118,21 +130,43 @@ export function renderPlan(
     "After updating, relaunch the app. Use tmux-ide update --daemon to replace a running daemon with installed code.",
   ].join("\n");
 }
+/** The update command prints its own failure; ours is one line, never a stack trace. */
+function updateFailure(what: string, error: unknown): IdeError {
+  const { status, signal, message } = error as { status?: unknown; signal?: unknown } & Error;
+  const how =
+    typeof status === "number"
+      ? `exited with status ${status}`
+      : typeof signal === "string"
+        ? `was stopped by ${signal}`
+        : `could not run (${String(message).split("\n")[0]})`;
+  return new IdeError(
+    `The update did not finish: ${what} ${how}. Its own message is above. Retry with: tmux-ide update`,
+    { code: "UPDATE_FAILED", cause: error instanceof Error ? error : undefined },
+  );
+}
 /** Does not refresh skills: the installed package's postinstall owns that step. */
-export function runUpdate(
+export async function runUpdate(
   { cliDir, dryRun, json = false }: { cliDir: string; dryRun: boolean; json?: boolean },
   dependencies: {
     execute?: typeof execFileSync;
     query?: (executable: string, args: string[]) => string;
     currentVersion?: () => string;
-    status?: typeof getUpdateStatus;
+    status?: (scope: {
+      currentVersion: string;
+    }) =>
+      | (UpdateStatus & { source?: UpdateStatusSource })
+      | Promise<UpdateStatus & { source?: UpdateStatusSource }>;
+    fetchLatest?: typeof fetchLatestVersion;
     output?: (line: string) => void;
   } = {},
-): UpdatePlan {
+): Promise<UpdatePlan> {
   if (resolveRuntimeNamespace().development)
     throw new Error("Development instances rebuild exact artifacts; package updates are disabled");
   const current = (dependencies.currentVersion ?? getCurrentVersion)();
-  const { latest } = (dependencies.status ?? getUpdateStatus)({ currentVersion: current });
+  const { latest, source: latestSource = "registry" } = await (
+    dependencies.status ??
+    ((scope) => refreshUpdateStatus({ ...scope, fetchLatest: dependencies.fetchLatest }))
+  )({ currentVersion: current });
   const source = installOrigin(cliDir);
   let plan: UpdatePlan =
     source.origin === "unknown"
@@ -178,19 +212,27 @@ export function runUpdate(
     }
   }
   const output = dependencies.output ?? console.log;
-  if (!json) output(renderPlan(plan, { current, latest, dryRun }));
+  if (!json) output(renderPlan(plan, { current, latest, dryRun, source: latestSource }));
   let executed = false;
   if (!dryRun && plan.executable && plan.args) {
-    // argv only: paths and version metadata never become shell source.
-    (dependencies.execute ?? execFileSync)(plan.executable, plan.args, {
-      stdio: json ? ["ignore", 2, 2] : "inherit",
-    });
+    try {
+      // argv only: paths and version metadata never become shell source.
+      (dependencies.execute ?? execFileSync)(plan.executable, plan.args, {
+        stdio: json ? ["ignore", 2, 2] : "inherit",
+      });
+    } catch (error) {
+      throw updateFailure([plan.executable, ...plan.args].join(" "), error);
+    }
     executed = true;
   }
   if (!dryRun && plan.installerPrefix && plan.channel) {
-    runManagedInstallerUpdate(plan.installerPrefix, plan.channel, json, dependencies.execute);
+    try {
+      runManagedInstallerUpdate(plan.installerPrefix, plan.channel, json, dependencies.execute);
+    } catch (error) {
+      throw updateFailure("the installer", error);
+    }
     executed = true;
   }
-  if (json) output(JSON.stringify({ ...plan, current, latest, dryRun, executed }));
+  if (json) output(JSON.stringify({ ...plan, current, latest, latestSource, dryRun, executed }));
   return plan;
 }
