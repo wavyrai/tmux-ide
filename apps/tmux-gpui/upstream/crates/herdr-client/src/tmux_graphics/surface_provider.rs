@@ -112,7 +112,7 @@ impl Event {
             } => {
                 if !receiver.valid()
                     || panes.is_empty()
-                    || panes.len() > 24
+                    || panes.len() > crate::tmux_stream::MAX_PANES
                     || panes.iter().enumerate().any(|(i, pane)| {
                         !crate::tmux_stream::valid_pane(pane) || panes[..i].contains(pane)
                     })
