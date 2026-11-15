@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   WorkspaceRegistry,
@@ -113,5 +113,53 @@ describe("workspace catalog when tmux cannot be asked (#753)", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ sessions: [{ name: "alpha", dir: "/tmp/alpha" }] });
     });
+  });
+});
+
+// The legacy event stream diffed discoverSessions() every 2 s: an unreadable
+// socket announced every running session as removed, and as added again once
+// tmux answered (#753, review of 5f4c6694).
+describe("the legacy event stream, /api/events, when tmux cannot be asked", () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => {
+    restore?.();
+    restore = null;
+    vi.useRealTimers();
+  });
+
+  it("announces no removal and no return of sessions that kept running", async () => {
+    vi.useFakeTimers();
+    registry.add({ name: "alpha", projectDir: "/tmp/alpha" });
+    let reachable = true;
+    restore = _setTmuxRunner((args) => {
+      if (!reachable)
+        throw Object.assign(new Error("Command failed: tmux"), {
+          stderr: "error connecting to /tmp/t.sock (Permission denied)\n",
+        });
+      if (args[0] === "list-sessions") return "alpha";
+      if (args[0] === "display-message") return "/tmp/alpha";
+      return "";
+    });
+    const response = await createApp().request("/api/events");
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    void (async () => {
+      for (;;) {
+        const next = await reader.read().catch(() => ({ done: true, value: undefined }));
+        if (next.done) return;
+        text += decoder.decode(next.value);
+      }
+    })();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(text).toContain("event: session_added");
+    text = "";
+    reachable = false;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(text).not.toContain("session_removed");
+    reachable = true;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(text).not.toContain("session_added");
+    await reader.cancel();
   });
 });

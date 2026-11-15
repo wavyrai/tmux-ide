@@ -1668,7 +1668,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       let prevOverviews: SessionOverview[] = [];
 
       const poll = () => {
-        const sessions = discoverSessions();
+        const sessions = readSessions();
+        // tmux could not be asked: the sessions may well still run. Diffing an
+        // empty list would announce every one as removed, then added (#753).
+        // Keep the last answer and wait for the next poll.
+        if (sessions === null) return;
         const overviews = buildOverviews(sessions);
 
         const prevNames = new Set(prevOverviews.map((s) => s.name));
