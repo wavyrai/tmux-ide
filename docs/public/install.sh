@@ -175,6 +175,17 @@ lock_is_stale() {
   # Same pid, another start time: the owner exited and its pid was reused.
   [ -n "$lock_start" ] && [ -n "$lock_now" ] && [ "$lock_start" != "$lock_now" ]
 }
+# mkdir(1) alone is not a lock: uutils coreutils' mkdir (the default on Ubuntu
+# 26.04) can exit 0 for two runs that create one directory at once. A lock or
+# guard directory belongs to the run that creates its claim file, which the
+# shell itself creates exclusively (O_EXCL under set -C).
+claim_dir() {
+  mkdir "$1" 2>/dev/null && (set -C; : >"$1/claim") 2>/dev/null
+}
+unclaim_dir() {
+  rm -f "$1/claim" 2>/dev/null
+  rmdir "$1" 2>/dev/null
+}
 lock_busy() {
   if [ -n "$lock_pid" ] && [ -n "$lock_host" ] && [ "$lock_host" != "$(uname -n)" ]; then
     fail "Another installation is running on $lock_host (lock: $1)"
@@ -183,22 +194,22 @@ lock_busy() {
   fail "Another installation may be running (lock: $1). If no installation is running, remove that directory and retry."
 }
 acquire_lock() {
-  if ! mkdir "$1" 2>/dev/null; then
+  if ! claim_dir "$1"; then
     lock_is_stale "$1" || lock_busy "$1"
     # One run at a time may remove a stale lock. The guard is held for a moment
     # only, so one older than a minute belongs to a run that died holding it.
-    [ -z "$(find "$1.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$1.takeover" 2>/dev/null || true
+    [ -z "$(find "$1.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || unclaim_dir "$1.takeover" || true
     # From here the owner read above is the dead one; never name it as running.
     lock_pid=''
-    mkdir "$1.takeover" 2>/dev/null || lock_busy "$1"
+    claim_dir "$1.takeover" || lock_busy "$1"
     if lock_is_stale "$1"; then
       rm -f "$1/owner" "$1"/owner.* 2>/dev/null || true
-      rmdir "$1" 2>/dev/null || true
+      unclaim_dir "$1" || true
       lock_pid=''
     fi
     lock_taken=true
-    mkdir "$1" 2>/dev/null || lock_taken=false
-    rmdir "$1.takeover" 2>/dev/null || true
+    claim_dir "$1" || lock_taken=false
+    unclaim_dir "$1.takeover" || true
     [ "$lock_taken" = true ] || lock_busy "$1"
     step 'Removed the lock of an installation that is no longer running'
   fi
@@ -215,7 +226,7 @@ release() {
   if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi
   if [ -n "$lock_held" ]; then
     rm -f "$lock_held/owner" "$lock_held"/owner.* 2>/dev/null
-    rmdir "$lock_held" 2>/dev/null
+    unclaim_dir "$lock_held"
   fi
 }
 main() {
