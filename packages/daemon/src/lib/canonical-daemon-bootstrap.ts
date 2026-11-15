@@ -3,6 +3,7 @@ import {
   captureUnboundTmuxSelectorProof,
   type TmuxServerProof,
 } from "./tmux-server-proof.ts";
+import { invocationDirectory } from "./invocation-directory.ts";
 import {
   createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
@@ -460,7 +461,9 @@ export function createCanonicalDaemonBootstrapCoordinator(
           ? resolveTmuxServerIntent()
           : options.tmuxServerIntent,
       ),
-    spawn: () => deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? process.cwd())),
+    // A deleted current directory starts the daemon from home (#585).
+    spawn: () =>
+      deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? invocationDirectory())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
     now: deps.now,

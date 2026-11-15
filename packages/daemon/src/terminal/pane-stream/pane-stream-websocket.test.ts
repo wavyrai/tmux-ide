@@ -462,11 +462,13 @@ function harness(
       typeof PaneStreamAdmissionCoordinator
     >[0]["bindSessionRuntime"];
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
+    openRetryDelaysMs?: readonly number[];
     graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
     diagnosticAfterFrameParse?: () => void;
     explicitAuthorityReplay?: boolean;
+    ownershipWaitMs?: number;
   } = {},
 ) {
   const mirror = new FakeMirror(options.panes ?? ["pane.editor", "pane.shell"]);
@@ -527,6 +529,8 @@ function harness(
     };
   });
   const coordinator = new PaneStreamAdmissionCoordinator({
+    // Existing tests fail a step once and expect the close; retries are opt-in here.
+    openRetryDelaysMs: options.openRetryDelaysMs ?? [],
     nativeSurfaces: options.nativeSurfaces,
     localImages: options.localImages,
     daemonInstanceId: INSTANCE,
@@ -604,6 +608,7 @@ function harness(
     maxInputBytesPerWindow: options.maxInputBytesPerWindow,
     inputRateWindowMs: options.inputRateWindowMs,
     maxSocketBufferedBytes: options.maxSocketBufferedBytes,
+    ...(options.ownershipWaitMs === undefined ? {} : { ownershipWaitMs: options.ownershipWaitMs }),
     now,
     schedule: scheduler.schedule,
   });
@@ -4364,6 +4369,177 @@ it("delivers reader names only with capability 118, which also carries 117's bro
     expect(JSON.stringify(panes)).not.toContain("/");
     socket.close();
   }
+  // #585: on a loaded host one slow answer closed the whole stream with 1011,
+  // and nothing was tried twice.
+});
+
+describe("a step of the opening that fails", () => {
+  const negotiation = {
+    accepted: true as const,
+    negotiated: {
+      protocolVersion: 1 as const,
+      encoding: "semantic-v1" as const,
+      richPlacements: false,
+      generation: INSTANCE,
+      deliveryNonce: "00000000-0000-4000-8000-000000000098",
+    },
+  };
+  function flaky(failures: number, error: () => Error = () => new Error("tmux timed out")) {
+    const attempts = new Map<string, number>();
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane, _offer, onMessage) => {
+        const attempt = (attempts.get(pane) ?? 0) + 1;
+        attempts.set(pane, attempt);
+        if (pane === "pane.two" && attempt <= failures) throw error();
+        h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+        return {
+          negotiation,
+          ack: vi.fn(),
+          nack: vi.fn(),
+          setVisibility: vi.fn(),
+          close: async () => undefined,
+        };
+      },
+    });
+    return { h, attempts };
+  }
+
+  it("is tried again, and the stream opens when the second try works", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(1);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(Object.fromEntries(attempts)).toEqual({ "pane.one": 1, "pane.two": 2 });
+    expect(
+      logged.mock.calls.filter(
+        ([, message]) => message === "stream open step failed; trying again",
+      ),
+    ).toEqual([
+      [
+        "pane-stream",
+        "stream open step failed; trying again",
+        expect.objectContaining({
+          step: "pane-delivery-open",
+          attempt: 1,
+          error: "tmux timed out",
+        }),
+      ],
+    ]);
+    logged.mockRestore();
+  });
+
+  it("closes with its cause once every try has failed", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(99);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    // One try and one per delay.
+    expect(attempts.get("pane.two")).toBe(3);
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ cause: "delivery-negotiation-failed", error: "tmux timed out" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("is not repeated when it was a refusal of authority", async () => {
+    const { h, attempts } = flaky(
+      99,
+      () =>
+        new SessionRuntimeControllerLeaseError("invalid-source-pane-binding", "outside the grant"),
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+  });
+
+  it("logs the cause when the ready frame cannot be sent", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const h = harness({ panes: ["pane.one"] });
+    const requestId = freshRequestId();
+    const descriptor = await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.one"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const socket = new FakeSocket();
+    const send = socket.send.bind(socket);
+    socket.send = (data, options) => {
+      if (typeof data === "string" && data.includes('"type":"ready"')) {
+        throw new Error("socket write failed");
+      }
+      send(data, options);
+    };
+    decision.admission.bind(socket);
+    socket.message({
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+    });
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ cause: "ready-frame-failed", error: "socket write failed" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("reads the session again when the first read fails", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two"], openRetryDelaysMs: [1, 1] });
+    // The first read is the admission's, answered over HTTP; the second is the opening's.
+    const original = h.mirror.describeSession.bind(h.mirror);
+    let reads = 0;
+    const describe = vi.spyOn(h.mirror, "describeSession").mockImplementation(async (session) => {
+      reads += 1;
+      if (reads === 2) throw new Error("tmux timed out");
+      return original(session);
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(describe.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 it.each([[[1, 117]], [[1, 118]]])(
@@ -4418,3 +4594,272 @@ it.each([[[1, 117]], [[1, 118]]])(
     expect(inflateSync).not.toHaveBeenCalled();
   },
 );
+
+describe("input while registered-window ownership is read again", () => {
+  // Another session created or killed makes the daemon read window ownership
+  // again; until then the mirror refuses input and geometry. The stream closed
+  // with 1011 on the next keystroke and the client reconnected.
+  const PENDING = "Window ownership is being verified. Retry after session discovery completes.";
+  const geometryLease = {
+    generation: INSTANCE,
+    session: SESSION,
+    clientId: "test:interactive",
+    authority: "geometry" as const,
+    token: "00000000-0000-4000-8000-000000000095",
+    revision: 1,
+  };
+  function ownership(h: ReturnType<typeof harness>, pending: boolean) {
+    const state = { pending, reads: 0, settle: () => undefined as void };
+    const mirror = h.mirror as FakeMirror & {
+      windowOwnershipPending?: () => boolean;
+      verifyWindowOwnership?: () => Promise<void>;
+    };
+    mirror.windowOwnershipPending = () => state.pending;
+    mirror.verifyWindowOwnership = () => {
+      state.reads += 1;
+      return new Promise<void>((resolve) => {
+        state.settle = () => {
+          state.pending = false;
+          resolve();
+        };
+      });
+    };
+    return state;
+  }
+
+  it("waits for the read, then delivers input and geometry in order, and stays open", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    socket.message({
+      type: "viewport",
+      seq: 1,
+      cols: 100,
+      rows: 30,
+      authorityLease: geometryLease,
+    });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 2, data: "b" });
+    await settled();
+    expect(h.sendInput).not.toHaveBeenCalled();
+    expect(h.fitViewport).not.toHaveBeenCalled();
+    expect(socket.closed).toBeNull();
+    expect(state.reads).toBeGreaterThan(0);
+    state.settle();
+    await vi.waitFor(() => expect(h.sendInput).toHaveBeenCalledTimes(2));
+    expect(h.sendInput.mock.calls.map((call) => call[1])).toEqual([
+      { kind: "text", data: "a" },
+      { kind: "text", data: "b" },
+    ]);
+    expect(h.fitViewport).toHaveBeenCalledWith(geometryLease, 100, 30);
+    expect(h.sendInput.mock.invocationCallOrder[0]).toBeLessThan(
+      h.fitViewport.mock.invocationCallOrder[0]!,
+    );
+    expect(h.fitViewport.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendInput.mock.invocationCallOrder[1]!,
+    );
+    expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual([1, 2]);
+    expect(socket.framesOfType("viewport-ack")[0]?.outcome).toBe("ok");
+    expect(socket.closed).toBeNull();
+  });
+
+  it("holds a frame the runtime refused because ownership became pending, and sends it after the read", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, false);
+    h.sendInput.mockImplementationOnce(() => {
+      state.pending = true;
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+    });
+    socket.message({ type: "input", kind: "key", pane: "pane.editor", seq: 1, data: "Enter" });
+    await settled();
+    expect(socket.closed).toBeNull();
+    expect(socket.framesOfType("input-ack")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() => expect(socket.framesOfType("input-ack")).toHaveLength(1));
+    expect(h.sendInput).toHaveBeenCalledTimes(2);
+    expect(socket.closed).toBeNull();
+  });
+
+  it("grants an authority request after the read instead of rejecting it", async () => {
+    // Soak, 14 Nov: after a churn the app's next two streams were refused input
+    // authority and never became ready; the terminal was back after 19 s.
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    const grant = h.requestAuthority.getMockImplementation()!;
+    h.requestAuthority.mockImplementation((authority) => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      return grant(authority);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "input",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    expect(socket.closed).toBeNull();
+    state.settle();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("authority-receipt")).toEqual([
+        expect.objectContaining({ authority: "input", status: "granted" }),
+      ]),
+    );
+    expect(socket.closed).toBeNull();
+  });
+
+  it("does not let a release overtake a held request (review of #394, P1)", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    const grant = h.requestAuthority.getMockImplementation()!;
+    h.requestAuthority.mockImplementation((authority) => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      return grant(authority);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "geometry",
+    });
+    socket.message({
+      type: "authority-release",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000093",
+      authority: "geometry",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() => expect(socket.framesOfType("authority-receipt")).toHaveLength(2));
+    expect(socket.framesOfType("authority-receipt").map((frame) => frame.status)).toEqual([
+      "granted",
+      "released",
+    ]);
+    // Released last: a viewport now is refused (input-rejected), as without geometry.
+    socket.message({ type: "viewport", seq: 1, cols: 90, rows: 30, authorityLease: geometryLease });
+    expect(h.fitViewport).not.toHaveBeenCalled();
+  });
+
+  it("holds at most 256 frames, delivers them in order, and closes on the 257th", async () => {
+    for (const count of [256, 257]) {
+      const h = harness({ maxInputFramesPerWindow: 1000 });
+      const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+      const state = ownership(h, true);
+      for (let seq = 1; seq <= count; seq += 1)
+        socket.message({ type: "input", kind: "text", pane: "pane.editor", seq, data: "a" });
+      await settled();
+      if (count === 257) {
+        await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+        expect(h.sendInput).not.toHaveBeenCalled();
+        continue;
+      }
+      expect(socket.closed).toBeNull();
+      state.settle();
+      await vi.waitFor(() => expect(socket.framesOfType("input-ack")).toHaveLength(256));
+      expect(socket.framesOfType("input-ack").map((frame) => frame.seq)).toEqual(
+        Array.from({ length: 256 }, (_, index) => index + 1),
+      );
+      expect(socket.closed).toBeNull();
+    }
+  });
+
+  it("checks a held frame again after the read: a conflict found then closes, with no ack", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, true);
+    let conflict = false;
+    h.sendInput.mockImplementation(() => {
+      if (state.pending)
+        throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+      if (conflict)
+        throw new SessionRuntimeControllerLeaseError(
+          "controller-conflict",
+          "Linked windows across registered sessions are unsupported.",
+        );
+    });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    await settled();
+    conflict = true;
+    state.settle();
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+    expect(socket.framesOfType("input-ack")).toHaveLength(0);
+  });
+
+  it("holds a viewport the runtime refused because ownership became pending", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, false);
+    h.fitViewport.mockImplementationOnce(() => {
+      state.pending = true;
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+    });
+    socket.message({
+      type: "viewport",
+      seq: 1,
+      cols: 100,
+      rows: 30,
+      authorityLease: geometryLease,
+    });
+    await settled();
+    expect(socket.closed).toBeNull();
+    expect(socket.framesOfType("viewport-ack")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() => expect(socket.framesOfType("viewport-ack")).toHaveLength(1));
+    expect(socket.framesOfType("viewport-ack")[0]?.outcome).toBe("ok");
+    expect(h.fitViewport).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds an authority request the runtime refused because ownership became pending", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    const state = ownership(h, false);
+    h.requestAuthority.mockImplementationOnce(() => {
+      state.pending = true;
+      throw new SessionRuntimeControllerLeaseError("controller-conflict", PENDING);
+    });
+    socket.message({
+      type: "authority-request",
+      generation: INSTANCE,
+      requestId: "00000000-0000-4000-8000-000000000094",
+      authority: "input",
+    });
+    await settled();
+    expect(socket.framesOfType("authority-receipt")).toHaveLength(0);
+    state.settle();
+    await vi.waitFor(() =>
+      expect(socket.framesOfType("authority-receipt")).toEqual([
+        expect.objectContaining({ authority: "input", status: "granted" }),
+      ]),
+    );
+    expect(h.requestAuthority).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes as before when ownership is not read again in time", async () => {
+    const h = harness({ ownershipWaitMs: 40 });
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    ownership(h, true);
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+    expect(h.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("still closes for a refusal that is not a pending read", async () => {
+    const h = harness();
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    ownership(h, false);
+    h.sendInput.mockImplementationOnce(() => {
+      throw new SessionRuntimeControllerLeaseError(
+        "controller-conflict",
+        "Linked windows across registered sessions are unsupported.",
+      );
+    });
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 1, data: "a" });
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
+  });
+});
