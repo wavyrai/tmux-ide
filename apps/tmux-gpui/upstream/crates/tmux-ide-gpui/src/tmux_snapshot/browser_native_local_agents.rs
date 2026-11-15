@@ -80,6 +80,9 @@ pub(super) struct Gate {
     /// Every observed session is on a daemon that pushes agent changes, so no
     /// periodic re-read is scheduled after a cycle.
     pushed: bool,
+    /// The workspace status line before a click was refused, put back by the
+    /// next agent that opens.
+    refused_status: Option<String>,
 }
 impl Gate {
     pub(super) fn tab_observation(
@@ -388,30 +391,56 @@ impl Gate {
         None
     }
     /// A row is its agent in one pane: the session context, the agent id and
-    /// the pane's native identity (server epoch and pane birth id). A change of
-    /// state (activity, attention) keeps the key, so a click on the row as it
-    /// was painted still opens that agent (#764: a busy agent changed state
-    /// between paint and click, and the click was dropped). The same agent in
-    /// another pane is another row.
+    /// everything that proves the pane: its id, its native identity (server
+    /// epoch and pane birth id) and its interaction endpoint's pane lifetime,
+    /// each when present. An agent may be proven by its endpoint alone, and
+    /// its id can come back in another pane. A change of state (activity,
+    /// attention) keeps the key, so a click on the row as it was painted still
+    /// opens that agent (#764: a busy agent changed state between paint and
+    /// click, and the click was dropped). Any change of the pane is another
+    /// row.
     fn row_key(&self, slot: &Slot, agent: &ObservedAgent) -> String {
-        let pane = (agent.native_identity.as_ref()).map_or_else(String::new, |pane| {
+        let pane = agent.pane_id.as_deref().unwrap_or_default();
+        let native = (agent.native_identity.as_ref()).map_or_else(String::new, |pane| {
             format!("{}/{}", pane.server_epoch, pane.pane_birth_id)
         });
-        format!("{}\0{}\0{pane}", slot.context.key, agent.id)
+        let lifetime = (agent.interaction_endpoint.as_ref())
+            .map_or("", |endpoint| endpoint.pane_lifetime_id.as_str());
+        format!(
+            "{}\0{}\0{pane}\0{native}\0{lifetime}",
+            slot.context.key, agent.id
+        )
     }
-    /// The row's agent is still observed, but in another pane than the row
-    /// named: the click is refused with a notice, never opened elsewhere.
-    pub(super) fn moved(&self, key: &str) -> bool {
-        self.enabled
-            && self.slots.iter().any(|slot| {
-                let Observed::Ready(result) = &slot.observed else {
-                    return false;
-                };
-                result.agents.iter().any(|agent| {
-                    key.starts_with(&format!("{}\0{}\0", slot.context.key, agent.id))
-                        && self.row_key(slot, agent) != key
-                })
-            })
+    /// The row's agent is still observed, but its pane is not the one the row
+    /// named: the click is refused with this notice, never opened elsewhere.
+    pub(super) fn moved(&self, key: &str) -> Option<&'static str> {
+        if !self.enabled {
+            return None;
+        }
+        for slot in &self.slots {
+            let Observed::Ready(result) = &slot.observed else {
+                continue;
+            };
+            for agent in &result.agents {
+                let prefix = format!("{}\0{}\0", slot.context.key, agent.id);
+                let current = self.row_key(slot, agent);
+                if !key.starts_with(&prefix) || current == key {
+                    continue;
+                }
+                // The pane id, then each proof of the pane.
+                let painted: Vec<&str> = key[prefix.len()..].split('\0').collect();
+                let now: Vec<&str> = current[prefix.len()..].split('\0').collect();
+                // The same pane id, and no proof that contradicts the painted
+                // one (a proof only went missing or was added): the daemon
+                // could not confirm the pane; it did not see another.
+                let lost = painted.len() == now.len()
+                    && painted.first() == now.first()
+                    && (painted.iter().zip(&now).skip(1))
+                        .all(|(was, is)| was.is_empty() || is.is_empty() || was == is);
+                return Some(if lost { AGENT_UNCONFIRMED } else { AGENT_MOVED });
+            }
+        }
+        None
     }
 }
 fn contexts(
@@ -741,14 +770,15 @@ impl Local {
             return Ok(());
         }
         let Some((context, agent)) = self.agents.resolve(&key, revision) else {
-            if !self.agents.moved(&key) {
+            let Some(notice) = self.agents.moved(&key) else {
                 return Ok(());
-            }
+            };
             if self.state.surface == Surface::Home {
                 self.state.request = request;
-                self.state.home_notice = Some(AGENT_MOVED.into());
+                self.state.home_notice = Some(notice.into());
             } else {
-                self.state.status = AGENT_MOVED.into();
+                let before = std::mem::replace(&mut self.state.status, notice.into());
+                self.agents.refused_status.get_or_insert(before);
             }
             return self.publish();
         };
@@ -758,7 +788,14 @@ impl Local {
         {
             return Ok(());
         }
-        let _ = self.open_agent_target(request, context, agent)?;
+        if self.open_agent_target(request, context, agent)?
+            && let Some(before) = self.agents.refused_status.take()
+            && [AGENT_MOVED, AGENT_UNCONFIRMED].contains(&self.state.status.as_str())
+        {
+            // The refusal is over: the status says what it said before.
+            self.state.status = before;
+            self.publish()?;
+        }
         Ok(())
     }
     fn open_agent_target(
@@ -795,6 +832,10 @@ impl Local {
 
 /// A clicked agent row whose agent is now in another pane.
 pub(super) const AGENT_MOVED: &str = "That agent is now in another pane. Select it again.";
+/// A clicked agent row whose pane id is the same, but whose proof of the pane
+/// went missing: the daemon could not confirm the pane.
+pub(super) const AGENT_UNCONFIRMED: &str =
+    "That agent's pane could not be confirmed. Select it again.";
 
 #[cfg(test)]
 #[path = "browser_native_local_agents_tests.rs"]
