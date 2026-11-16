@@ -9,6 +9,15 @@ use bezel_ui::widgets::{ButtonStyle, Buttons as _};
 /// "Earlier" collects what came before versions were listed.
 pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
     (
+        "0.1.18",
+        &[
+            "Splitting or closing a pane from another tmux client no longer reconnects the terminal.",
+            "Using the app takes the window size back from another tmux client on the same window.",
+            "A pane says when its images are no longer available, so you know to redraw them.",
+            "A click on a busy agent opens it the first time, and Tab reaches each machine's actions on Home.",
+        ],
+    ),
+    (
         "0.1.17",
         &[
             "Terminals reconnect by themselves when the connection to the background service or tmux drops.",

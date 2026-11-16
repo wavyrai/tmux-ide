@@ -543,8 +543,10 @@ fn whats_new_is_due_once_per_version_for_the_welcomed() {
         ..Default::default()
     };
     assert_eq!(whats_new::due(&state), whats_new::notes("0.1.17"));
-    // A short card: a handful of one-line items.
-    assert!(whats_new::notes("0.1.17").unwrap().len() <= 4);
+    // A short card: a handful of one-line items, for every version.
+    for (version, notes) in whats_new::RELEASES {
+        assert!(notes.len() <= 4, "{version}");
+    }
     state.whats_new_seen = Some("0.1.17".into());
     assert_eq!(whats_new::due(&state), None, "seen");
     state.whats_new_seen = Some("0.1.16".into());
