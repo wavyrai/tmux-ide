@@ -62,7 +62,20 @@ fn open(
     wakes_over(&snapshot, cx, Duration::from_millis(400));
     // The fixture's first fit waits for a frame of the new size, which no
     // daemon sends here, and its limit reads the real clock: end it.
-    cx.update(|_, cx| snapshot.update(cx, |view, _| view.pending_input = None));
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, cx| {
+            view.pending_input = None;
+            // The daemon answers a fit with a frame of that size. Without it
+            // tmux would be holding another size, which the view notices
+            // (#695) with one wake.
+            if let Some((_, cols, rows)) = view.last_resize {
+                let frame = fit_test_support::blank_frame(cols, rows);
+                view.browser_state.frame = Some(frame.clone());
+                view.frame = Some(frame);
+                cx.notify();
+            }
+        })
+    });
     wakes_over(&snapshot, cx, Duration::from_millis(100));
     (snapshot, cx)
 }

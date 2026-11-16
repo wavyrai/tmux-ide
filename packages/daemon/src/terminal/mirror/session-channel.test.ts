@@ -2973,6 +2973,44 @@ describe("window viewport scope", () => {
     await rig.channel.dispose();
   });
 
+  // #695: another tmux client can hold the window at its own size. A fit (the
+  // app on focus or after its canvas changed) wins it back; nothing else does,
+  // so two clients never fight over it.
+  it("wins the window back from another client on a fit, and only on a fit", async () => {
+    vi.useFakeTimers();
+    try {
+      const rig = await startedRig();
+      const reclaims = () =>
+        rig.sim.written.filter((command) => command.includes("switch-client")).length;
+      rig.channel.fitViewport(90, 28);
+      expect(reclaims()).toBe(0); // not the geometry owner: never
+      rig.channel.setGeometryParticipation(true);
+      const before = rig.sim.written.length;
+      rig.channel.fitViewport(97, 30);
+      const sent = rig.sim.written.slice(before);
+      expect(sent).toHaveLength(3);
+      expect(sent[1]).toBe("refresh-client -C 97x30");
+      // Only under window-size latest, and only when the window is not this client's size.
+      expect(sent[2]).toContain(
+        "'#{&&:#{==:#{window-size},latest},#{||:#{!=:#{window_width},#{client_width}},#{!=:#{window_height},#{client_height}}}}'",
+      );
+      expect(sent[2]).toMatch(
+        /^if-shell -F -t '\$1' .* 'switch-client -t .*\$1.*' 'display-message -p/u,
+      );
+      // A layout change, another client resizing, new cell pixels, time passing.
+      rig.sim.feedLines("%layout-change @1 cccc,160x40,0,0,1 cccc,160x40,0,0,1 0");
+      rig.sim.feedLines("%client-resized /dev/ttys009");
+      rig.channel.setCellPixels(16, 34);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reclaims()).toBe(1);
+      rig.channel.fitViewport(97, 30);
+      expect(reclaims()).toBe(2);
+      await rig.channel.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retains precise metrics across fits and forwards precision-only changes", async () => {
     const rig = await startedRig();
     rig.channel.setGeometryParticipation(true);
@@ -2986,6 +3024,7 @@ describe("window viewport scope", () => {
       "refresh-client -C 110x34/17x40/16861x40000",
       expect.stringContaining("if-shell -F -t '$1'"),
       "refresh-client -C 80x24/17x40/16861x40000",
+      expect.stringContaining("switch-client -t"),
     ]);
     for (const width of [0, 999, 1024001, Infinity, 16000.5])
       expect(() => rig.channel.setCellPixels(17, 40, { width, height: 40000 })).toThrow(RangeError);

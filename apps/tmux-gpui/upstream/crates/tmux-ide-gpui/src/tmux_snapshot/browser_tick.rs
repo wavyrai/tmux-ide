@@ -153,6 +153,7 @@ impl SnapshotView {
             poll.then_some(now + POLL),
             self.fit_settle.due_at(),
             self.palette.due_at(),
+            self.window_size.due_at(),
             self.graphics.store.waiting().then_some(now + IMAGE_POLL),
             #[cfg(test)]
             self.idle_tick.deadline,
@@ -184,6 +185,10 @@ impl SnapshotView {
         if !self.terminal_input_ready() || self.selection.is_some() || self.divider.is_some() {
             self.fit_settle.clear();
         } else if self.fit_settle.due(super::geometry::fit_now()) {
+            cx.notify();
+        }
+        if self.window_size.take_due(cx.background_executor().now()) {
+            // The notice is due (#695): render it, even with no frame since.
             cx.notify();
         }
         self.flush_attention();
