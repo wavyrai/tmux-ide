@@ -11,11 +11,49 @@ pub enum CatalogSource {
     #[cfg(unix)]
     Remote(Arc<RemoteSource>),
 }
+/// One machine's route, shared by every source of the same machine.
+#[cfg(unix)]
+type SharedRoute = Arc<std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>>;
+/// The routes of the sources that exist, by machine. The app opened a source
+/// per window, picker and fleet row, and each opened its own SSH forward to the
+/// same machine; a healthy route is now shared, so one machine has one
+/// forward. Held weakly: the route ends with the last source of its machine.
+#[cfg(unix)]
+static ROUTES: std::sync::Mutex<
+    Vec<(
+        (String, Option<String>),
+        std::sync::Weak<std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>>,
+    )>,
+> = std::sync::Mutex::new(Vec::new());
+#[cfg(unix)]
+fn shared_route(
+    target: &crate::tmux_ssh::SshTarget,
+    expected_environment: Option<&str>,
+) -> SharedRoute {
+    let key = (
+        target.as_str().to_owned(),
+        expected_environment.map(str::to_owned),
+    );
+    let Ok(mut routes) = ROUTES.lock() else {
+        return Arc::default();
+    };
+    routes.retain(|(_, route)| route.strong_count() > 0);
+    if let Some(route) = routes
+        .iter()
+        .find(|(known, _)| *known == key)
+        .and_then(|(_, route)| route.upgrade())
+    {
+        return route;
+    }
+    let route = SharedRoute::default();
+    routes.push((key, Arc::downgrade(&route)));
+    route
+}
 #[cfg(unix)]
 pub struct RemoteSource {
     target: crate::tmux_ssh::SshTarget,
     expected_environment: Option<String>,
-    route: std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>,
+    route: SharedRoute,
     opening: std::sync::Mutex<Option<Arc<AtomicBool>>>,
     stopped: AtomicBool,
 }
@@ -25,10 +63,11 @@ impl CatalogSource {
         target: crate::tmux_ssh::SshTarget,
         expected_environment: Option<String>,
     ) -> Self {
+        let route = shared_route(&target, expected_environment.as_deref());
         Self::Remote(Arc::new(RemoteSource {
             target,
             expected_environment,
-            route: std::sync::Mutex::new(None),
+            route,
             opening: std::sync::Mutex::new(None),
             stopped: AtomicBool::new(false),
         }))
@@ -70,6 +109,11 @@ impl CatalogSource {
             source.stopped.store(true, Ordering::Release);
             if let Some(opening) = source.opening.lock().map_err(|_| Error::Retired)?.as_ref() {
                 opening.store(true, Ordering::Release);
+            }
+            // Another source of the same machine still uses the route: it ends
+            // with the last one (or with the app, through the forward's guard).
+            if Arc::strong_count(&source.route) > 1 {
+                return Ok(());
             }
             let mut cached = source.route.lock().map_err(|_| Error::Retired)?;
             if let Some(route) = cached.as_ref() {

@@ -77,7 +77,7 @@ fn stale_worker_reset_cannot_retire_replacement_generation() {
     let source = CatalogSource::Remote(Arc::new(RemoteSource {
         target: crate::tmux_ssh::SshTarget::parse("fixture.invalid").unwrap(),
         expected_environment: None,
-        route: Mutex::new(Some(fixture())),
+        route: Arc::new(Mutex::new(Some(fixture()))),
         opening: Mutex::new(None),
         stopped: AtomicBool::new(false),
     }));
@@ -150,7 +150,7 @@ fn shutdown_retires_all_lanes_and_prevents_rediscovery() {
     let source = CatalogSource::Remote(Arc::new(RemoteSource {
         target: crate::tmux_ssh::SshTarget::parse("fixture.invalid").unwrap(),
         expected_environment: None,
-        route: Mutex::new(Some(fixture())),
+        route: Arc::new(Mutex::new(Some(fixture()))),
         opening: Mutex::new(None),
         stopped: AtomicBool::new(false),
     }));
@@ -182,4 +182,49 @@ fn shutdown_cancels_pending_discovery_without_starting_a_connection() {
         source.discover(&Arc::new(AtomicBool::new(false))),
         Err(Error::Retired)
     ));
+}
+
+/// 16 Nov: the app opened one SSH forward per source of the same machine
+/// (window, picker, fleet row). Sources of one machine now share its route;
+/// another machine, or the same host for another environment, does not.
+#[test]
+fn sources_of_one_machine_share_one_route() {
+    let target = |host: &str| crate::tmux_ssh::SshTarget::parse(host).unwrap();
+    let route = |source: &CatalogSource| match source {
+        CatalogSource::Remote(source) => source.route.clone(),
+        CatalogSource::Local(_) => panic!("not remote"),
+    };
+    let a = CatalogSource::remote(target("share-a.invalid"), None);
+    let b = CatalogSource::remote(target("share-a.invalid"), None);
+    let other = CatalogSource::remote(target("share-b.invalid"), None);
+    let env = CatalogSource::remote(target("share-a.invalid"), Some("env-2".into()));
+    assert!(Arc::ptr_eq(&route(&a), &route(&b)));
+    assert!(!Arc::ptr_eq(&route(&a), &route(&other)));
+    assert!(!Arc::ptr_eq(&route(&a), &route(&env)));
+    // A healthy route one source opened serves the other: no second forward.
+    *route(&a).lock().unwrap() = Some(fixture());
+    let opened = b.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    assert_eq!(
+        Some(self::route(&opened).generation()),
+        route(&a)
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(RemoteTransport::generation)
+    );
+    // Shutting one source down leaves the route to the other.
+    a.shutdown().unwrap();
+    drop(a);
+    assert!(
+        route(&b).lock().unwrap().is_some(),
+        "the other source lost its route"
+    );
+    drop(opened);
+    // The last source's shutdown ends it.
+    b.shutdown().unwrap();
+    assert!(route(&b).lock().unwrap().is_none());
+    // A new source after the last one starts afresh.
+    drop(b);
+    let again = CatalogSource::remote(target("share-a.invalid"), None);
+    assert!(route(&again).lock().unwrap().is_none());
 }
