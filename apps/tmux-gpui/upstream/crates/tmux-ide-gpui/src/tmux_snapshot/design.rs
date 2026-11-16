@@ -710,6 +710,16 @@ mod tests {
             );
             assert!(docs.contains(name), "the notes do not name {name}");
         }
+        // Every mention of the default names it in full.
+        let mentions: Vec<&str> = docs.split("default theme, ").skip(1).collect();
+        assert!(!mentions.is_empty(), "the notes name the default theme");
+        for after in mentions {
+            assert!(
+                after.starts_with(system.name.as_str()),
+                "the default theme, {after:.30}"
+            );
+        }
+        assert!(!docs.contains("default System theme"));
     }
 
     #[test]
