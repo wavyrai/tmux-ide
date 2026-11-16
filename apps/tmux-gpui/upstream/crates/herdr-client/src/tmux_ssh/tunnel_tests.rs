@@ -84,37 +84,64 @@ fn gone_within(pid: u32, limit: Duration) -> bool {
     }
     false
 }
+/// A process this test started, killed and reaped however the test ends, so a
+/// failing case leaves nothing behind (and holds no pipe of the test runner).
+struct Reaped(Child);
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+/// A forward pid found under a guard this test started; killed if still there.
+struct Forward(u32);
+impl Drop for Forward {
+    fn drop(&mut self) {
+        if alive(self.0) {
+            let pid = rustix::process::Pid::from_raw(self.0 as i32).unwrap();
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
+    }
+}
 /// The forward (`sleep` stands in for ssh) under the guard, with its lifeline
-/// held by `holder`, a separate process that plays the app.
-fn guarded_under(holder: &mut Child, forward: &str) -> (Child, u32) {
+/// held by a separate process that plays the app.
+fn guarded_under(forward: &str) -> (Reaped, Reaped, Forward) {
     let (reader, writer) = io::pipe().unwrap();
     // The app's writer goes to the holder; this test keeps no copy.
-    let mut app = Command::new("/bin/sleep");
-    app.arg("600").stdout(Stdio::from(writer));
-    *holder = app.spawn().unwrap();
-    let mut guard = guarded(&shell(forward))
-        .stdin(Stdio::from(reader))
-        .spawn()
-        .unwrap();
-    drop(app);
+    let holder = Reaped(
+        Command::new("/bin/sleep")
+            .arg("600")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(writer))
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let guard = Reaped(
+        guarded(&shell(forward))
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let deadline = Instant::now() + Duration::from_secs(3);
     let forward = loop {
-        if let Some(pid) = children(guard.id()).into_iter().find(|pid| {
+        if let Some(pid) = children(guard.0.id()).into_iter().find(|pid| {
             // The watcher is a subshell; the forward is the `sh -c` we passed.
             let out = Command::new("/bin/ps")
                 .args(["-o", "command=", "-p", &pid.to_string()])
                 .output()
                 .unwrap();
-            String::from_utf8_lossy(&out.stdout).contains("sleep")
-                || String::from_utf8_lossy(&out.stdout).contains("trap")
+            let command = String::from_utf8_lossy(&out.stdout);
+            command.contains("sleep 60") || command.contains("trap")
         }) {
             break pid;
         }
-        assert!(Instant::now() < deadline, "the forward did not start");
+        assert!(Instant::now() < deadline, "no forward under the guard");
         thread::sleep(Duration::from_millis(20));
     };
-    let _ = guard.try_wait();
-    (guard, forward)
+    (holder, guard, Forward(forward))
 }
 
 /// 16 Nov: three forwards outlived the app by two weeks. When the app dies in
@@ -122,18 +149,16 @@ fn guarded_under(holder: &mut Child, forward: &str) -> (Child, u32) {
 /// ends with it.
 #[test]
 fn a_forward_ends_when_the_app_that_started_it_dies() {
-    let mut holder = Command::new("/usr/bin/true").spawn().unwrap();
-    let _ = holder.wait();
-    let (mut guard, forward) = guarded_under(&mut holder, "exec /bin/sleep 60");
-    assert!(alive(forward));
-    holder.kill().unwrap();
-    holder.wait().unwrap();
+    let (mut holder, mut guard, forward) = guarded_under("exec /bin/sleep 60");
+    assert!(alive(forward.0));
+    holder.0.kill().unwrap();
+    holder.0.wait().unwrap();
     assert!(
-        gone_within(forward, Duration::from_secs(3)),
+        gone_within(forward.0, Duration::from_secs(3)),
         "the forward outlived the app"
     );
     let deadline = Instant::now() + Duration::from_secs(3);
-    while guard.try_wait().unwrap().is_none() {
+    while guard.0.try_wait().unwrap().is_none() {
         assert!(
             Instant::now() < deadline,
             "the guard shell outlived the app"
@@ -145,15 +170,10 @@ fn a_forward_ends_when_the_app_that_started_it_dies() {
 /// A forward that ignores TERM is killed a second later.
 #[test]
 fn a_forward_that_ignores_term_is_killed_after_the_app_dies() {
-    let mut holder = Command::new("/usr/bin/true").spawn().unwrap();
-    let _ = holder.wait();
-    let (mut guard, forward) =
-        guarded_under(&mut holder, "trap '' TERM; while :; do sleep 1; done");
-    holder.kill().unwrap();
-    holder.wait().unwrap();
-    assert!(gone_within(forward, Duration::from_secs(4)));
-    let _ = guard.kill();
-    let _ = guard.wait();
+    let (mut holder, _guard, forward) = guarded_under("trap '' TERM; exec /bin/sleep 60");
+    holder.0.kill().unwrap();
+    holder.0.wait().unwrap();
+    assert!(gone_within(forward.0, Duration::from_secs(4)));
 }
 
 /// Retiring and dropping a tunnel (the app's own clean path) also ends the
