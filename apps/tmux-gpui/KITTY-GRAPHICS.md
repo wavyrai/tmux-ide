@@ -102,8 +102,15 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   only while dimensions, buffer and history coordinates remain unchanged.
   Resizes, history changes and actual terminal resets discard those anchors.
   Placements extending beyond the visible pane are clipped.
-- Images live only in the daemon. They survive window reattach but not a
-  daemon restart, after which placeholder cells paint blank.
+- Images live only in the daemon, and their bytes never go to disk (owner's
+  decision, 16 Nov 2026). They survive window reattach but not a daemon restart,
+  after which placeholder cells paint blank. The window then notices placeholder
+  cells that name an image the daemon does not hold, and after a second its status
+  line says "Some images are no longer available; redraw to see them." The same
+  happens when the memory budget evicts an image, or the program deletes one, while
+  its placeholders stay on screen. The notice goes as soon as the program redraws and
+  the image arrives again. U+10EEEE in the default colour names no image and is text.
+  Only the native window shows the notice; the development bridge does not.
 - When `c`/`r` are omitted, the daemon sizes the placement with the cell size the
   window last reported for the session (capability 103, with 104's thousandths when
   sent). Until a window reports one, it assumes 10x20 px cells. A placement keeps the

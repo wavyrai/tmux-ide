@@ -82,6 +82,8 @@ pub struct GraphicsUpdate {
 pub struct PanePlacements {
     pub placements: Vec<KeyedPlacement>,
     pub requests: Vec<Request>,
+    /// Placeholder cells name an image the daemon does not hold (group H).
+    pub orphaned: bool,
 }
 struct Pane {
     incarnation: Option<String>,
@@ -447,15 +449,10 @@ impl Graphics {
             return Ok(PanePlacements {
                 placements: Vec::new(),
                 requests: Vec::new(),
+                orphaned: false,
             });
         };
-        let Some(state) = &pane.state else {
-            return Ok(PanePlacements {
-                placements: Vec::new(),
-                requests: Vec::new(),
-            });
-        };
-        let resolved = pane.resolver.resolve(snapshot, state)?;
+        let (resolved, orphaned) = pane.resolver.resolve(snapshot, pane.state.as_ref())?;
         pane.visible.clear();
         let placements = resolved
             .into_iter()
@@ -484,6 +481,7 @@ impl Graphics {
         Ok(PanePlacements {
             placements,
             requests,
+            orphaned,
         })
     }
 

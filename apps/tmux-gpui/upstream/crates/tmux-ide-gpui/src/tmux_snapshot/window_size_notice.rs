@@ -93,7 +93,10 @@ impl super::SnapshotView {
         ) {
             return status;
         }
-        self.window_size.notice(now).unwrap_or(status)
+        self.window_size
+            .notice(now)
+            .or_else(|| self.images_lost.notice(now).map(Into::into))
+            .unwrap_or(status)
     }
 }
 
