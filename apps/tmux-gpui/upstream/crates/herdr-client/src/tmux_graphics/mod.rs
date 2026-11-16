@@ -116,7 +116,7 @@ impl Graphics {
     pub fn new(generation: String, issued_panes: Vec<String>) -> Result<Self, Error> {
         if uuid::Uuid::parse_str(&generation).is_err()
             || issued_panes.is_empty()
-            || issued_panes.len() > 24
+            || issued_panes.len() > crate::tmux_stream::MAX_PANES
         {
             return Err(Error::Identity);
         }

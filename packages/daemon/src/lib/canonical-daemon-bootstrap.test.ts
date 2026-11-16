@@ -1,8 +1,11 @@
+import { homedir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "@tmux-ide/contracts";
 import type { CanonicalDaemonInfo } from "./canonical-daemon.ts";
 import {
+  assertCanonicalDaemonServerIntent,
   createCanonicalDaemonBootstrapCoordinator,
+  daemonServerProofPending,
   ensureCanonicalDaemon,
   retireOutdatedCanonicalDaemon,
 } from "./canonical-daemon-bootstrap.ts";
@@ -278,6 +281,49 @@ describe("canonical daemon bootstrap adapter", () => {
 
     expect(result).toMatchObject({ source: "existing", candidate: current });
     expect(shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+
+  it("starts the daemon from the home directory when the current one was deleted (#585)", async () => {
+    // `tmux-ide app` from a shell whose directory was deleted, with no daemon running.
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw Object.assign(new Error("ENOENT: process.cwd failed, uv_cwd"), { code: "ENOENT" });
+    });
+    try {
+      let spawned = false;
+      const spawnOwner = vi.fn(async () => {
+        spawned = true;
+      });
+      const result = await ensureCanonicalDaemon(
+        // No server intent: the test must not ask a real tmux server (TMUX).
+        { entryPath: "/tmp/cli.js", timeoutMs: 100, tmuxServerIntent: null },
+        {
+          inspect: () =>
+            spawned
+              ? { status: "valid" as const, info, observation: { path: "/tmp/daemon.json" } }
+              : { status: "missing" as const, observation: { path: "/tmp/daemon.json" } },
+          alive: async () => true,
+          identity: async (candidate) => ({
+            ok: true,
+            pid: candidate.pid,
+            protocolVersion: candidate.protocolVersion,
+            productVersion: candidate.productVersion,
+            instanceId: candidate.instanceId,
+            startedAt: candidate.startedAt,
+          }),
+          health: async (candidate) => ({
+            ok: true,
+            protocolVersion: candidate.protocolVersion,
+            productVersion: candidate.productVersion,
+            uptime: 1,
+          }),
+          spawnOwner,
+        },
+      );
+      expect(result).toMatchObject({ source: "started" });
+      expect(spawnOwner).toHaveBeenCalledWith("/tmp/cli.js", homedir());
+    } finally {
+      cwd.mockRestore();
+    }
   });
 
   it("starts current after a concurrent upgrader removes the old record", async () => {
@@ -849,6 +895,46 @@ describe("canonical server intent admission", () => {
     ).rejects.toMatchObject({ reason: "identity-mismatch" });
     expect(deps.spawnOwner).not.toHaveBeenCalled();
     expect(deps.shutdownOlderOwner).not.toHaveBeenCalled();
+  });
+  it("tells a daemon proof that is not there yet apart from one that cannot be had", async () => {
+    // Soak o3, 14 Nov: a new daemon generation after a tmux kill-server exited at
+    // startup because its own identity did not yet carry the new server's proof.
+    const failure = async (options: Parameters<typeof dependencies>[0]) => {
+      const deps = dependencies(options);
+      const candidate = deps.inspect().info;
+      try {
+        await assertCanonicalDaemonServerIntent(candidate, intent, {
+          ...deps,
+          sleep: async () => undefined,
+        });
+      } catch (error) {
+        return error;
+      }
+      return null;
+    };
+    const pending = await failure({ digest: null });
+    expect(pending).toMatchObject({ reason: "tmux-server-unproven" });
+    expect(daemonServerProofPending(pending)).toBe(true);
+    const deps = dependencies();
+    let clientLate: unknown = null;
+    try {
+      await assertCanonicalDaemonServerIntent(deps.inspect().info, intent, {
+        ...deps,
+        serverProof: () => null,
+        sleep: async () => undefined,
+      });
+    } catch (error) {
+      clientLate = error;
+    }
+    expect(clientLate).toMatchObject({ reason: "tmux-server-unproven" });
+    expect(daemonServerProofPending(clientLate)).toBe(true);
+    const unsupported = await failure({ capability: false });
+    expect(unsupported).toMatchObject({ reason: "tmux-server-unproven" });
+    expect(daemonServerProofPending(unsupported)).toBe(false);
+    const mismatch = await failure({ digest: "b".repeat(64) });
+    expect(mismatch).toMatchObject({ reason: "tmux-server-mismatch" });
+    expect(daemonServerProofPending(mismatch)).toBe(false);
+    expect(daemonServerProofPending(new Error("other"))).toBe(false);
   });
   it("bounds retries when the server proof remains unavailable", async () => {
     const deps = dependencies({ digest: null });
