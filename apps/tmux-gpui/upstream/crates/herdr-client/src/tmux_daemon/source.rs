@@ -93,6 +93,14 @@ impl CatalogSource {
         {
             // Both foreground and layout workers reset. Only the worker holding
             // this generation can invalidate it, never a replacement route.
+            // Other sources of the machine share it: a reset is ordinary
+            // navigation (Home, refresh), so a route that still works stays
+            // for them; only a failed one is replaced (review of 18c558c5).
+            if Arc::strong_count(&source.route) > 1
+                && cached.as_ref().is_some_and(|route| route.healthy())
+            {
+                return Ok(());
+            }
             if let Some(route) = cached.as_ref() {
                 route.shutdown_owned().map_err(super::owner::remote_error)?;
             }

@@ -228,3 +228,55 @@ fn sources_of_one_machine_share_one_route() {
     let again = CatalogSource::remote(target("share-a.invalid"), None);
     assert!(route(&again).lock().unwrap().is_none());
 }
+
+/// Review of 18c558c5 (blocking): one window's reset (Home, refresh,
+/// restart_discovery) must not end the forward another window of the same
+/// machine is using. The reviewer's probe.
+#[test]
+fn one_sources_reset_keeps_the_others_route() {
+    let target = crate::tmux_ssh::SshTarget::parse("share-probe.invalid").unwrap();
+    let slot = |source: &CatalogSource| match source {
+        CatalogSource::Remote(source) => source.route.clone(),
+        CatalogSource::Local(_) => panic!("not remote"),
+    };
+    let a = CatalogSource::remote(target.clone(), None);
+    let b = CatalogSource::remote(target, None);
+    *slot(&a).lock().unwrap() = Some(fixture());
+    let owner_a = a.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    let owner_b = b.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    // Window A goes back to Home: its worker resets with its own owner.
+    a.reset(Some(&owner_a)).unwrap();
+    let alive = slot(&b)
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(RemoteTransport::healthy);
+    assert!(alive, "window A's reset ended window B's forward");
+    assert!(route(&owner_b).capability_route().is_ok());
+    drop((owner_a, owner_b));
+    b.shutdown().unwrap();
+    a.shutdown().unwrap();
+}
+
+/// A shared route that failed is replaced for every source, not reused.
+#[test]
+fn a_failed_shared_route_is_cleared_for_every_source() {
+    let target = crate::tmux_ssh::SshTarget::parse("share-broken.invalid").unwrap();
+    let slot = |source: &CatalogSource| match source {
+        CatalogSource::Remote(source) => source.route.clone(),
+        CatalogSource::Local(_) => panic!("not remote"),
+    };
+    let a = CatalogSource::remote(target.clone(), None);
+    let b = CatalogSource::remote(target, None);
+    *slot(&a).lock().unwrap() = Some(fixture());
+    let owner_a = a.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    // The forward fails.
+    slot(&a).lock().unwrap().as_ref().unwrap().retire();
+    a.reset(Some(&owner_a)).unwrap();
+    assert!(slot(&a).lock().unwrap().is_none());
+    assert!(
+        slot(&b).lock().unwrap().is_none(),
+        "a failed route was kept for B"
+    );
+    drop(owner_a);
+}
