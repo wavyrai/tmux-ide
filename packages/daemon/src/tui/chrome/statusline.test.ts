@@ -530,6 +530,36 @@ describe("adoptSession key binds", () => {
       expect(calls).toContainEqual(["set-option", "-su", `user-keys[${kittyUserKeyIndex(i)}]`]);
     });
   });
+
+  it("keeps the server-wide binds while another session on the server is still adopted", () => {
+    // The popup key, the status-click router, the right-click menus and every
+    // Alt/prefix key are server-wide: unadopting one session removed them for
+    // all adopted sessions on that server.
+    runTmux.mockImplementation(((args: string[]) =>
+      args[0] === "list-sessions" ? "web\t\napi\t1\n" : "") as never);
+    try {
+      unadoptSession("web");
+      const calls = runTmux.mock.calls.map((c) => c[0] as string[]);
+      expect(calls).toContainEqual(["set-option", "-u", "-t", "web", ADOPTED_OPTION]);
+      expect(calls.filter((argv) => argv[0] === "unbind-key")).toEqual([]);
+      expect(calls.filter((argv) => argv[0] === "set-option" && argv[1] === "-su")).toEqual([]);
+    } finally {
+      runTmux.mockImplementation(() => "");
+    }
+  });
+
+  it("removes the server-wide binds with the last adopted session", () => {
+    runTmux.mockImplementation(((args: string[]) =>
+      args[0] === "list-sessions" ? "web\t\napi\t\n" : "") as never);
+    try {
+      unadoptSession("web");
+      const calls = runTmux.mock.calls.map((c) => c[0] as string[]);
+      expect(calls).toContainEqual(statusClickUnbindCommand());
+      expect(calls.filter((argv) => argv[0] === "unbind-key").length).toBeGreaterThan(3);
+    } finally {
+      runTmux.mockImplementation(() => "");
+    }
+  });
 });
 
 describe("prefixKeyBinds", () => {
