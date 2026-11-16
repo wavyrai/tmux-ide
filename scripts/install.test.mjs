@@ -41,6 +41,13 @@ function fixture(t) {
     "mkdir",
     'if [ -n "${MOCK_MKDIR_EXISTING_OK:-}" ] && [ "$#" -eq 1 ] && [ -d "$1" ]; then exit 0; fi; exec /bin/mkdir "$@"\n',
   );
+  // A probe for releases in use that cannot read anything: lsof fails, and so
+  // does sed when it is asked for a process's mapped files.
+  script("lsof", '[ -z "${MOCK_PROBE_FAIL:-}" ] || exit 1; exec /usr/sbin/lsof "$@"\n');
+  script(
+    "sed",
+    'if [ -n "${MOCK_PROBE_FAIL:-}" ]; then for arg in "$@"; do case "$arg" in /proc/*/maps) exit 2 ;; esac; done; fi; exec /usr/bin/sed "$@"\n',
+  );
   script(
     "rm",
     'case "${MOCK_RM_FAIL:-}:$*" in 1:*/.install.*) exit 1 ;; esac; exec /bin/rm "$@"\n',
@@ -777,6 +784,7 @@ async function runFromRelease(t, root, release) {
     child.once("error", reject);
   });
   return {
+    pid: child.pid,
     async stop() {
       process.kill(-child.pid, "SIGKILL");
       await closed;
@@ -793,6 +801,23 @@ test("pruning keeps an older release that a running process uses", async (t) => 
   assert.equal(run().status, 0);
   assert.equal(run().status, 0);
   const holder = await runFromRelease(t, home, used);
+  // TEMPORARY (PR #420 CI): what each reader gets from the holder's maps on Linux.
+  if (fs.existsSync(`/proc/${holder.pid}/maps`)) {
+    const maps = `/proc/${holder.pid}/maps`;
+    t.diagnostic(
+      JSON.stringify({
+        kernel: spawnSync("uname", ["-r"], { encoding: "utf8" }).stdout.trim(),
+        catPipeOut: spawnSync("/bin/sh", ["-c", `cat ${maps} | wc -c`], {
+          encoding: "utf8",
+        }).stdout.trim(),
+        sedPipeOut: spawnSync("/bin/sh", ["-c", `sed -n p ${maps} | wc -c`], {
+          encoding: "utf8",
+        }).stdout.trim(),
+        nodeBytes: fs.readFileSync(maps, "utf8").length,
+        mentionsRelease: fs.readFileSync(maps, "utf8").includes(path.basename(used)),
+      }),
+    );
+  }
   const pruned = run({}, ["--prune", "--yes"]);
   assert.equal(pruned.status, 0, pruned.stderr);
   assert.ok(fs.existsSync(path.join(used, "bin", "held-node")), "the release in use is kept");
@@ -801,6 +826,24 @@ test("pruning keeps an older release that a running process uses", async (t) => 
   await holder.stop();
   assert.equal(run({}, ["--prune", "--yes"]).status, 0);
   assert.equal(fs.existsSync(used), false, "once nothing runs from it, it is removed");
+});
+
+test("prune removes nothing when it cannot tell which releases are in use", (t) => {
+  const { prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  assert.equal(run().status, 0);
+  const retired = fs.realpathSync(path.join(root, "current"));
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0);
+  const refused = run({ MOCK_PROBE_FAIL: "1" }, ["--prune", "--yes"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(
+    refused.stderr,
+    /Cannot tell which releases running processes use[^]*nothing was removed/,
+  );
+  assert.ok(fs.existsSync(retired), "an unproven release is kept");
+  assert.equal(run({}, ["--prune", "--yes"]).status, 0);
+  assert.equal(fs.existsSync(retired), false, "with a working probe it is removed");
 });
 
 test("the retention cap does not count a release a running process uses, nor ask to stop it", async (t) => {

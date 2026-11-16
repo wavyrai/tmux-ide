@@ -240,18 +240,31 @@ acquire_lock() {
 # Prints the name of each release directory that a running process has mapped:
 # its executable or a library it loaded. A tmux server or daemon started from an
 # older release keeps using it after `current` moves on, so the mapped path is
-# checked, not the command line. Linux reads /proc/<pid>/maps; elsewhere lsof
-# lists each process's mapped files. Only this user's processes are readable.
+# checked, not the command line. Linux: sed reads /proc/<pid>/maps itself (no
+# cat: procfs files are read with plain read calls). Elsewhere lsof lists each
+# process's mapped files. Only this user's processes are readable. Fails, and
+# prints nothing, unless the probe can see this shell's own mapped files: an
+# empty answer from a probe that could not read anything must not mean "unused".
 releases_in_use() {
   releases_real=$(cd "$root/releases" 2>/dev/null && pwd -P) || return 0
-  if [ -r /proc/self/maps ]; then
-    for maps in /proc/[0-9]*/maps; do cat "$maps" 2>/dev/null; done | sed -n 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]*  *\(\/.*\)$/\1/p'
+  maps_paths='s/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]*  *\(\/.*\)$/\1/p'
+  if [ -d "/proc/$$" ]; then
+    own=$(sed -n "$maps_paths" "/proc/$$/maps" 2>/dev/null) || own=''
+    mapped=$(sed -n "$maps_paths" /proc/[0-9]*/maps 2>/dev/null) || :
   else
-    "$(command -v lsof || echo /usr/sbin/lsof)" -nP -w -d txt -Fn 2>/dev/null | sed -n 's/^n//p'
-  fi | while IFS= read -r mapped; do
-    case "$mapped" in "$releases_real"/install-*/*)
-      mapped=${mapped#"$releases_real"/}
-      printf '%s\n' "${mapped%%/*}" ;;
+    listing=$("$(command -v lsof || echo /usr/sbin/lsof)" -nP -w -d txt -Fpn 2>/dev/null) || :
+    case "
+$listing
+" in *"
+p$$
+"*) own=yes ;; *) own='' ;; esac
+    mapped=$(printf '%s\n' "$listing" | sed -n 's/^n//p')
+  fi
+  [ -n "$own" ] || return 1
+  printf '%s\n' "$mapped" | while IFS= read -r path; do
+    case "$path" in "$releases_real"/install-*/*)
+      path=${path#"$releases_real"/}
+      printf '%s\n' "${path%%/*}" ;;
     esac
   done | sort -u
 }
@@ -312,7 +325,9 @@ main() {
     [ -f "$root/installer-v1" ] || fail 'No managed installation found at this prefix'
     [ -x "$root/current/node/bin/node" ] || fail 'Installed Node.js is unavailable; reinstall at this prefix to repair it'
     in_use=''
-    [ "$action" != prune ] || in_use=$(releases_in_use)
+    if [ "$action" = prune ] && ! in_use=$(releases_in_use); then
+      fail 'Cannot tell which releases running processes use (/proc/<pid>/maps or lsof could not be read); nothing was removed.'
+    fi
     "$root/current/node/bin/node" --input-type=module - "$root" "$launcher" "$action" "$in_use" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
@@ -375,7 +390,8 @@ JS
   fi
   # Bound disk growth. A release that a running process uses (a tmux server or
   # daemon started from it) is neither counted nor removed. Cleanup is explicit.
-  in_use=$(releases_in_use)
+  # A probe that cannot tell counts every release, as before; nothing is removed here.
+  in_use=$(releases_in_use) || in_use=''
   retained=0
   for retained_release in "$root"/releases/install-*; do
     [ -d "$retained_release" ] && [ ! -L "$retained_release" ] && [ -f "$retained_release/.installer-release-v1" ] || continue
