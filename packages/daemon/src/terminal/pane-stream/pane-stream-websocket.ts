@@ -2865,6 +2865,13 @@ export class PaneStreamLiveConnection {
     channel.delivery = null;
     channel.closed = true;
     channel.retiredInPlace = true;
+    // The channel stays only so late client frames for it are dropped; a long
+    // stream under an agent that splits often must not keep each pane's buffers.
+    channel.deliveryAddress = null;
+    channel.batch = null;
+    channel.graphicsQueue = [];
+    channel.graphicsServed = new Map();
+    channel.graphicsState = null;
     this.#surfaceDemands.get(channel.semanticPaneId)?.close();
     this.#surfaceDemands.delete(channel.semanticPaneId);
     if (sub) void sub.close().catch(() => undefined);
