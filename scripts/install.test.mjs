@@ -950,6 +950,28 @@ test("an older daemon that is still running after a failed upgrade is reported a
   );
   assert.ok(Date.now() - started < 20000, "no wait for a daemon that never left");
 });
+test("a rollback over a newer running daemon says it was left running on purpose", (t) => {
+  // Installing an older release while a newer daemon runs: `update --daemon`
+  // never replaces a newer daemon and answers "kept-newer". The installer used
+  // to warn "could not be moved … Retry", a command that refuses again.
+  const { root, run } = fixture(t);
+  writeDaemonRecord(root, { pid: process.pid, productVersion: "3.0.0" });
+  const script = path.join(root, "daemon-kept-newer.cjs");
+  fs.writeFileSync(
+    script,
+    `console.log(JSON.stringify({ ok: true, status: "kept-newer", productVersion: "3.0.0", cliVersion: "2.9.0", instanceId: "x", message: "To run v2.9.0's daemon instead, stop it (pid ${process.pid}), then run tmux-ide update --daemon again." }));
+process.exit(0);
+`,
+  );
+  const result = run({ MOCK_DAEMON_UPGRADE: script });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /could not be moved|Restarted the daemon/);
+  assert.match(
+    result.stdout,
+    /The tmux-ide 3\.0\.0 daemon is newer than 2\.9\.0 and was left running on purpose; your sessions are safe\./,
+  );
+  assert.match(result.stdout, /To run v2\.9\.0's daemon instead, stop it/);
+});
 test("install leaves a current or stopped daemon alone", (t) => {
   const { root, run } = fixture(t);
   writeDaemonRecord(root, { pid: process.pid, productVersion: "2.9.0" });
