@@ -72,19 +72,22 @@ impl SnapshotView {
         };
         let groups = self.browser_state.fleet.as_ref().map(|f| &f.groups[..]);
         let home = self.browser_state.surface == browser::Surface::Home;
-        let stranded = controls.asides.borrow_mut().retain(window, |group, slot| {
+        // What the table draws this frame: a machine another view or the
+        // waiting-only filter hides holds no stop (review of #803).
+        let view = self.home_fleet_view();
+        let waiting = filters::waiting_sessions(&self.browser_state, controls.waiting_only);
+        let stranded = controls.asides.borrow_mut().retain(window, |stop| {
             home && groups
-                .and_then(|groups| groups.get(group))
-                .is_some_and(|group| {
-                    if slot == aside_link::DISCONNECT {
-                        group.disconnect.is_some()
-                    } else {
-                        // The default server shows a label, not the button.
-                        group.servers.get(slot).is_some_and(|server| {
-                            server.selection.is_some()
-                                && !self.fleet_server_is_default(group, server)
-                        })
-                    }
+                .and_then(|groups| groups.iter().find(|group| group.id == stop.machine))
+                .filter(|group| fleet::shows_machine(&view, waiting.as_ref(), group))
+                .is_some_and(|group| match &stop.server {
+                    None => group.disconnect.is_some(),
+                    // The default server shows a label, not the button.
+                    Some(server) => group.servers.iter().any(|candidate| {
+                        candidate.id == *server
+                            && candidate.selection.is_some()
+                            && !self.fleet_server_is_default(group, candidate)
+                    }),
                 })
         });
         if stranded {

@@ -326,3 +326,191 @@ fn a_focused_server_action_that_becomes_the_default_hands_the_keyboard_back(
     let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
     cx.update(|window, _| assert!(terminal.is_focused(window)));
 }
+
+/// Tabs Home's own order until `selector` has the keyboard.
+fn home_tab_to(cx: &mut VisualTestContext, selector: &str) -> bool {
+    let marker: &'static str = Box::leak(format!("{selector}:focused").into_boxed_str());
+    for _ in 0..60 {
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        if cx.debug_bounds(marker).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+/// A second machine "qa-b" after (or, `front`, before) the fixture's first,
+/// with its own Disconnect token.
+fn add_machine_b(view: &Entity<SnapshotView>, cx: &mut VisualTestContext, front: bool) {
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            let fleet = v.browser_state.fleet.as_mut().unwrap();
+            let mut b = fleet.groups[0].clone();
+            b.id = "qa-b".into();
+            b.label = "Machine B".into();
+            b.disconnect = Some("token-b".into());
+            fleet.groups.insert(if front { 0 } else { 1 }, b);
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+}
+
+fn disconnected_b(receiver: &mpsc::Receiver<browser::Command>) -> usize {
+    receiver
+        .try_iter()
+        .filter(|c| {
+            matches!(c, browser::Command::FleetDisconnect { disconnect, .. } if disconnect == "token-b")
+        })
+        .count()
+}
+
+fn home_has_the_keyboard(view: &Entity<SnapshotView>, cx: &mut VisualTestContext) -> bool {
+    let terminal = view.read_with(cx, |v, _| v.terminal_focus.clone());
+    let aside = cx.update(|window, cx| view.read(cx).home_aside_focused(window));
+    !aside && cx.update(|window, _| terminal.is_focused(window))
+}
+
+/// Review of #803: machine A's Disconnect has the keyboard and A leaves the
+/// list, so B moves up to A's place. The keyboard goes back to Home; it
+/// does not move to B's Disconnect, and Return disconnects nothing.
+#[gpui::test]
+fn a_removed_machine_does_not_hand_its_focus_to_the_next(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = fleet_home(cx);
+    add_machine_b(&view, cx, false);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.fleet.as_mut().unwrap().groups.remove(0);
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(home_has_the_keyboard(&view, cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(disconnected_b(&receiver), 0, "Return disconnected B");
+}
+
+/// Review of #803: a machine added in front of the focused one does not
+/// take its focus; Return still means the machine the user chose.
+#[gpui::test]
+fn an_added_machine_does_not_take_the_focus(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = fleet_home(cx);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    let a = view.read_with(cx, |v, _| {
+        v.browser_state.fleet.as_ref().unwrap().groups[0]
+            .disconnect
+            .clone()
+            .unwrap()
+    });
+    add_machine_b(&view, cx, true);
+    assert!(
+        cx.debug_bounds("fleet-disconnect-1:focused").is_some(),
+        "the focus stays on A's Disconnect, now the second machine"
+    );
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("enter");
+    let sent: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(sent.len(), 1, "one press, one command");
+    assert!(
+        matches!(&sent[0], browser::Command::FleetDisconnect { disconnect, .. } if *disconnect == a),
+        "Return disconnects A, the machine chosen"
+    );
+}
+
+/// Review of #803: the focused machine is still listed but no longer drawn
+/// (another machine's view, or the waiting-only filter). Home takes the
+/// keyboard back, and Tab reaches the action row again.
+#[gpui::test]
+fn a_hidden_machine_does_not_keep_the_focus(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = fleet_home(cx);
+    add_machine_b(&view, cx, false);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            let id = v.browser_state.fleet.as_ref().unwrap().groups[1].id.clone();
+            v.home_filter.as_mut().unwrap().fleet_view = fleet_nav::View::Machine(id);
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(
+        cx.debug_bounds("fleet-disconnect-0").is_none(),
+        "fixture: machine 0 is hidden"
+    );
+    assert!(home_has_the_keyboard(&view, cx));
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("enter");
+    assert!(
+        !receiver
+            .try_iter()
+            .any(|c| matches!(c, browser::Command::FleetDisconnect { .. })),
+        "Return on a hidden Disconnect"
+    );
+    cx.simulate_keystrokes("tab");
+    let row = cx.update(|window, cx| view.read(cx).home_action_index(window));
+    assert!(row.is_some(), "Tab lands on the action row");
+}
+
+/// A machine that loses its Disconnect while it has the keyboard hands the
+/// keyboard back to Home.
+#[gpui::test]
+fn a_disconnect_that_goes_away_hands_the_keyboard_back(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.fleet.as_mut().unwrap().groups[0].disconnect = None;
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(home_has_the_keyboard(&view, cx));
+}
+
+/// A "Use for new sessions" drawn disabled is not a Tab stop; Disconnect,
+/// which is never disabled, still is.
+#[gpui::test]
+fn a_disabled_server_action_is_not_a_stop(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.request = v.browser_request + 1;
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    let mut seen = Vec::new();
+    for _ in 0..40 {
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for selector in [
+            "fleet-use-server-action-0-0:focused",
+            "fleet-use-server-action-0-1:focused",
+            "fleet-disconnect-0:focused",
+        ] {
+            if cx.debug_bounds(selector).is_some() {
+                seen.push(selector);
+            }
+        }
+    }
+    assert!(seen.contains(&"fleet-disconnect-0:focused"), "{seen:?}");
+    assert!(
+        !seen.iter().any(|s| s.starts_with("fleet-use-server")),
+        "{seen:?}"
+    );
+}
+
+/// Space presses the focused action, as Return does, once per press.
+#[gpui::test]
+fn space_presses_a_machine_action(cx: &mut TestAppContext) {
+    let (_view, cx, receiver) = fleet_home(cx);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("space");
+    let sent: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(sent.len(), 1, "one press, one command");
+    assert!(matches!(sent[0], browser::Command::FleetDisconnect { .. }));
+}

@@ -175,43 +175,69 @@ impl RenderOnce for AsideLink {
     }
 }
 
+/// One machine action, by what it acts on, never by where it is drawn: a
+/// list that shifts must not move a focused Disconnect onto another machine
+/// (review of #803). `server: None` is the machine's Disconnect.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(in crate::tmux_snapshot) struct Stop {
+    pub machine: String,
+    pub server: Option<String>,
+}
+impl Stop {
+    pub fn disconnect(machine: &str) -> Self {
+        Self {
+            machine: machine.into(),
+            server: None,
+        }
+    }
+    pub fn server(machine: &str, server: &str) -> Self {
+        Self {
+            machine: machine.into(),
+            server: Some(server.into()),
+        }
+    }
+}
 /// Home's keyboard stops for the machines' text actions (#803): one handle
 /// per action, kept across frames, and which of them the last table paint
-/// drew enabled. In a machine, each "Use for new sessions" comes before its
-/// Disconnect, so Disconnect is never a machine's first stop.
+/// drew enabled, in the order it drew them. In a machine, each "Use for new
+/// sessions" comes before its Disconnect, so Disconnect is never a machine's
+/// first stop.
 #[derive(Default)]
 pub(in crate::tmux_snapshot) struct Stops {
-    handles: std::collections::BTreeMap<(usize, usize), FocusHandle>,
-    shown: std::collections::BTreeSet<(usize, usize)>,
+    handles: std::collections::BTreeMap<Stop, FocusHandle>,
+    shown: Vec<Stop>,
 }
-/// The slot of a machine's Disconnect: after every server's action.
-pub(super) const DISCONNECT: usize = usize::MAX;
 impl Stops {
     /// A new table paint: nothing is shown until it draws it.
     pub(super) fn begin(&mut self) {
         self.shown.clear();
     }
-    /// The handle of machine `group`'s action in `slot`; a stop if `enabled`.
-    pub(super) fn stop(
-        &mut self,
-        group: usize,
-        slot: usize,
-        enabled: bool,
-        cx: &mut App,
-    ) -> FocusHandle {
-        if enabled {
-            self.shown.insert((group, slot));
-        }
-        self.handles
-            .entry((group, slot))
+    /// The handle of `stop`; a keyboard stop if `enabled`.
+    pub(super) fn stop(&mut self, stop: Stop, enabled: bool, cx: &mut App) -> FocusHandle {
+        let handle = self
+            .handles
+            .entry(stop.clone())
             .or_insert_with(|| cx.focus_handle())
-            .clone()
+            .clone();
+        if enabled && !self.shown.contains(&stop) {
+            self.shown.push(stop);
+        }
+        handle
     }
-    /// The enabled actions on screen, in keyboard order.
+    /// The enabled actions on screen, in keyboard order: machine by machine as
+    /// drawn, and in a machine its servers' actions before its Disconnect.
     pub(super) fn order(&self) -> Vec<FocusHandle> {
-        self.shown
-            .iter()
-            .filter_map(|key| self.handles.get(key).cloned())
+        let machine_rank = |stop: &Stop| {
+            self.shown
+                .iter()
+                .position(|s| s.machine == stop.machine)
+                .unwrap_or(usize::MAX)
+        };
+        let mut order: Vec<&Stop> = self.shown.iter().collect();
+        order.sort_by_key(|stop| (machine_rank(stop), stop.server.is_none()));
+        order
+            .into_iter()
+            .filter_map(|stop| self.handles.get(stop).cloned())
             .collect()
     }
     pub(super) fn focused(&self, window: &Window) -> bool {
@@ -219,19 +245,15 @@ impl Stops {
     }
     /// Forgets the actions `exists` no longer has; true if one of them held
     /// the keyboard, which then is on nothing that is on screen.
-    pub(super) fn retain(
-        &mut self,
-        window: &Window,
-        exists: impl Fn(usize, usize) -> bool,
-    ) -> bool {
+    pub(super) fn retain(&mut self, window: &Window, exists: impl Fn(&Stop) -> bool) -> bool {
         let mut stranded = false;
-        self.handles.retain(|&(group, slot), stop| {
-            let keep = exists(group, slot);
-            stranded |= !keep && stop.is_focused(window);
+        self.handles.retain(|stop, handle| {
+            let keep = exists(stop);
+            stranded |= !keep && handle.is_focused(window);
             keep
         });
         let handles = &self.handles;
-        self.shown.retain(|key| handles.contains_key(key));
+        self.shown.retain(|stop| handles.contains_key(stop));
         stranded
     }
 }

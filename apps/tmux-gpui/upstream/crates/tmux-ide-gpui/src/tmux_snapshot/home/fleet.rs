@@ -357,10 +357,11 @@ impl SnapshotView {
                     &bezel,
                 )
                 .stop(self.home_filter.as_ref().map(|controls| {
-                    controls
-                        .asides
-                        .borrow_mut()
-                        .stop(index, aside_link::DISCONNECT, true, cx)
+                    controls.asides.borrow_mut().stop(
+                        aside_link::Stop::disconnect(&group.id),
+                        true,
+                        cx,
+                    )
                 }))
                 .danger()
                 .on_press(cx.listener(move |view, _: &(), window, cx| {
@@ -577,10 +578,11 @@ impl SnapshotView {
             &bezel,
         )
         .stop(self.home_filter.as_ref().map(|controls| {
-            controls
-                .asides
-                .borrow_mut()
-                .stop(index, server_index, enabled, cx)
+            controls.asides.borrow_mut().stop(
+                aside_link::Stop::server(&group.id, &server.id),
+                enabled,
+                cx,
+            )
         }))
         .on_press(cx.listener(move |view, _: &(), window, cx| {
             cx.stop_propagation();
@@ -632,16 +634,7 @@ impl SnapshotView {
             self.home_filter.as_ref().is_some_and(|c| c.waiting_only),
         );
         let only = waiting.as_ref();
-        // A machine shows when its view does, and, under the pill's filter,
-        // when one of its sessions waits.
-        let shows_group = |group: &browser::fleet::Group| {
-            view.shows_group(group)
-                && (only.is_none()
-                    || group
-                        .sessions
-                        .iter()
-                        .any(|s| fleet_nav::shows(&view, only, group, s)))
-        };
+        let shows_group = |group: &browser::fleet::Group| shows_machine(&view, only, group);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -847,4 +840,21 @@ impl SnapshotView {
         }
         Some(body.into_any_element())
     }
+}
+
+/// Whether the table draws machine `group`: when its view does, and, under the
+/// pill's filter (`only`), when one of its sessions waits. Home's keyboard stops
+/// use the same rule, so a focused action on a machine the table stopped drawing
+/// gives the keyboard back (review of #803).
+pub(super) fn shows_machine(
+    view: &View,
+    only: Option<&std::collections::HashSet<String>>,
+    group: &browser::fleet::Group,
+) -> bool {
+    view.shows_group(group)
+        && (only.is_none()
+            || group
+                .sessions
+                .iter()
+                .any(|s| fleet_nav::shows(view, only, group, s)))
 }
