@@ -1635,8 +1635,15 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       // original slope budgets in an identical isolated post-GC workload; the
       // natural-GC lane still proves latency and peak memory. Both lanes
       // compare post-GC endpoints outside the latency window for bounded growth.
+      // RSS has no slope budget: after an explicit collection it still holds
+      // pages V8 and the C allocator keep for reuse. On Linux it moves by
+      // several MB either way between samples while heapUsed, external and
+      // arrayBuffers stay flat: over 16 samples its slope ranged from -803 to
+      // +449 KB per sample, and over 80 samples it grew at most 3.2 MB, so the
+      // slope measures page retention, not reachable objects. Retained
+      // objects are bounded by the post-GC heap slope and growth and the
+      // external/arrayBuffer ranges; RSS keeps the growth and peak bounds.
       if (retainedMemory) {
-        expect(measurement.rssSlopeBytesPerSample, memoryEvidence).toBeLessThanOrEqual(262_144);
         expect(measurement.heapSlopeBytesPerSample, memoryEvidence).toBeLessThanOrEqual(131_072);
       }
       expect(measurement.rssGrowthBytes, memoryEvidence).toBeLessThanOrEqual(67_108_864);
