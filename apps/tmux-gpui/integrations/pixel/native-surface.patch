@@ -67,7 +67,7 @@ index 8a3a04f..f798f7a 100644
      width: info.width,
      height: info.height,
 diff --git a/browser/src/session/session.tsx b/browser/src/session/session.tsx
-index 803c1f6..5890976 100644
+index 803c1f6..8c7dc55 100644
 --- a/browser/src/session/session.tsx
 +++ b/browser/src/session/session.tsx
 @@ -1,3 +1,7 @@
@@ -78,7 +78,7 @@ index 803c1f6..5890976 100644
  import { spawn } from "node:child_process";
  import net from "node:net";
  import path from "node:path";
-@@ -269,6 +273,19 @@ class Session {
+@@ -269,6 +273,20 @@ class Session {
  
    constructor(ctx: SessionContext) {
      this.ctx = ctx;
@@ -93,12 +93,13 @@ index 803c1f6..5890976 100644
 +          back: () => this.actions.back(),
 +          forward: () => this.actions.forward(),
 +          reload: () => this.actions.reload(),
++          stop: () => this.tabs.activeHandle?.stopLoading(),
 +          navigate: text => this.actions.urlSubmit(text),
 +        }) : null;
      this.defaultUrl = ctx.env.TERMINAL_BROWSER_START_PAGE === "1" ? START_URL : HOME_URL;
      const socket = ctx.env[TERMINAL_SOCKET_ENV];
      this.terminal = socket ? socketTerminal(socket) : detect(ctx.env);
-@@ -295,6 +312,7 @@ class Session {
+@@ -295,6 +313,7 @@ class Session {
      this.tabs = new TabManager(
        {
          onActivated: () => {
@@ -106,7 +107,7 @@ index 803c1f6..5890976 100644
            this.pageMenu = null;
            this.reconcileRecord();
            this.recalculateLayout();
-@@ -386,6 +404,10 @@ class Session {
+@@ -386,6 +405,10 @@ class Session {
        splitDir: splitDirection(flagValue(this.argv, "--split-dir")),
        parentTty: flagValue(this.argv, "--parent-tty"),
        state: () => this.tabs.activeState ?? this.fallbackState,
@@ -117,7 +118,7 @@ index 803c1f6..5890976 100644
        openTab: (url, cwd) =>
          this.tabs.create(url ? normalizeUrl(url, cwd, this.searchUrl()) : this.defaultUrl).id,
        activateTab: (id) => {
-@@ -406,6 +428,7 @@ class Session {
+@@ -406,6 +429,7 @@ class Session {
        targets: () => this.tabs.targets(),
      });
      this.registry.setCdpPort(this.ctx.cdpPort);
@@ -125,7 +126,7 @@ index 803c1f6..5890976 100644
      void this.findOwnPane();
      this.render();
    }
-@@ -437,14 +460,32 @@ class Session {
+@@ -437,14 +461,32 @@ class Session {
      else this.tabs.close(id);
    }
  
@@ -158,7 +159,7 @@ index 803c1f6..5890976 100644
      for (const record of this.records.values()) record.dispose();
      this.records.clear();
      this.shownRecord = null;
-@@ -1563,6 +1604,7 @@ class Session {
+@@ -1563,6 +1605,7 @@ class Session {
        this.root.displayScale,
        reviewing ? null : placement,
        reviewing ? recordBarHeight(info) : 0,
@@ -5590,6 +5591,43 @@ index 843a208..4c8397e 100644
 -  }
 -}
 +export { CellZoomFollower } from "./cell-zoom";
+diff --git a/pixel/packages/pixel/src/web/host.ts b/pixel/packages/pixel/src/web/host.ts
+index 188764b..3690495 100644
+--- a/pixel/packages/pixel/src/web/host.ts
++++ b/pixel/packages/pixel/src/web/host.ts
+@@ -287,6 +287,11 @@ export class PageHost {
+     else this.window.webContents.reload();
+   }
+ 
++  /** Stop alone: a load that already ended is left as it is, never reloaded. */
++  stopLoading() {
++    if (this.state.loading) this.window.webContents.stop();
++  }
++
+   zoom(direction: ZoomDirection): number {
+     const factor = stepZoom(this.window.webContents, direction);
+     this.updateState({ zoom: factor });
+diff --git a/pixel/packages/pixel/src/webview.tsx b/pixel/packages/pixel/src/webview.tsx
+index da652ac..fdc3ea3 100644
+--- a/pixel/packages/pixel/src/webview.tsx
++++ b/pixel/packages/pixel/src/webview.tsx
+@@ -75,6 +75,8 @@ export interface WebViewHandle {
+   back(): void;
+   forward(): void;
+   reload(): void;
++  /** Stops a load in progress; does nothing otherwise (never reloads). */
++  stopLoading(): void;
+   zoom(direction: ZoomDirection): number;
+   find(text: string): void;
+   findNext(forward: boolean): void;
+@@ -476,6 +478,7 @@ export const WebView = forwardRef<WebViewHandle, WebViewProps>(function WebView(
+         back: () => host().back(),
+         forward: () => host().forward(),
+         reload: () => host().reload(),
++        stopLoading: () => host().stopLoading(),
+         zoom: (direction) => host().zoom(direction),
+         find: (text) => host().find(text),
+         findNext: (forward) => host().findNext(forward),
 diff --git a/shared/src/paths.ts b/shared/src/paths.ts
 index fa31aec..1a849b1 100644
 --- a/shared/src/paths.ts
@@ -5688,10 +5726,10 @@ index 0000000..01be132
 +}
 diff --git a/browser/src/session/native-controls.ts b/browser/src/session/native-controls.ts
 new file mode 100644
-index 0000000..87ffd31
+index 0000000..9a5dd89
 --- /dev/null
 +++ b/browser/src/session/native-controls.ts
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,97 @@
 +import { randomUUID } from "node:crypto";
 +import { z } from "zod";
 +
@@ -5709,6 +5747,8 @@ index 0000000..87ffd31
 +  back(): void;
 +  forward(): void;
 +  reload(): void;
++  /** Stops a load in progress; never reloads (#645). */
++  stop(): void;
 +  navigate(text: string): void;
 +}
 +const identity = {
@@ -5780,8 +5820,8 @@ index 0000000..87ffd31
 +    switch (request.action) {
 +      case "back": this.host.back(); break;
 +      case "forward": this.host.forward(); break;
-+      case "reload":
-+      case "stop": this.host.reload(); break;
++      case "reload": this.host.reload(); break;
++      case "stop": this.host.stop(); break;
 +      case "navigate": this.host.navigate(request.text); break;
 +    }
 +    return this.snapshot();
@@ -5955,10 +5995,10 @@ index 0000000..9a5e793
 +});
 diff --git a/browser/test/native-controls.test.js b/browser/test/native-controls.test.js
 new file mode 100644
-index 0000000..5c3a447
+index 0000000..fa30453
 --- /dev/null
 +++ b/browser/test/native-controls.test.js
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,101 @@
 +const {test} = require('node:test');
 +const assert = require('node:assert/strict');
 +const {NativeControls} = require('../dist/session/native-controls.js');
@@ -5968,7 +6008,9 @@ index 0000000..5c3a447
 +  const controls = new NativeControls('%3', {
 +    current: () => page,
 +    back: () => calls.push('back'), forward: () => calls.push('forward'),
-+    reload: () => calls.push(page.loading ? 'stop' : 'reload'),
++    // The host's reload and stop are separate: Stop must never reload (#645).
++    reload: () => calls.push('reload'),
++    stop: () => calls.push('stop'),
 +    navigate: text => calls.push(['navigate', text]),
 +  });
 +  const request = (action, extra = {}) => {
@@ -6050,6 +6092,13 @@ index 0000000..5c3a447
 +  const fallback = computeLayout(info, 1, null);
 +  assert.ok(fallback.chrome.toolbarHeight > 0);
 +  assert.ok(fallback.chrome.page.y > 0);
++});
++test('Stop stops and never reloads, even when the page finished loading meanwhile (#645)', () => {
++  const f = fixture();
++  f.page.loading = true;
++  const req = f.request('stop');
++  f.controls.execute(req);
++  assert.deepEqual(f.calls, ['stop']);
 +});
 diff --git a/browser/test/native-icon.test.js b/browser/test/native-icon.test.js
 new file mode 100644
