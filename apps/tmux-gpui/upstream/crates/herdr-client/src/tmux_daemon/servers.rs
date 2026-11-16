@@ -46,10 +46,15 @@ impl LocalDaemon {
     /// every scoped URL, the daemon refuses one it retired, and that refusal
     /// drops the list.
     pub(super) fn known_servers(&self) -> Result<Vec<ServerRegistration>, Error> {
+        self.remembered_or_listed().map(|(servers, _)| servers)
+    }
+    /// The servers, and whether they are the remembered list rather than a
+    /// read made just now.
+    pub(super) fn remembered_or_listed(&self) -> Result<(Vec<ServerRegistration>, bool), Error> {
         self.check_record()?;
         match known(&self.fingerprint) {
-            Some(servers) => Ok(servers),
-            None => self.list_servers(),
+            Some(servers) => Ok((servers, true)),
+            None => Ok((self.list_servers()?, false)),
         }
     }
 }
