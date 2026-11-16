@@ -240,9 +240,10 @@ acquire_lock() {
 # Prints the name of each release directory that a running process has mapped:
 # its executable or a library it loaded. A tmux server or daemon started from an
 # older release keeps using it after `current` moves on, so the mapped path is
-# checked, not the command line. Linux: sed reads /proc/<pid>/maps itself (no
-# cat: procfs files are read with plain read calls). Elsewhere lsof lists each
-# process's mapped files. Only this user's processes are readable. Fails, and
+# checked, not the command line. Linux: one sed reads every /proc/<pid>/maps and
+# skips those it cannot open (other users' processes, pid 1 first); a loop of
+# reads would stop at the first under set -e and see nothing. Elsewhere lsof
+# lists each process's mapped files. Only this user's processes are readable. Fails, and
 # prints nothing, unless the probe can see this shell's own mapped files: an
 # empty answer from a probe that could not read anything must not mean "unused".
 releases_in_use() {
