@@ -243,6 +243,13 @@ impl Stops {
     pub(super) fn focused(&self, window: &Window) -> bool {
         self.handles.values().any(|stop| stop.is_focused(window))
     }
+    /// Whether the keyboard is on an action the last table paint did not draw
+    /// (an empty-state table draws no machine at all).
+    pub(super) fn focused_unshown(&self, window: &Window) -> bool {
+        self.handles
+            .iter()
+            .any(|(stop, handle)| handle.is_focused(window) && !self.shown.contains(stop))
+    }
     /// Forgets the actions `exists` no longer has; true if one of them held
     /// the keyboard, which then is on nothing that is on screen.
     pub(super) fn retain(&mut self, window: &Window, exists: impl Fn(&Stop) -> bool) -> bool {

@@ -514,3 +514,90 @@ fn space_presses_a_machine_action(cx: &mut TestAppContext) {
     assert_eq!(sent.len(), 1, "one press, one command");
     assert!(matches!(sent[0], browser::Command::FleetDisconnect { .. }));
 }
+
+/// Review of #803 (round 2): the last sessions end while a machine's
+/// Disconnect has the keyboard. The table becomes the "No sessions yet"
+/// invitation and draws no machine action, so Home takes the keyboard back.
+#[gpui::test]
+fn an_empty_table_does_not_keep_the_focus(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = fleet_home(cx);
+    assert!(home_tab_to(cx, "fleet-disconnect-0"), "fixture");
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            for g in &mut v.browser_state.fleet.as_mut().unwrap().groups {
+                g.sessions.clear();
+                g.omitted_sessions = 0;
+                g.state = browser::fleet::Phase::Ready;
+                g.collapsed = false;
+                g.conflict = false;
+            }
+            cx.notify();
+        });
+        window.draw(cx).clear(cx);
+    });
+    assert!(
+        cx.debug_bounds("home-fleet-no-sessions").is_some()
+            && cx.debug_bounds("fleet-disconnect-0").is_none(),
+        "fixture: the invitation, no machine actions"
+    );
+    assert!(
+        home_has_the_keyboard(&view, cx),
+        "an undrawn Disconnect kept the keyboard"
+    );
+    receiver.try_iter().for_each(drop);
+    cx.simulate_keystrokes("enter");
+    assert!(
+        !receiver
+            .try_iter()
+            .any(|c| matches!(c, browser::Command::FleetDisconnect { .. })),
+        "Return on an undrawn Disconnect"
+    );
+    cx.simulate_keystrokes("tab");
+    let row = cx.update(|window, cx| view.read(cx).home_action_index(window));
+    assert!(row.is_some(), "Tab lands on the action row");
+}
+
+/// Review of #803 (round 2): with two machines, Tab takes each machine's
+/// actions in turn, its servers' before its Disconnect, and never mixes them.
+#[gpui::test]
+fn tab_takes_each_machines_actions_in_turn(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = fleet_home(cx);
+    add_machine_b(&view, cx, false);
+    let selectors: Vec<String> = (0..2)
+        .flat_map(|m| {
+            (0..2)
+                .map(move |s| format!("fleet-use-server-action-{m}-{s}"))
+                .chain(std::iter::once(format!("fleet-disconnect-{m}")))
+        })
+        .collect();
+    let mut seen: Vec<String> = Vec::new();
+    for _ in 0..60 {
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        for selector in &selectors {
+            let marker: &'static str = Box::leak(format!("{selector}:focused").into_boxed_str());
+            if cx.debug_bounds(marker).is_some() && !seen.contains(selector) {
+                seen.push(selector.clone());
+            }
+        }
+    }
+    // Machine B (index 1): "fleet-use-server-action-1-…" or "fleet-disconnect-1".
+    let machine = |s: &String| {
+        s.strip_prefix("fleet-use-server-action-")
+            .map_or(s == "fleet-disconnect-1", |rest| rest.starts_with("1-"))
+    };
+    let disconnect = |s: &String| s.starts_with("fleet-disconnect");
+    let expected_a: Vec<&String> = seen.iter().filter(|s| !machine(s)).collect();
+    assert!(expected_a.len() >= 2, "{seen:?}");
+    assert!(seen.iter().any(|s| machine(s) && disconnect(s)), "{seen:?}");
+    // Machine A's actions all come before machine B's.
+    let first_b = seen.iter().position(machine).unwrap();
+    assert!(seen[..first_b].iter().all(|s| !machine(s)), "{seen:?}");
+    assert!(seen[first_b..].iter().all(machine), "{seen:?}");
+    // In each machine, Disconnect is the last stop.
+    for m in [false, true] {
+        let mine: Vec<&String> = seen.iter().filter(|s| machine(s) == m).collect();
+        assert!(disconnect(mine.last().unwrap()), "{seen:?}");
+        assert_eq!(mine.iter().filter(|s| disconnect(s)).count(), 1, "{seen:?}");
+    }
+}

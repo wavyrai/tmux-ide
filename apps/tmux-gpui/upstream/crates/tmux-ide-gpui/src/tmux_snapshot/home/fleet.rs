@@ -626,6 +626,18 @@ impl SnapshotView {
         if let Some(controls) = &self.home_filter {
             controls.rows.observe(window);
             controls.asides.borrow_mut().begin();
+            // Once this paint is built: the keyboard must not stay on an action
+            // it did not draw, whatever the reason (review of #803).
+            cx.defer_in(window, |view, window, cx| {
+                if view
+                    .home_filter
+                    .as_ref()
+                    .is_some_and(|controls| controls.asides.borrow().focused_unshown(window))
+                {
+                    view.terminal_focus.focus(window, cx);
+                    cx.notify();
+                }
+            });
         }
         let bezel = self.home_palette();
         let view = self.home_fleet_view();
