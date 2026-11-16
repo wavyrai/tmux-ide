@@ -102,7 +102,10 @@ import {
 } from "../attachments/admission-util.ts";
 import type { DirectTerminalSocket } from "../attachments/direct-websocket.ts";
 import type { SessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
-import { SessionRuntimeControllerLeaseError } from "../session-runtime/registry.ts";
+import {
+  SessionRuntimeControllerLeaseError,
+  SessionRuntimeInputLifetimeEndedError,
+} from "../session-runtime/registry.ts";
 import { terminalDeliveryObservationOrdinal } from "../session-runtime/terminal-delivery-observation-identity.ts";
 import {
   PaneStreamLeaseError,
@@ -1511,6 +1514,10 @@ export class PaneStreamLiveConnection {
       // Whether this connection held input when it went: the next stream of
       // the same client can only be granted input once that is released.
       ...(this.#heldInput === null ? {} : { heldInput: this.#heldInput }),
+      // Keys not delivered because their pane lifetime had ended (#397).
+      ...(this.#inputLifetimeEndedDropped > 0
+        ? { droppedEndedLifetimeInputs: this.#inputLifetimeEndedDropped }
+        : {}),
     });
     this.#closed = true;
     this.#ownershipHeld.length = 0;
@@ -3583,6 +3590,12 @@ export class PaneStreamLiveConnection {
         }
       } catch (error) {
         if (this.#holdForWindowOwnership(error, deliver)) return;
+        if (error instanceof SessionRuntimeInputLifetimeEndedError) {
+          // Fenced to a lifetime that ended: not delivered, not acknowledged.
+          // The pane's delivery tells the client its lifetime ended.
+          this.#noteInputLifetimeEnded(pane, error);
+          return;
+        }
         this.#fail("control-frame-handler-failed", error);
       }
     };
@@ -3690,6 +3703,20 @@ export class PaneStreamLiveConnection {
       // A refusal inside run() put it back at the front: wait again.
       if (this.#ownershipHeld.length > before) continue;
     }
+  }
+
+  #inputLifetimeEndedLogged = new Set<string>();
+  #inputLifetimeEndedDropped = 0;
+  #noteInputLifetimeEnded(pane: string, error: Error): void {
+    this.#inputLifetimeEndedDropped += 1;
+    if (this.#inputLifetimeEndedLogged.has(pane)) return;
+    this.#inputLifetimeEndedLogged.add(pane);
+    logger.info("pane-stream", "input for an ended pane lifetime not delivered", {
+      session: this.#descriptor.sessionName,
+      clientId: this.#clientId,
+      pane,
+      error: error.message.slice(0, 200),
+    });
   }
 
   #failProtocol(code: PaneStreamErrorFrameCode): void {
