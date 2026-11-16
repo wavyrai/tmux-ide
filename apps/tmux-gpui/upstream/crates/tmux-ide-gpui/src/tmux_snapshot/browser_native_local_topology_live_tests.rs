@@ -289,6 +289,29 @@ fn a_pane_split_while_the_window_is_inactive_is_there_when_it_is_activated() {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+    // Still inactive: the pane is closed again from outside.
+    let closing = std::env::var_os("TMUX_IDE_TEST_INACTIVE_CLOSE").is_some();
+    let mut closed_panes = Vec::<usize>::new();
+    if closing {
+        eprintln!("TOPOLOGY_CLOSE_READY");
+        let started = Instant::now();
+        while !signals.join("close-done").exists() {
+            assert!(started.elapsed() < Duration::from_secs(30), "no close");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let closed_at = Instant::now();
+        while closed_at.elapsed() < Duration::from_secs(3) {
+            if let Some(s) = take(&bridge) {
+                if closed_panes.last() != Some(&s.panes.len()) {
+                    closed_panes.push(s.panes.len());
+                }
+                attempts = attempts.max(s.reconnect_attempt.unwrap_or(0));
+                frameless += u64::from(s.request == request && s.frame.is_none());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    let expected = if closing { before } else { before + 1 };
     let activated = Instant::now();
     bridge
         .commands
@@ -303,10 +326,10 @@ fn a_pane_split_while_the_window_is_inactive_is_there_when_it_is_activated() {
         if let Some(s) = take(&bridge) {
             attempts = attempts.max(s.reconnect_attempt.unwrap_or(0));
             frameless += u64::from(s.request == request && s.frame.is_none());
-            if shown_after.is_none() && s.request == request && s.panes.len() == before + 1 {
+            if shown_after.is_none() && s.request == request && s.panes.len() == expected {
                 shown_after = Some(activated.elapsed().as_millis());
             }
-            if s.request == request && s.panes.len() == before + 1 && s.input_ready {
+            if s.request == request && s.panes.len() == expected && s.input_ready {
                 ready_after = Some(activated.elapsed().as_millis());
             }
         }
@@ -316,6 +339,7 @@ fn a_pane_split_while_the_window_is_inactive_is_there_when_it_is_activated() {
         "TOPOLOGY_LIVE {}",
         serde_json::json!({
             "panesBefore": before, "panesWhileInactive": inactive_panes,
+            "panesAfterInactiveClose": closed_panes,
             "shownAfterActivateMs": shown_after, "readyAfterActivateMs": ready_after,
             "maxAttempt": attempts, "frameless": frameless,
         })
@@ -326,6 +350,10 @@ fn a_pane_split_while_the_window_is_inactive_is_there_when_it_is_activated() {
     assert!(
         inactive_panes.contains(&(before + 1)),
         "the inactive window did not follow the split: {inactive_panes:?}"
+    );
+    assert!(
+        !closing || closed_panes.contains(&before),
+        "the inactive window did not follow the close: {closed_panes:?}"
     );
     assert!(
         ready_after.is_some_and(|ms| ms < 1000),
