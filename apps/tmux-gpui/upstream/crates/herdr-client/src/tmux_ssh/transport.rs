@@ -167,9 +167,12 @@ impl RemoteTransport {
     pub fn retire(&self) {
         self.tunnel.retire();
     }
-    /// Whether its forward still runs (advisory, as `Tunnel::check`).
-    pub(crate) fn healthy(&self) -> bool {
-        self.tunnel.check().is_ok()
+    /// Whether the route still reaches the same daemon: its forward runs and a
+    /// request through it succeeds on an identity-proven connection, which a
+    /// restarted or replaced daemon (new instance and token) fails. A running
+    /// ssh alone proves nothing (review of 01c1de50).
+    pub(crate) fn proven(&self) -> bool {
+        self.tunnel.check().is_ok() && self.capabilities(&AtomicBool::new(false)).is_ok()
     }
     pub fn capabilities(&self, cancelled: &AtomicBool) -> Result<Vec<u8>, TransportError> {
         if cancelled.load(Ordering::Acquire) {

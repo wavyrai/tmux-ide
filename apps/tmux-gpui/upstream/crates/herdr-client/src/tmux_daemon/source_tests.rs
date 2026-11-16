@@ -57,6 +57,37 @@ fn fixture() -> RemoteTransport {
     server.join().unwrap();
     route
 }
+/// A route whose daemon stays up: every connection is answered, the identity
+/// read with the fixture's identity and anything else with `{}`.
+fn serving_fixture() -> RemoteTransport {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            thread::spawn(move || {
+                loop {
+                    let mut bytes = Vec::new();
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if stream.read_exact(&mut byte).is_err() {
+                            return;
+                        }
+                        bytes.push(byte[0]);
+                    }
+                    let line = String::from_utf8_lossy(&bytes);
+                    let line = line.lines().next().unwrap_or_default();
+                    if line.contains("/identity") {
+                        reply(&mut stream, identity());
+                    } else {
+                        reply(&mut stream, serde_json::json!({}));
+                    }
+                }
+            });
+        }
+    });
+    RemoteTransport::fixture(port, descriptor()).unwrap()
+}
 fn route(owner: &Owner) -> &Arc<RemoteTransport> {
     match owner {
         Owner::Remote(route) => route,
@@ -241,7 +272,7 @@ fn one_sources_reset_keeps_the_others_route() {
     };
     let a = CatalogSource::remote(target.clone(), None);
     let b = CatalogSource::remote(target, None);
-    *slot(&a).lock().unwrap() = Some(fixture());
+    *slot(&a).lock().unwrap() = Some(serving_fixture());
     let owner_a = a.discover(&Arc::new(AtomicBool::new(false))).unwrap();
     let owner_b = b.discover(&Arc::new(AtomicBool::new(false))).unwrap();
     // Window A goes back to Home: its worker resets with its own owner.
@@ -250,7 +281,7 @@ fn one_sources_reset_keeps_the_others_route() {
         .lock()
         .unwrap()
         .as_ref()
-        .is_some_and(RemoteTransport::healthy);
+        .is_some_and(RemoteTransport::proven);
     assert!(alive, "window A's reset ended window B's forward");
     assert!(route(&owner_b).capability_route().is_ok());
     drop((owner_a, owner_b));
@@ -279,4 +310,43 @@ fn a_failed_shared_route_is_cleared_for_every_source() {
         "a failed route was kept for B"
     );
     drop(owner_a);
+}
+
+/// Review of 01c1de50 (blocking): the remote daemon behind a shared forward
+/// went away (a restart or an update: new instance and token). ssh still
+/// runs, so the forward looks alive, but no request gets through. A source
+/// that resets must get a new route, also while another source holds the old
+/// one. The reviewer's probe.
+#[test]
+fn a_route_to_a_gone_daemon_is_replaced_while_shared() {
+    let target = crate::tmux_ssh::SshTarget::parse("share-stale.invalid").unwrap();
+    let slot = |source: &CatalogSource| match source {
+        CatalogSource::Remote(source) => source.route.clone(),
+        CatalogSource::Local(_) => panic!("not remote"),
+    };
+    let a = CatalogSource::remote(target.clone(), None);
+    let b = CatalogSource::remote(target, None);
+    // fixture(): its daemon answered the identity read and is gone now.
+    *slot(&a).lock().unwrap() = Some(fixture());
+    let before = slot(&a).lock().unwrap().as_ref().unwrap().generation();
+    let owner_a = a.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    let owner_b = b.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    assert!(
+        route(&owner_a)
+            .capabilities(&AtomicBool::new(false))
+            .is_err()
+    );
+    a.reset(Some(&owner_a)).unwrap();
+    let kept = slot(&a)
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(RemoteTransport::generation);
+    drop((owner_a, owner_b));
+    b.shutdown().unwrap();
+    a.shutdown().unwrap();
+    assert!(
+        kept.as_ref() != Some(&before),
+        "the dead route is reused for A while B holds it"
+    );
 }
