@@ -13,18 +13,19 @@ pub enum CatalogSource {
 }
 /// One machine's route, shared by every source of the same machine.
 #[cfg(unix)]
-type SharedRoute = Arc<std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>>;
+type RouteSlot = std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>;
+#[cfg(unix)]
+type SharedRoute = Arc<RouteSlot>;
+/// A machine: its SSH target and the environment it must prove.
+#[cfg(unix)]
+type MachineKey = (String, Option<String>);
 /// The routes of the sources that exist, by machine. The app opened a source
 /// per window, picker and fleet row, and each opened its own SSH forward to the
 /// same machine; a healthy route is now shared, so one machine has one
 /// forward. Held weakly: the route ends with the last source of its machine.
 #[cfg(unix)]
-static ROUTES: std::sync::Mutex<
-    Vec<(
-        (String, Option<String>),
-        std::sync::Weak<std::sync::Mutex<Option<crate::tmux_ssh::RemoteTransport>>>,
-    )>,
-> = std::sync::Mutex::new(Vec::new());
+static ROUTES: std::sync::Mutex<Vec<(MachineKey, std::sync::Weak<RouteSlot>)>> =
+    std::sync::Mutex::new(Vec::new());
 #[cfg(unix)]
 fn shared_route(
     target: &crate::tmux_ssh::SshTarget,
