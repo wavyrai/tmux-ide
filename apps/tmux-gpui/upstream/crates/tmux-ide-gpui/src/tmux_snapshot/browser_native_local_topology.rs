@@ -20,7 +20,6 @@ impl Local {
             return Ok(());
         };
         if version != 1
-            || !self.foreground
             || self.state.surface != Surface::Workspace
             || request != self.state.request
             || presence_revision != self.presence_revision
@@ -37,12 +36,23 @@ impl Local {
         }
         // A stream that follows pane changes in place names its own pane set:
         // this side's list (the next lease, the pane choices) follows it.
-        if let Some(stream_panes) = &stream_panes
-            && !self.follow_stream_panes(stream_panes, &pane)
-        {
-            return Ok(());
+        // Also behind other windows (PM, 17 Nov: a pane closed elsewhere stayed
+        // listed until the window was activated). The labels below wait for
+        // the front, as before.
+        if let Some(stream_panes) = &stream_panes {
+            let before = (self.state.panes.clone(), self.state.selected_pane.clone());
+            if !self.follow_stream_panes(stream_panes, &pane) {
+                return Ok(());
+            }
+            if !self.foreground {
+                return if before != (self.state.panes.clone(), self.state.selected_pane.clone()) {
+                    self.publish()
+                } else {
+                    Ok(())
+                };
+            }
         }
-        if self.state.selected_pane.as_ref() != Some(&pane) {
+        if !self.foreground || self.state.selected_pane.as_ref() != Some(&pane) {
             return Ok(());
         }
         // The terminal controller already validated topology and revisions. The
