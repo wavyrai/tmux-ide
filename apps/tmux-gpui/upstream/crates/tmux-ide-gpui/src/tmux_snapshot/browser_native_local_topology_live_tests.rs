@@ -233,3 +233,102 @@ fn the_selected_pane_replaced_from_outside_moves_to_the_pane_left() {
     assert!(typed, "typing did not land in the remaining pane");
     assert_eq!(report["frameless"], 0, "a publication dropped the frame");
 }
+
+/// PM, 17 Nov: in the 0.1.18 soak an inactive window's split showed neither an
+/// in-place follow nor a disconnect. A window that is not the key window must
+/// still follow a pane change, so the new pane is there as soon as the window
+/// is activated, with no reconnect.
+#[test]
+#[ignore = "requires a scratch daemon and a harness that splits a pane"]
+fn a_pane_split_while_the_window_is_inactive_is_there_when_it_is_activated() {
+    let record = std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap();
+    let signals = PathBuf::from(std::env::var_os("TMUX_IDE_TEST_SIGNAL_DIR").unwrap());
+    let (bridge, owner) = start(record.into(), Default::default()).unwrap();
+    let home = until(&bridge, "Home", Duration::from_secs(30), |s| {
+        s.home_phase == HomePhase::Live && s.session_catalog_complete && !s.sessions.is_empty()
+    });
+    let request = home.request + 1;
+    bridge
+        .commands
+        .send(Command::Session {
+            request,
+            id: home.sessions[0].id.clone(),
+        })
+        .unwrap();
+    let live = until(&bridge, "session", Duration::from_secs(30), |s| {
+        s.request == request && s.frame.is_some() && s.input_ready && !s.panes.is_empty()
+    });
+    let before = live.panes.len();
+    bridge
+        .commands
+        .send(Command::Presence {
+            active: false,
+            revision: 1,
+        })
+        .unwrap();
+    until(&bridge, "inactive", Duration::from_secs(10), |s| {
+        !s.input_ready
+    });
+    eprintln!("TOPOLOGY_SPLIT_READY");
+    // While inactive: every pane count, reconnect and frame seen for 3 s after
+    // the split.
+    let started = Instant::now();
+    while !signals.join("split-done").exists() {
+        assert!(started.elapsed() < Duration::from_secs(30), "no split");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let split_at = Instant::now();
+    let (mut inactive_panes, mut attempts, mut frameless) = (Vec::<usize>::new(), 0u32, 0u64);
+    while split_at.elapsed() < Duration::from_secs(3) {
+        if let Some(s) = take(&bridge) {
+            if inactive_panes.last() != Some(&s.panes.len()) {
+                inactive_panes.push(s.panes.len());
+            }
+            attempts = attempts.max(s.reconnect_attempt.unwrap_or(0));
+            frameless += u64::from(s.request == request && s.frame.is_none());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let activated = Instant::now();
+    bridge
+        .commands
+        .send(Command::Presence {
+            active: true,
+            revision: 2,
+        })
+        .unwrap();
+    let mut shown_after = None;
+    let mut ready_after = None;
+    while activated.elapsed() < Duration::from_secs(10) && ready_after.is_none() {
+        if let Some(s) = take(&bridge) {
+            attempts = attempts.max(s.reconnect_attempt.unwrap_or(0));
+            frameless += u64::from(s.request == request && s.frame.is_none());
+            if shown_after.is_none() && s.request == request && s.panes.len() == before + 1 {
+                shown_after = Some(activated.elapsed().as_millis());
+            }
+            if s.request == request && s.panes.len() == before + 1 && s.input_ready {
+                ready_after = Some(activated.elapsed().as_millis());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    eprintln!(
+        "TOPOLOGY_LIVE {}",
+        serde_json::json!({
+            "panesBefore": before, "panesWhileInactive": inactive_panes,
+            "shownAfterActivateMs": shown_after, "readyAfterActivateMs": ready_after,
+            "maxAttempt": attempts, "frameless": frameless,
+        })
+    );
+    owner.shutdown().unwrap();
+    assert_eq!(attempts, 0, "the split reconnected the stream");
+    assert_eq!(frameless, 0, "a publication dropped the frame");
+    assert!(
+        inactive_panes.contains(&(before + 1)),
+        "the inactive window did not follow the split: {inactive_panes:?}"
+    );
+    assert!(
+        ready_after.is_some_and(|ms| ms < 1000),
+        "the new pane was not there at once after activation: {ready_after:?}"
+    );
+}
