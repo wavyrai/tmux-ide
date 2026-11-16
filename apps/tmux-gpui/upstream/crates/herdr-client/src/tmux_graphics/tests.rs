@@ -94,6 +94,43 @@ fn production_typescript_placeholder_vectors_match_and_preserve_rich_canonical_p
     }
 }
 
+/// Group H (owner, 16 Nov): placeholder cells whose image the daemon does not
+/// have, as after a daemon restart, are reported so the window can say so;
+/// cells whose image it has are not.
+#[test]
+fn placeholders_the_daemon_has_no_image_for_are_reported() {
+    for (index, vector) in vectors().into_iter().enumerate() {
+        let now = Instant::now();
+        let committed = committed(&vector);
+        // A new daemon: no graphics state for the pane at all.
+        let mut fresh = graphics();
+        let placements = fresh.placements("pane", &committed, now).unwrap();
+        assert!(placements.placements.is_empty());
+        assert!(placements.orphaned, "{}", vector["kind"]);
+        // A state that holds other images only.
+        let mut other = graphics();
+        other.bind("pane", &committed).unwrap();
+        let mut unrelated = vector["state"].clone();
+        for image in unrelated["images"].as_array_mut().unwrap() {
+            image["imageId"] = json!(4242);
+        }
+        state(&mut other, "pane", &unrelated, now);
+        assert!(other.placements("pane", &committed, now).unwrap().orphaned);
+        // The image arrives: nothing is orphaned. (Only the first vector's cells
+        // name nothing but its own image; the others also carry cells of image 5,
+        // which their state does not hold, and stay orphaned.)
+        let mut held = graphics();
+        held.bind("pane", &committed).unwrap();
+        state(&mut held, "pane", &vector["state"], now);
+        assert_eq!(
+            held.placements("pane", &committed, now).unwrap().orphaned,
+            index != 0,
+            "{}",
+            vector["kind"]
+        );
+    }
+}
+
 #[test]
 fn image_bytes_decode_once_and_last_chunk_is_digest_guarded() {
     let vector = &vectors()[0];

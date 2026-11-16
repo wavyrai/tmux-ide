@@ -204,6 +204,9 @@ pub(super) struct State {
     pub frame: Option<DisplayFrame>,
     /// Kitty graphics placements in frame cells.
     pub graphics: Vec<super::kitty_graphics::Placement>,
+    /// A pane on screen shows placeholder cells for an image the daemon no
+    /// longer holds, as after a daemon restart (group H).
+    pub images_lost: bool,
     /// Prepared only by native transport; pipe publications cannot supply storage.
     #[cfg(target_os = "macos")]
     pub native_surfaces: Option<(DisplayFrame, Vec<crate::tmux_native_surface::Paint>)>,
@@ -651,6 +654,8 @@ impl Reader {
             status: p.status,
             frame: None,
             graphics: p.graphics,
+            // The development bridge does not report lost images.
+            images_lost: false,
             #[cfg(target_os = "macos")]
             native_surfaces: None,
         })

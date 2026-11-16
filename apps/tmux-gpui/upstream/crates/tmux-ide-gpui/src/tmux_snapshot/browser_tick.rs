@@ -154,6 +154,7 @@ impl SnapshotView {
             self.fit_settle.due_at(),
             self.palette.due_at(),
             self.window_size.due_at(),
+            self.images_lost.due_at(),
             self.graphics.store.waiting().then_some(now + IMAGE_POLL),
             #[cfg(test)]
             self.idle_tick.deadline,
@@ -187,8 +188,9 @@ impl SnapshotView {
         } else if self.fit_settle.due(super::geometry::fit_now()) {
             cx.notify();
         }
-        if self.window_size.take_due(cx.background_executor().now()) {
-            // The notice is due (#695): render it, even with no frame since.
+        let now = cx.background_executor().now();
+        // Either notice is due (#695, group H): render it, even with no frame since.
+        if self.window_size.take_due(now) | self.images_lost.take_due(now) {
             cx.notify();
         }
         self.flush_attention();

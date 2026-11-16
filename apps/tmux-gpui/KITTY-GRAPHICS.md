@@ -102,8 +102,13 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   only while dimensions, buffer and history coordinates remain unchanged.
   Resizes, history changes and actual terminal resets discard those anchors.
   Placements extending beyond the visible pane are clipped.
-- Images live only in the daemon. They survive window reattach but not a
-  daemon restart, after which placeholder cells paint blank.
+- Images live only in the daemon, and their bytes never go to disk (owner's
+  decision, 16 Nov 2026). They survive window reattach but not a daemon restart,
+  after which placeholder cells paint blank. The window then notices placeholder
+  cells that name an image the daemon does not hold, and after a second its status
+  line says "Images from before the restart are gone; redraw to see them." The
+  notice goes as soon as the program redraws and the image arrives again. Only the
+  native window shows it; the development bridge does not.
 - When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet
   know the window's real cell size.
 - Not modelled: animation frames other than root-frame edits, relative

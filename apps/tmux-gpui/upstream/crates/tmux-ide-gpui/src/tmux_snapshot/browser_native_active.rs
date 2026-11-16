@@ -353,6 +353,7 @@ impl Active {
                 state.graphics = self
                     .graphics
                     .placements(&window, self.presentation.history_offset())?;
+                state.images_lost = self.graphics.images_lost(&window);
             }
             #[cfg(target_os = "macos")]
             {
