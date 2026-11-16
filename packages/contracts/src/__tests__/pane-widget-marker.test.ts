@@ -187,6 +187,35 @@ describe("logical lines from cell rows", () => {
     ];
     expect(detectWidgetMarker(rows)?.id).toBe("markdown");
   });
+
+  /*
+   * Bug this catches: the grid pads only the row a line ends on, but the
+   * pad-cell trim ran on every row. A space that fell on a wrap boundary was
+   * deleted, so the reassembled line no longer matched the marker grammar.
+   */
+  it("keeps a separator space that lands exactly on a wrap boundary", () => {
+    const marker = encodeWidgetMarkerLine("markdown");
+    // 17 columns puts the space after "TMUXIDE-WIDGET/1" last on its row.
+    const rows = wrappedRows(marker, 17);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows[0]!.cells.at(-1)).toBe(" ");
+    expect(widgetLogicalLines(rows)).toEqual([marker]);
+    expect(detectWidgetMarker(rows)).toEqual({ id: "markdown", args: null, lineIndex: 0 });
+  });
+
+  it("keeps a wrap-boundary space when reading replica rows", () => {
+    const marker = encodeWidgetMarkerLine("markdown");
+    const rows = [...wrappedRows(marker, 26)].map((cells) => ({
+      cells: cells.cells.map((grapheme) => ({ grapheme })),
+      wrapped: cells.wrapped,
+    }));
+    expect(rows[0]!.cells.at(-1)!.grapheme).toBe(" ");
+    expect(detectWidgetMarkerFromReplicaRows(rows)).toEqual({
+      id: "markdown",
+      args: null,
+      lineIndex: 0,
+    });
+  });
 });
 
 describe("detectWidgetMarker", () => {
