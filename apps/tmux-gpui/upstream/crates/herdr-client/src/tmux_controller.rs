@@ -377,6 +377,12 @@ impl Controller {
         self.inflight_viewport = Some((cols, rows, window));
         Ok(())
     }
+    /// Ready when the session has something new for `poll`; wait on it
+    /// instead of polling on a timer (it may also be ready with nothing new).
+    pub fn updated(&self) -> &crossbeam_channel::Receiver<()> {
+        self.session.updated()
+    }
+
     pub fn poll(&mut self, now: u64) -> Result<Update, Error> {
         let result = self.poll_inner(now);
         if result.is_err() {
