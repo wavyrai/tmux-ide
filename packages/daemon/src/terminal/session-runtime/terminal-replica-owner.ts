@@ -439,6 +439,11 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   /** Image bytes by content digest, while the pane's store still holds them. */
+  /** The renderer's cell size, for image placements that give no `c`/`r` (group H). */
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
+    this.#interpreter.kittyImages().setCellPixels(width, height, precise);
+  }
+
   graphicsImage(digest: string): KittyImage | null {
     return this.#interpreter.kittyImages().imageByDigest(digest) ?? null;
   }

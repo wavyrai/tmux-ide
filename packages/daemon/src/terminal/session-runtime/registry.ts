@@ -1281,6 +1281,12 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
+  /** The renderer's last reported cell size; every pane's image placements use it. */
+  #cellPixels: {
+    width: number;
+    height: number;
+    precise?: { width: number; height: number };
+  } | null = null;
   #outputTraces: RuntimeTraceCorrelator | null;
   readonly #outputObservations = new Map<
     string,
@@ -1836,6 +1842,9 @@ class SessionRuntime {
   ): void {
     this.#assertConnected(clientId);
     this.#mirror.setCellPixels?.(this.session, width, height, precise);
+    this.#cellPixels = { width, height, ...(precise ? { precise } : {}) };
+    for (const owner of this.#terminalReplicas.values())
+      owner.setCellPixels(width, height, precise);
   }
 
   fitViewportWithAuthority(
@@ -2060,6 +2069,12 @@ class SessionRuntime {
         },
       );
       owner = candidate;
+      if (this.#cellPixels)
+        owner.setCellPixels(
+          this.#cellPixels.width,
+          this.#cellPixels.height,
+          this.#cellPixels.precise,
+        );
       this.#terminalReplicas.set(semanticPaneId, owner);
     }
     return owner;

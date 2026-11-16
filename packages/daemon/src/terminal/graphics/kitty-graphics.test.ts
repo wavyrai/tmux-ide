@@ -217,6 +217,34 @@ describe("kitty image store", () => {
     expect(store.state(0, 5, 20, false).images[0]!.placeholder).toEqual({ columns: 24, rows: 8 });
   });
 
+  // Group H: a placement without c/r covers the image at the window's real cell
+  // size, which the renderer reports (capability 103/104), not an assumed 10x20.
+  it("sizes a placement without c/r by the renderer's cell pixels", () => {
+    const store = new KittyImageStore({ budget: budget() });
+    const transmit = (id: number) =>
+      store.apply(
+        parseKittyCommand(
+          `Ga=T,f=32,s=160,v=64,i=${id},U=1,q=2;${Buffer.alloc(160 * 64 * 4).toString("base64")}`,
+        )!,
+        null,
+      );
+    const grid = (id: number) =>
+      store.state(0, 5, 20, false).images.find((image) => image.imageId === id)!.placeholder;
+    transmit(1);
+    // No renderer has said: the nominal 10x20.
+    expect(grid(1)).toEqual({ columns: 16, rows: 4 });
+    store.setCellPixels(16, 32);
+    transmit(2);
+    expect(grid(2)).toEqual({ columns: 10, rows: 2 });
+    // Fractional metrics (thousandths of a device pixel) win over the rounded
+    // ones: 160 px at 15.9 px a cell needs 11 columns, at a rounded 16 only 10.
+    store.setCellPixels(16, 32, { width: 15_900, height: 32_000 });
+    transmit(3);
+    expect(grid(3)).toEqual({ columns: 11, rows: 2 });
+    // A placement made before keeps its grid.
+    expect(grid(1)).toEqual({ columns: 16, rows: 4 });
+  });
+
   it("evicts least recently used images within per-pane and global quotas", () => {
     const shared = new KittyImageBudget({ perPaneBytes: 200, globalBytes: 300 });
     const a = new KittyImageStore({ budget: shared });
