@@ -237,6 +237,24 @@ acquire_lock() {
   printf '%s\n%s\n%s\n' "$$" "$(process_start "$$")" "$(uname -n)" >"$1/owner.$$"
   mv -f "$1/owner.$$" "$1/owner"
 }
+# Prints the name of each release directory that a running process has mapped:
+# its executable or a library it loaded. A tmux server or daemon started from an
+# older release keeps using it after `current` moves on, so the mapped path is
+# checked, not the command line. Linux reads /proc/<pid>/maps; elsewhere lsof
+# lists each process's mapped files. Only this user's processes are readable.
+releases_in_use() {
+  releases_real=$(cd "$root/releases" 2>/dev/null && pwd -P) || return 0
+  if [ -r /proc/self/maps ]; then
+    for maps in /proc/[0-9]*/maps; do cat "$maps" 2>/dev/null; done | sed -n 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]*  *\(\/.*\)$/\1/p'
+  else
+    "$(command -v lsof || echo /usr/sbin/lsof)" -nP -w -d txt -Fn 2>/dev/null | sed -n 's/^n//p'
+  fi | while IFS= read -r mapped; do
+    case "$mapped" in "$releases_real"/install-*/*)
+      mapped=${mapped#"$releases_real"/}
+      printf '%s\n' "${mapped%%/*}" ;;
+    esac
+  done | sort -u
+}
 # Runs on every exit. Nothing here may stop the lock from being released.
 release() {
   set +e
@@ -268,13 +286,13 @@ main() {
       --yes) confirmed=true; shift ;;
       --no-claude-agent-teams) agent_teams=0; shift ;;
       --no-daemon-upgrade) daemon_upgrade=0; shift ;;
-      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--no-claude-agent-teams] [--no-daemon-upgrade] [--rollback|--uninstall|--prune --yes]\nInstall enables Claude Code agent teams in ~/.claude/settings.json when Claude Code is present and you have not disabled them; opt out with --no-claude-agent-teams or TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1.\nInstall moves a running older daemon, and macOS launchd jobs that start an older tmux-ide copy, to this installation; tmux sessions keep running. Opt out with --no-daemon-upgrade or TMUX_IDE_NO_DAEMON_UPGRADE=1.\nPrune requires all tmux-ide processes and services to be stopped; it keeps current and previous releases.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
+      --help) printf 'Usage: install.sh [--version VERSION|beta|latest] [--prefix ABSOLUTE_PATH] [--no-claude-agent-teams] [--no-daemon-upgrade] [--rollback|--uninstall|--prune --yes]\nInstall enables Claude Code agent teams in ~/.claude/settings.json when Claude Code is present and you have not disabled them; opt out with --no-claude-agent-teams or TMUX_IDE_NO_CLAUDE_AGENT_TEAMS=1.\nInstall moves a running older daemon, and macOS launchd jobs that start an older tmux-ide copy, to this installation; tmux sessions keep running. Opt out with --no-daemon-upgrade or TMUX_IDE_NO_DAEMON_UPGRADE=1.\nPrune keeps the current and previous releases and any release a running process uses.\nRollback needs a previous successful install. Uninstall removes the launcher, preserves sessions and data, and retains runtime files for running processes.\n'; return ;;
       *) fail "Unknown option: $1" ;;
     esac
   done
   [ "$confirmed" = false ] || [ "$action" = prune ] || fail '--yes is only valid with --prune'
   [ "$daemon_upgrade" = 1 ] || [ "$action" = install ] || fail '--no-daemon-upgrade is only valid when installing'
-  [ "$action" != prune ] || [ "$confirmed" = true ] || fail 'Prune requires --yes after stopping all tmux-ide processes and services; ordinary tmux sessions may remain running'
+  [ "$action" != prune ] || [ "$confirmed" = true ] || fail 'Prune requires --yes; it keeps the current and previous releases and any release a running process uses'
   case "$prefix" in /*) ;; *) fail 'Install prefix must be absolute' ;; esac
   case "$version" in ''|*[!a-zA-Z0-9.+-]*) fail 'Invalid version or channel' ;; esac
   root="$prefix/share/tmux-ide"
@@ -293,11 +311,13 @@ main() {
   if [ "$action" != install ]; then
     [ -f "$root/installer-v1" ] || fail 'No managed installation found at this prefix'
     [ -x "$root/current/node/bin/node" ] || fail 'Installed Node.js is unavailable; reinstall at this prefix to repair it'
-    "$root/current/node/bin/node" --input-type=module - "$root" "$launcher" "$action" <<'JS'
+    in_use=''
+    [ "$action" != prune ] || in_use=$(releases_in_use)
+    "$root/current/node/bin/node" --input-type=module - "$root" "$launcher" "$action" "$in_use" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-const [root, launcher, action] = process.argv.slice(2);
+const [root, launcher, action, inUse = ''] = process.argv.slice(2);
 const current = path.join(root, 'current');
 const previous = path.join(root, 'previous');
 const unlink = file => { try { fs.unlinkSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; } };
@@ -327,11 +347,13 @@ if (action === 'rollback') {
 } else if (action === 'prune') {
   const keep = new Set([release(current)]);
   try { keep.add(release(previous)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  let removed = 0;
+  const running = new Set(inUse.split('\n').filter(Boolean));
+  let removed = 0, kept = 0;
   for (const entry of fs.readdirSync(path.join(root, 'releases'), {withFileTypes: true})) {
     if (!entry.isDirectory() || !/^install-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
     const target = path.join(root, 'releases', entry.name);
     if (keep.has(fs.realpathSync(target))) continue;
+    if (running.has(entry.name)) { kept++; continue; }
     const marker = path.join(target, '.installer-release-v1');
     try {
       if (!fs.lstatSync(marker).isFile() || fs.readFileSync(marker, 'utf8') !== '1\n') continue;
@@ -339,7 +361,7 @@ if (action === 'rollback') {
     fs.rmSync(target, {recursive: true});
     removed++;
   }
-  console.log(`Removed ${removed} retired releases; current, rollback and unrecognized files are preserved.`);
+  console.log(`Removed ${removed} retired release${removed === 1 ? '' : 's'}${kept ? `; kept ${kept} in use by a running process` : ''}; current, rollback and unrecognized files are preserved.`);
 } else {
   release(current);
   fs.unlinkSync(launcher);
@@ -351,14 +373,20 @@ if (action === 'rollback') {
 JS
     return
   fi
-  # Bound disk growth without guessing which old runtime a live process uses.
-  # Cleanup is explicit because unlinking a loaded runtime can break later I/O.
+  # Bound disk growth. A release that a running process uses (a tmux server or
+  # daemon started from it) is neither counted nor removed. Cleanup is explicit.
+  in_use=$(releases_in_use)
   retained=0
   for retained_release in "$root"/releases/install-*; do
     [ -d "$retained_release" ] && [ ! -L "$retained_release" ] && [ -f "$retained_release/.installer-release-v1" ] || continue
+    case "
+$in_use
+" in *"
+${retained_release##*/}
+"*) continue ;; esac
     retained=$((retained + 1))
   done
-  [ "$retained" -lt 8 ] || fail 'Eight retained releases reached. Stop tmux-ide processes and services, then rerun this script with the same --prefix and --prune --yes. Ordinary tmux sessions may remain running.'
+  [ "$retained" -lt 8 ] || fail 'Eight retained releases reached. Remove the unused ones by rerunning this script with the same --prefix and --prune --yes; it keeps the current and previous releases and any release a running process uses.'
   case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux; getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'Linux requires glibc (musl/Alpine is not supported)' ;;
