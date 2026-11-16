@@ -758,7 +758,7 @@ function nonEmpty(env, key2) {
   return value ? value : void 0;
 }
 function absolutePath(value, cwd, key2) {
-  const path2 = isAbsolute3(value) ? value : resolve3(cwd, value);
+  const path2 = isAbsolute3(value) ? value : resolve3(cwd(), value);
   if (!isAbsolute3(path2)) throw new TypeError(`${key2} must resolve to an absolute path`);
   return path2;
 }
@@ -811,7 +811,16 @@ function resolveRuntimeNamespace(options = {}) {
   const within = (path2, parent) => isInsideOrEqual(path2, parent, identity4);
   const env = options.env ?? process.env;
   const userHome = options.userHome ?? homedir2();
-  const cwd = options.cwd ?? process.cwd();
+  const cwd = (key2) => () => {
+    if (options.cwd !== void 0) return options.cwd;
+    try {
+      return process.cwd();
+    } catch (error) {
+      throw new TypeError(`${key2} is relative and the current directory no longer exists`, {
+        cause: error
+      });
+    }
+  };
   const mode = runtimeMode(env);
   const isolated = ISOLATED_MODES.has(mode);
   const canonicalHome = join3(userHome, ".tmux-ide");
@@ -844,10 +853,14 @@ function resolveRuntimeNamespace(options = {}) {
   if (isolated && !configuredHome) {
     throw new TypeError(`${mode} runtime requires an explicit ${STATE_HOME_ENV}`);
   }
-  const stateHome2 = absolutePath(configuredHome ?? canonicalHome, cwd, STATE_HOME_ENV);
+  const stateHome2 = absolutePath(
+    configuredHome ?? canonicalHome,
+    cwd(STATE_HOME_ENV),
+    STATE_HOME_ENV
+  );
   const registryDir2 = absolutePath(
     nonEmpty(env, REGISTRY_DIR_ENV) ?? stateHome2,
-    cwd,
+    cwd(REGISTRY_DIR_ENV),
     REGISTRY_DIR_ENV
   );
   const daemonInfoDir = absolutePath(
@@ -856,7 +869,7 @@ function resolveRuntimeNamespace(options = {}) {
     // This also keeps an explicitly empty DAEMON_INFO_DIR equivalent to
     // "unset" instead of silently escaping a caller's isolated registry.
     nonEmpty(env, DAEMON_INFO_DIR_ENV) ?? registryDir2,
-    cwd,
+    cwd(DAEMON_INFO_DIR_ENV),
     DAEMON_INFO_DIR_ENV
   );
   const tmuxSocketName = nonEmpty(env, TMUX_SOCKET_NAME_ENV);
@@ -870,7 +883,10 @@ function resolveRuntimeNamespace(options = {}) {
   if (tmuxSocketName && !SAFE_SOCKET_NAME.test(tmuxSocketName)) {
     throw new TypeError(`${TMUX_SOCKET_NAME_ENV} is invalid`);
   }
-  const tmuxSocket = tmuxSocketPath ? { kind: "path", path: absolutePath(tmuxSocketPath, cwd, TMUX_SOCKET_PATH_ENV) } : { kind: "name", name: tmuxSocketName ?? "default" };
+  const tmuxSocket = tmuxSocketPath ? {
+    kind: "path",
+    path: absolutePath(tmuxSocketPath, cwd(TMUX_SOCKET_PATH_ENV), TMUX_SOCKET_PATH_ENV)
+  } : { kind: "name", name: tmuxSocketName ?? "default" };
   if (isolated && tmuxSocket.kind === "name" && tmuxSocket.name === "default") {
     throw new TypeError(`${mode} runtime requires a non-default ${TMUX_SOCKET_NAME_ENV}`);
   }
@@ -1464,9 +1480,18 @@ function resolveOrdinaryTmuxClient(environment, cwd, options = {}) {
         return { executable: starter, environment: withBundledTmuxResources(starter, environment) };
     }
   }
-  const candidates = configured ? [configured] : (environment.PATH ?? "/usr/bin:/bin").split(delimiter).map(
-    (entry) => resolve6(cwd instanceof URL ? fileURLToPath2(cwd) : cwd ?? process.cwd(), entry, "tmux")
-  );
+  const candidates = configured ? [configured] : (environment.PATH ?? "/usr/bin:/bin").split(delimiter).map((entry) => {
+    if (isAbsolute5(entry)) return resolve6(entry, "tmux");
+    try {
+      return resolve6(
+        cwd instanceof URL ? fileURLToPath2(cwd) : cwd ?? process.cwd(),
+        entry,
+        "tmux"
+      );
+    } catch {
+      return "";
+    }
+  });
   let executable;
   for (const candidate of candidates) {
     try {
@@ -12560,6 +12585,7 @@ __export(update_check_exports, {
   maybeCheckForUpdate: () => maybeCheckForUpdate,
   parseRegistryResponse: () => parseRegistryResponse,
   readUpdateCache: () => readUpdateCache,
+  refreshUpdateStatus: () => refreshUpdateStatus,
   runUpdateCheck: () => runUpdateCheck,
   shouldCheck: () => shouldCheck,
   updateCachePath: () => updateCachePath,
@@ -12665,6 +12691,26 @@ function getUpdateStatus({
 } = {}) {
   const cache3 = readUpdateCache({ currentVersion });
   return deriveStatus(cache3?.latest ?? null, currentVersion);
+}
+async function refreshUpdateStatus({
+  currentVersion = getCurrentVersion(),
+  now = Date.now(),
+  timeoutMs = 3e3,
+  fetchLatest = fetchLatestVersion
+} = {}) {
+  const fetched = await fetchLatest(timeoutMs, updateChannel(currentVersion));
+  const cache3 = readUpdateCache({ currentVersion });
+  if (fetched === null)
+    return { ...deriveStatus(cache3?.latest ?? null, currentVersion), source: "cache" };
+  writeUpdateCache(
+    {
+      lastCheckedAt: now,
+      latest: fetched,
+      ...cache3?.notified ? { notified: cache3.notified } : {}
+    },
+    { currentVersion }
+  );
+  return { ...deriveStatus(fetched, currentVersion), source: "registry" };
 }
 async function runUpdateCheck({
   now = Date.now(),
@@ -13365,6 +13411,25 @@ var init_state_home = __esm({
   "packages/daemon/src/lib/state-home.ts"() {
     "use strict";
     init_runtime_namespace();
+  }
+});
+
+// packages/daemon/src/lib/invocation-directory.ts
+import { homedir as homedir4 } from "node:os";
+function invocationDirectory(io = {
+  cwd: () => process.cwd(),
+  home: homedir4
+}) {
+  try {
+    return io.cwd();
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return io.home();
+  }
+}
+var init_invocation_directory = __esm({
+  "packages/daemon/src/lib/invocation-directory.ts"() {
+    "use strict";
   }
 });
 
@@ -15290,7 +15355,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.24",
+      version: "2.9.25",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -15352,7 +15417,8 @@ var require_package = __commonJS({
         "test:pane-frame-package": "pnpm --filter @tmux-ide/presentation run test",
         "typecheck:workspace": "turbo run typecheck",
         "docs:build": "turbo run build --filter=@tmux-ide/docs",
-        "pack:check": "pnpm test:installer && node --test scripts/lib/npm-release-tag.test.mjs && node scripts/pack-tui-check.mjs",
+        "pack:check": "pnpm test:installer && pnpm test:workflow-contracts && node scripts/pack-tui-check.mjs",
+        "test:workflow-contracts": "node --test scripts/lib/npm-release-tag.test.mjs scripts/lib/tap-bump-gate.test.mjs scripts/lib/macos-ssh-account.test.mjs scripts/lib/apt-dns-fallback.test.mjs scripts/lib/usvg-pin.test.mjs",
         "test:pack-installed": "node scripts/pack-check-run.mjs",
         "release:opentui:check": "node scripts/opentui-release-check.mjs",
         "check:native-deps": "node packages/daemon/scripts/check-native-deps.mjs",
@@ -15397,6 +15463,7 @@ var require_package = __commonJS({
         "typecheck:tui-gallery": "tsc --noEmit -p scripts/tsconfig.tui-gallery.json",
         "test:spark-qualification": "node --import tsx --test scripts/lib/spark-*.test.ts scripts/lib/spark-*.test.mjs",
         "test:installer": "node --test scripts/install.test.mjs scripts/lib/installer-service-qualification.test.mjs",
+        "test:installer-native": "node --test scripts/install-native-alpha.test.mjs scripts/install-native-dispatch.test.mjs",
         "qualify:styled-ssh": "node scripts/qualify-styled-ssh.mjs"
       },
       keywords: [
@@ -17760,7 +17827,7 @@ var init_front_door = __esm({
 import { execFileSync as execFileSync8 } from "node:child_process";
 import { createHash as createHash7 } from "node:crypto";
 import { readdirSync as readdirSync5, readFileSync as readFileSync13, readlinkSync as readlinkSync3, statSync as statSync7 } from "node:fs";
-import { homedir as homedir4 } from "node:os";
+import { homedir as homedir5 } from "node:os";
 import { join as join19 } from "node:path";
 function codexIdFromOpenFiles(paths) {
   for (const path2 of paths) {
@@ -17959,8 +18026,8 @@ function liveProbeIo() {
     openFiles: readOpenFiles,
     processStartMs: (pid) => processStartMs(pid),
     stateDir: liveStateDirIo,
-    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join19(homedir4(), ".codex", "sessions"),
-    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join19(homedir4(), ".cursor", "chats"),
+    codexSessionsRoot: () => process.env.TMUX_IDE_CODEX_SESSIONS ?? join19(homedir5(), ".codex", "sessions"),
+    cursorChatsRoot: () => process.env.TMUX_IDE_CURSOR_CHATS ?? join19(homedir5(), ".cursor", "chats"),
     now: () => Date.now()
   };
 }
@@ -19182,6 +19249,7 @@ function adoptSession(session, switcherCmd = "tmux-ide switcher") {
 function unadoptSession(session) {
   clearPaneChromeWindows([session]);
   for (const argv of unadoptOptionCommands(session)) runTmux(argv);
+  if (listAdoptedSessions().length > 0) return;
   const keys = getAppConfig().keys;
   for (const undo of [
     statusClickUnbindCommand(),
@@ -19214,7 +19282,7 @@ function unadoptSession(session) {
     } catch {
     }
   }
-  if (listAdoptedSessions().length === 0) stopUpdater();
+  stopUpdater();
 }
 var POPUP_KEY, HOME_KEY, MENU_KEY, MENU_STATUS_KEY, MENU_PANE_KEY, STATUS_CLICK_KEY, PREFIX_TAKEN, PREFIX_REMAP, LEGACY_BINDS;
 var init_statusline = __esm({
@@ -19757,7 +19825,109 @@ var init_notify_state = __esm({
   }
 });
 
+// packages/daemon/src/lib/daemon-crash-snapshot.ts
+function snapshotIsRestorePoint(existing, live) {
+  if (!existing || !(live.serverStartMs > Date.parse(existing.savedAt))) return false;
+  const running = new Set(live.sessions);
+  return existing.sessions.some((session) => !running.has(session.name));
+}
+function createDaemonCrashSnapshot(deps2) {
+  const { source } = deps2;
+  let seen = null;
+  return {
+    async pulse() {
+      let sessions;
+      let panes;
+      let existing;
+      let serverStartMs = Number.NaN;
+      try {
+        sessions = await deps2.run(["list-sessions", "-F", source.sessionFormat]);
+        if (sessions.split("\n").some((line) => line.split("	")[0] === UPDATER_SESSION)) {
+          seen = null;
+          return "updater-writes";
+        }
+        panes = await deps2.run(["list-panes", "-a", "-F", source.paneFormat]);
+        if (`${sessions}
+
+${panes}` === seen) return "unchanged";
+        existing = source.read();
+        if (existing)
+          serverStartMs = Number((await deps2.run(["display-message", "-p", "#{start_time}"])).trim()) * 1e3;
+      } catch {
+        return "tmux-unavailable";
+      }
+      const running = sessions.split("\n").map((line) => line.split("	")[0]);
+      if (snapshotIsRestorePoint(existing, { serverStartMs, sessions: running })) {
+        seen = null;
+        return "restore-point-kept";
+      }
+      const snapshot3 = await source.build(
+        panes.split("\n").filter(Boolean),
+        sessions.split("\n").filter(Boolean)
+      );
+      seen = `${sessions}
+
+${panes}`;
+      if (existing && source.fingerprint(existing) === source.fingerprint(snapshot3))
+        return "unchanged";
+      source.write(snapshot3);
+      return "written";
+    }
+  };
+}
+function daemonCrashSnapshotStart(opts, run, retired) {
+  return {
+    launcher: opts.launcher ?? "embedded",
+    source: opts.crashSnapshotSource,
+    run,
+    retired
+  };
+}
+function startDaemonCrashSnapshot(deps2) {
+  if (deps2.launcher !== "headless" || !deps2.source) return null;
+  const snapshot3 = createDaemonCrashSnapshot({ run: deps2.run, source: deps2.source });
+  let busy = false;
+  const timer = setInterval(() => {
+    if (deps2.retired()) {
+      clearInterval(timer);
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    void snapshot3.pulse().catch(() => void 0).finally(() => {
+      busy = false;
+    });
+  }, DAEMON_CRASH_SNAPSHOT_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+var DAEMON_CRASH_SNAPSHOT_INTERVAL_MS;
+var init_daemon_crash_snapshot = __esm({
+  "packages/daemon/src/lib/daemon-crash-snapshot.ts"() {
+    "use strict";
+    init_chrome_front_door();
+    DAEMON_CRASH_SNAPSHOT_INTERVAL_MS = 3e4;
+  }
+});
+
 // packages/daemon/src/tui/chrome/snapshot.ts
+var snapshot_exports = {};
+__export(snapshot_exports, {
+  SNAPSHOT_EVERY: () => SNAPSHOT_EVERY,
+  SNAPSHOT_PANE_FORMAT: () => SNAPSHOT_PANE_FORMAT,
+  SNAPSHOT_SESSION_FORMAT: () => SNAPSHOT_SESSION_FORMAT,
+  buildSnapshot: () => buildSnapshot,
+  collectFleetSnapshot: () => collectFleetSnapshot,
+  createSnapshotter: () => createSnapshotter,
+  fleetCrashSnapshotSource: () => fleetCrashSnapshotSource,
+  readSnapshot: () => readSnapshot,
+  resolvePaneCommand: () => resolvePaneCommand,
+  snapshotEvery: () => snapshotEvery,
+  snapshotFingerprint: () => snapshotFingerprint,
+  snapshotIsRestorePoint: () => snapshotIsRestorePoint,
+  snapshotPath: () => snapshotPath,
+  writeSnapshot: () => writeSnapshot
+});
 import { existsSync as existsSync17, mkdirSync as mkdirSync15, readFileSync as readFileSync18, renameSync as renameSync9, writeFileSync as writeFileSync13 } from "node:fs";
 import { dirname as dirname20, join as join24 } from "node:path";
 import { z as z95 } from "zod";
@@ -19903,10 +20073,16 @@ function readSnapshot(path2 = snapshotPath()) {
     return null;
   }
 }
+function snapshotEvery() {
+  const raw = process.env.TMUX_IDE_SNAPSHOT_EVERY;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : SNAPSHOT_EVERY;
+}
 function createSnapshotter(deps2) {
   let ticks = 0;
   let seeded = false;
   let lastFingerprint = null;
+  let held = false;
   return {
     onTick() {
       ticks++;
@@ -19917,6 +20093,23 @@ function createSnapshotter(deps2) {
         seeded = true;
       }
       const snapshot3 = deps2.collect();
+      if (deps2.serverStartMs) {
+        const existing = deps2.read();
+        let serverStartMs = Number.NaN;
+        try {
+          serverStartMs = deps2.serverStartMs();
+        } catch {
+        }
+        const sessions = snapshot3.sessions.map((session) => session.name);
+        if (snapshotIsRestorePoint(existing, { serverStartMs, sessions })) {
+          held = true;
+          return;
+        }
+        if (held) {
+          held = false;
+          lastFingerprint = existing ? snapshotFingerprint(existing) : null;
+        }
+      }
       const fingerprint2 = snapshotFingerprint(snapshot3);
       if (fingerprint2 === lastFingerprint) return;
       lastFingerprint = fingerprint2;
@@ -19924,7 +20117,7 @@ function createSnapshotter(deps2) {
     }
   };
 }
-var PaneSnapshotSchemaZ, WindowSnapshotSchemaZ, SessionSnapshotSchemaZ, FleetSnapshotSchemaZ, SNAPSHOT_PANE_FORMAT, SNAPSHOT_SESSION_FORMAT, defaultIo;
+var PaneSnapshotSchemaZ, WindowSnapshotSchemaZ, SessionSnapshotSchemaZ, FleetSnapshotSchemaZ, SNAPSHOT_PANE_FORMAT, SNAPSHOT_SESSION_FORMAT, defaultIo, SNAPSHOT_EVERY, fleetCrashSnapshotSource;
 var init_snapshot2 = __esm({
   "packages/daemon/src/tui/chrome/snapshot.ts"() {
     "use strict";
@@ -19932,6 +20125,7 @@ var init_snapshot2 = __esm({
     init_runtime_namespace();
     init_src();
     init_process_tree();
+    init_daemon_crash_snapshot();
     init_sessions2();
     PaneSnapshotSchemaZ = z95.object({
       index: z95.number(),
@@ -19980,6 +20174,15 @@ var init_snapshot2 = __esm({
       listPanes: () => runTmux(["list-panes", "-a", "-F", SNAPSHOT_PANE_FORMAT]).toString(),
       listSessions: () => runTmux(["list-sessions", "-F", SNAPSHOT_SESSION_FORMAT]).toString(),
       processTable: () => readProcessTable()
+    };
+    SNAPSHOT_EVERY = 15;
+    fleetCrashSnapshotSource = {
+      sessionFormat: SNAPSHOT_SESSION_FORMAT,
+      paneFormat: SNAPSHOT_PANE_FORMAT,
+      build: async (panes, sessions) => buildSnapshot(panes, sessions, await readProcessTableAsync()),
+      read: () => readSnapshot(),
+      write: writeSnapshot,
+      fingerprint: snapshotFingerprint
     };
   }
 });
@@ -20332,7 +20535,9 @@ function runUpdaterLoop() {
     collect: () => collectFleetSnapshot(),
     read: readSnapshot,
     write: writeSnapshot,
-    every: config2.updater.snapshotEvery
+    every: config2.updater.snapshotEvery,
+    // A dead server's snapshot is kept until its sessions are restored (#783).
+    serverStartMs: () => Number(runTmux(["display-message", "-p", "#{start_time}"]).toString().trim()) * 1e3
   });
   const shouldGiveUp = createUnreachableCounter();
   const tick = () => {
@@ -25998,6 +26203,7 @@ var canonical_daemon_bootstrap_exports = {};
 __export(canonical_daemon_bootstrap_exports, {
   assertCanonicalDaemonServerIntent: () => assertCanonicalDaemonServerIntent,
   createCanonicalDaemonBootstrapCoordinator: () => createCanonicalDaemonBootstrapCoordinator,
+  daemonServerProofPending: () => daemonServerProofPending,
   ensureCanonicalDaemon: () => ensureCanonicalDaemon,
   retireOutdatedCanonicalDaemon: () => retireOutdatedCanonicalDaemon
 });
@@ -26128,6 +26334,9 @@ async function replaceOlderCanonicalDaemon(deps2, info, timeoutMs, expectedProdu
     { reason: "protocol-mismatch" }
   );
 }
+function daemonServerProofPending(error) {
+  return error instanceof DaemonBootstrapError && error[DAEMON_PROOF_PENDING] === true;
+}
 async function assertServerIntent(deps2, info, identity4, intent) {
   if (!intent) return;
   let proof = deps2.serverProof(intent);
@@ -26148,10 +26357,17 @@ async function assertServerIntent(deps2, info, identity4, intent) {
     }
   }
   if (info.tmuxServerProofVersion !== 1 || !identity4.tmuxServerProof || !proof)
-    throw new DaemonBootstrapError(
-      "incompatible",
-      `Cannot prove the requested tmux server for this daemon. Its server identity is unavailable or unsupported; the existing daemon was left running. Proof availability: capability=${info.tmuxServerProofVersion === 1}, daemon=${Boolean(identity4.tmuxServerProof)}, client=${Boolean(proof)}.`,
-      { reason: "tmux-server-unproven" }
+    throw Object.assign(
+      new DaemonBootstrapError(
+        "incompatible",
+        `Cannot prove the requested tmux server for this daemon. Its server identity is unavailable or unsupported; the existing daemon was left running. Proof availability: capability=${info.tmuxServerProofVersion === 1}, daemon=${Boolean(identity4.tmuxServerProof)}, client=${Boolean(proof)}.`,
+        { reason: "tmux-server-unproven" }
+      ),
+      {
+        // Either side's proof can be late (a slow tmux answer); only a daemon
+        // without the capability can never prove it.
+        [DAEMON_PROOF_PENDING]: info.tmuxServerProofVersion === 1
+      }
     );
   if (identity4.tmuxServerProof.kind !== proof.kind || identity4.tmuxServerProof.digest !== proof.digest)
     throw new DaemonBootstrapError(
@@ -26239,7 +26455,8 @@ function createCanonicalDaemonBootstrapCoordinator(options, dependencies = {}) {
       options.expectedProductVersion,
       options.tmuxServerIntent === void 0 ? resolveTmuxServerIntent() : options.tmuxServerIntent
     ),
-    spawn: () => deps2.spawnOwner(resolve18(options.entryPath), resolve18(options.cwd ?? process.cwd())),
+    // A deleted current directory starts the daemon from home (#585).
+    spawn: () => deps2.spawnOwner(resolve18(options.entryPath), resolve18(options.cwd ?? invocationDirectory())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
     now: deps2.now,
@@ -26337,11 +26554,12 @@ async function assertCanonicalDaemonServerIntent(info, intent = resolveTmuxServe
     );
   await assertServerIntent(deps2, info, identity4, intent);
 }
-var ShutdownTransportError, defaultDependencies;
+var ShutdownTransportError, defaultDependencies, DAEMON_PROOF_PENDING;
 var init_canonical_daemon_bootstrap = __esm({
   "packages/daemon/src/lib/canonical-daemon-bootstrap.ts"() {
     "use strict";
     init_tmux_server_proof();
+    init_invocation_directory();
     init_workspace_pane_creation2();
     init_runtime_namespace();
     init_semver();
@@ -26378,6 +26596,7 @@ var init_canonical_daemon_bootstrap = __esm({
         setTimeout(resolveSleep, milliseconds);
       })
     };
+    DAEMON_PROOF_PENDING = /* @__PURE__ */ Symbol("daemon-server-proof-pending");
   }
 });
 
@@ -29644,9 +29863,13 @@ function semanticPaneIds(session) {
   }
   return result2;
 }
-function listTmuxSessions() {
-  const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
-  if (!raw) return [];
+function readTmuxSessions() {
+  let raw;
+  try {
+    raw = _tmuxRunner(["list-sessions", "-F", "#{session_name}"]);
+  } catch (error) {
+    return serverNotRunning(error) ? [] : null;
+  }
   return raw.split("\n").filter(Boolean);
 }
 function discoverLiveSessionSummaries(runTmux2 = _tmuxRunner) {
@@ -29823,7 +30046,11 @@ function assembleAdoptedFleet(adopted, panesRaw, registry, nativeEpoch, resolveI
   });
 }
 function discoverSessions() {
-  const sessionNames = listTmuxSessions();
+  return readSessions() ?? [];
+}
+function readSessions() {
+  const sessionNames = readTmuxSessions();
+  if (sessionNames === null) return null;
   const results = [];
   const registry = getDefaultWorkspaceRegistry();
   const enforceRegistry = registry._isLoaded();
@@ -29873,7 +30100,9 @@ var init_discovery = __esm({
     _tmuxRunner = (args) => execFileSync16("tmux", ["-u", ...runtimeTmuxArgs(args)], {
       encoding: "utf-8",
       maxBuffer: 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"]
+      // Keep stderr on the error: it is how a caller tells "no server running"
+      // from a server it could not reach. Nothing is printed either way.
+      stdio: ["ignore", "pipe", "pipe"]
     }).trim();
     ADOPTED_SESSIONS_ARGS = ["list-sessions", "-F", `#{session_name}	#{${ADOPTED_OPTION}}`];
     FLEET_FIELD_SEPARATOR = "|tmux-ide-fleet-field-v1|";
@@ -34828,9 +35057,34 @@ var init_session_channel = __esm({
         }
         this.input.flush();
         this.clearWindowViewports();
-        this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
+        const target = this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`;
+        this.restoreWindowSizing(target);
         this.io.send(`refresh-client -C ${cols}x${rows}${this.cellPixelSuffix()}`);
+        this.reclaimWindowSize(target);
         this.clientViewport = { cols, rows };
+      }
+      /**
+       * Under `window-size latest` a second tmux client on the session (a terminal
+       * the user also attached) takes the window, and nothing this control client
+       * sends makes it tmux's latest client again: input and refresh-client are not
+       * client activity. Output then prints at the other client's width and tmux
+       * re-wraps it mid-word when that width goes away (#695). A fit is the app
+       * being used (it fits on focus and on a change of its canvas), so after one,
+       * when the window is not this client's size, switch to the same session:
+       * that makes this client the latest one. Only here, never on a timer or a
+       * notification, so two clients never fight; whichever the user used last
+       * wins, as between two terminals. Other window-size policies are the user's.
+       */
+      reclaimWindowSize(target) {
+        if (!this.geometryParticipating) return;
+        const quoted = tmuxSingleQuote(target);
+        this.io.commandListInline(
+          `if-shell -F -t ${quoted} '#{&&:#{==:#{window-size},latest},#{||:#{!=:#{window_width},#{client_width}},#{!=:#{window_height},#{client_height}}}}' ` + tmuxSingleQuote(`switch-client -t ${quoted}`) + " " + tmuxSingleQuote(`display-message -p -t ${quoted} ''`),
+          2,
+          1,
+          () => {
+          }
+        );
       }
       clientViewport = null;
       cellPixels = null;
@@ -44536,6 +44790,28 @@ var init_mirror_service = __esm({
           wasPending: this.registeredWindows?.pending() ?? null
         });
         this.registeredWindows?.invalidate();
+        this.scheduleOwnershipVerify();
+      }
+      /**
+       * Until a read proves ownership again, every retained session refuses input
+       * and geometry. A workspace added or removed (another session created or
+       * killed) invalidates without any channel resyncing, and nothing else read
+       * again until the next stream was issued: the next keystroke closed the
+       * stream. Read again at once (coalesced) while a channel is retained; a
+       * failed read takes the #764 retry path.
+       */
+      ownershipVerifyScheduled = false;
+      scheduleOwnershipVerify() {
+        if (this.ownershipVerifyScheduled || this.disposed) return;
+        this.ownershipVerifyScheduled = true;
+        const timer = setTimeout(() => {
+          this.ownershipVerifyScheduled = false;
+          if (this.disposed || this.channelSessions.size === 0 || !this.registeredWindows?.pending())
+            return;
+          void this.verifyRegisteredWindows().catch(() => {
+          });
+        }, 0);
+        timer.unref?.();
       }
       /**
        * #764: a failed re-read must not leave every session "being verified"
@@ -44867,6 +45143,10 @@ var init_mirror_service = __esm({
       assertWindowOwnership(session) {
         const message = this.windowOwnershipMessage(session);
         if (message) throw new Error(message);
+      }
+      /** Registered-window ownership is being read again; input waits for it. */
+      windowOwnershipPending() {
+        return this.registeredWindows?.pending() ?? false;
       }
       windowOwnershipMessage(session) {
         if (this.registeredWindows?.pending())
@@ -63521,15 +63801,26 @@ var init_kitty_graphics = __esm({
       #pending = null;
       #nextAnonymous = 2130706432;
       #bytes = 0;
+      /** Cell size in thousandths of a device pixel. */
       #cellWidth;
       #cellHeight;
       #budget;
       #revision = 0;
       constructor(options = {}) {
-        this.#cellWidth = options.cellWidthPx ?? 10;
-        this.#cellHeight = options.cellHeightPx ?? 20;
+        this.#cellWidth = (options.cellWidthPx ?? 10) * 1e3;
+        this.#cellHeight = (options.cellHeightPx ?? 20) * 1e3;
         this.#budget = options.budget ?? DEFAULT_KITTY_IMAGE_BUDGET;
         this.#budget.register(this);
+      }
+      /**
+       * The renderer's cell size in device pixels, with thousandths when it reports
+       * them (capability 103/104). Placements made from now on that give no `c`/`r`
+       * cover the image at this size; earlier ones keep their grid.
+       */
+      setCellPixels(width, height, precise) {
+        if (!(width > 0 && height > 0)) return;
+        this.#cellWidth = precise && precise.width > 0 ? precise.width : width * 1e3;
+        this.#cellHeight = precise && precise.height > 0 ? precise.height : height * 1e3;
       }
       /** Bumps whenever images or placements change. */
       get revision() {
@@ -63646,8 +63937,12 @@ var init_kitty_graphics = __esm({
         const image = this.#images.get(imageId);
         if (!image) return;
         this.#used.set(imageId, this.#budget.nextTick());
-        const columns = clampCells(int(control, "c") || Math.ceil(image.width / this.#cellWidth));
-        const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
+        const columns = clampCells(
+          int(control, "c") || Math.ceil(image.width * 1e3 / this.#cellWidth)
+        );
+        const rows = clampCells(
+          int(control, "r") || Math.ceil(image.height * 1e3 / this.#cellHeight)
+        );
         const placementId = int(control, "p");
         if (control.get("U") === "1") {
           const placements = this.#virtual.get(imageId) ?? /* @__PURE__ */ new Map();
@@ -63874,6 +64169,7 @@ var init_terminal_replica_interpreter = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-interpreter.ts"() {
     "use strict";
     init_stock_capture_fidelity();
+    init_log();
     init_native_seed_backing();
     init_src2();
     init_src3();
@@ -63890,6 +64186,9 @@ var init_terminal_replica_interpreter = __esm({
       #nativeSeedBackingCandidate;
       #generation;
       #workspaceName;
+      #stockTabsNoted = false;
+      #seedOrdinal = 0;
+      #reconstructedSeed = null;
       #semanticPaneId;
       #incarnation;
       #scrollback;
@@ -64026,6 +64325,14 @@ var init_terminal_replica_interpreter = __esm({
       currentSeed() {
         return this.#needsSeed ? null : this.#seed();
       }
+      /**
+       * Names the current seed when its tab cells were reconstructed from a stock
+       * capture; null otherwise. Such a seed can wrap a reflowed line at other
+       * places than tmux does, so its history can differ from tmux's in length.
+       */
+      reconstructedSeed() {
+        return this.#reconstructedSeed;
+      }
       /** Prioritize one future parser admission, independent of diagnostic tracing. */
       prioritizeNextWrite() {
         if (!this.#closed) this.#prioritizeNextWrite = true;
@@ -64086,7 +64393,9 @@ var init_terminal_replica_interpreter = __esm({
       async #apply(operation) {
         if (this.#closed) return;
         if (operation.type === "reseed") {
-          if (operation.bootstrap === "painted-capture" && !operation.native)
+          const paintCapturedTabs = operation.bootstrap === "painted-capture" && !operation.native;
+          let seedReconstructed;
+          if (paintCapturedTabs && !this.#backend.graphicsCursor)
             assertStockCaptureRepresentable(operation.captureChunks ?? operation.chunks);
           this.#causalCell?.fail("reseeded");
           const nativeCols = operation.nativeCols ?? operation.cols;
@@ -64105,9 +64414,18 @@ var init_terminal_replica_interpreter = __esm({
           try {
             if (operation.native && !replacement.importNativeGrid?.(operation.native))
               throw new Error("Native bootstrap requires a compatible interpreter");
+            const captured = operation.captureChunks ?? operation.chunks;
+            let nextCaptured = 0;
+            let reconstructed = false;
             for (const chunk of operation.chunks) {
-              await this.#writeToBackend(replacement, chunk);
+              const fromCapture = paintCapturedTabs && nextCaptured < captured.length && Buffer.compare(chunk, captured[nextCaptured]) === 0;
+              if (fromCapture) nextCaptured += 1;
+              if (fromCapture && chunk.includes(9)) {
+                reconstructed = true;
+                await this.#writeStockCapture(replacement, chunk);
+              } else await this.#writeToBackend(replacement, chunk);
             }
+            seedReconstructed = reconstructed;
             if (operation.wraparound !== void 0)
               replacement.setAuthoritativeWraparound(operation.wraparound);
             if (operation.observedModes) replacement.setAuthoritativeModes(operation.observedModes);
@@ -64133,6 +64451,8 @@ var init_terminal_replica_interpreter = __esm({
           const sameGraphicsBasis = operation.bootstrap === "painted-capture" && previous.cols === replacement.cols && previous.rows === replacement.rows && previous.graphicsViewportTop?.() !== void 0 && previous.graphicsViewportTop?.() === replacement.graphicsViewportTop?.() && previous.modes().alternateScreen === replacement.modes().alternateScreen;
           if (!sameGraphicsBasis) this.#kitty.dropCursorPlacements();
           this.#nativeReseedRequested = false;
+          this.#seedOrdinal += 1;
+          this.#reconstructedSeed = seedReconstructed ? this.#seedOrdinal : null;
           this.#scrollback = scrollback;
           this.#bootstrap = {
             kind: operation.bootstrap,
@@ -64271,6 +64591,42 @@ var init_terminal_replica_interpreter = __esm({
           });
           this.#tail = run.catch(() => void 0);
         }, 250);
+      }
+      /**
+       * Replay one stock `capture-pane -e` chunk. tmux stores a tab as one wide
+       * cell and prints it as a single HT, without its width. Blank the cells up
+       * to the next default tab stop instead (ECH, then CUF): that is the cell tmux
+       * made when the tab was written at this column, and erased cells take the
+       * rendition the capture set for it, as tmux's blank tab cell does. tmux never
+       * tabs into the last column (`input_c0_dispatch`).
+       * Where this differs from tmux: a row edited after its tab was written
+       * (insert or delete character) or written under custom tab stops is columns
+       * off in that row. A line reflowed by a resize is worse: tmux keeps the tab
+       * cell's width, this measures it again from the new column, so the line can
+       * wrap at other places and the pane can hold other rows than tmux shows,
+       * until that output scrolls away or is redrawn. The owner accepts the
+       * resulting difference in history length (`reconstructedSeed`).
+       */
+      async #writeStockCapture(backend2, chunk) {
+        let start3 = 0;
+        for (; ; ) {
+          const tab = chunk.indexOf(9, start3);
+          if (tab < 0) break;
+          if (tab > start3) await this.#writeToBackend(backend2, chunk.subarray(start3, tab));
+          const column = backend2.graphicsCursor().x;
+          const stop3 = Math.min(backend2.cols - 1, (Math.floor(column / 8) + 1) * 8);
+          if (stop3 > column)
+            await this.#writeToBackend(backend2, `\x1B[${stop3 - column}X\x1B[${stop3 - column}C`);
+          start3 = tab + 1;
+        }
+        if (!this.#stockTabsNoted) {
+          this.#stockTabsNoted = true;
+          logger.info("terminal-replica", "stock capture: tab positions reconstructed", {
+            pane: this.#semanticPaneId,
+            workspace: this.#workspaceName
+          });
+        }
+        if (start3 < chunk.length) await this.#writeToBackend(backend2, chunk.subarray(start3));
       }
       #writeToBackend(backend2, data) {
         if (this.#prioritizeNextWrite) {
@@ -64730,6 +65086,7 @@ var init_terminal_replica_owner = __esm({
       #historyTimer = null;
       #historyChecking = false;
       #historyDirty = false;
+      #reconstructedHistoryGap = null;
       installOutputTraceReader(reader) {
         this.#takeOutputTrace ??= reader;
       }
@@ -64893,6 +65250,10 @@ var init_terminal_replica_owner = __esm({
         if (current) listener(current);
         return this.#interpreter.onGraphics(listener);
       }
+      /** The renderer's cell size, for image placements that give no `c`/`r` (group H). */
+      setCellPixels(width, height, precise) {
+        this.#interpreter.kittyImages().setCellPixels(width, height, precise);
+      }
       /** Image bytes by content digest, while the pane's store still holds them. */
       graphicsImage(digest3) {
         return this.#interpreter.kittyImages().imageByDigest(digest3) ?? null;
@@ -64951,7 +65312,17 @@ var init_terminal_replica_owner = __esm({
           this.#historyDirty || this.#stale || this.#reseed || this.#waitingForGeometryCapture || size === null)
             return;
           const seed = this.#interpreter.currentSeed();
-          if (seed && seed.snapshot.history.length !== size) upstream.reseed();
+          if (!seed) return;
+          const gap = size - seed.snapshot.history.length;
+          const reconstructed = this.#interpreter.reconstructedSeed();
+          if (reconstructed !== null) {
+            if (this.#reconstructedHistoryGap?.seed !== reconstructed) {
+              this.#reconstructedHistoryGap = { seed: reconstructed, gap };
+              return;
+            }
+            if (this.#reconstructedHistoryGap.gap === gap) return;
+          } else if (gap === 0) return;
+          upstream.reseed();
         } catch {
         } finally {
           this.#historyChecking = false;
@@ -67457,7 +67828,7 @@ function authoredOriginForSurface(surface) {
   if (surface === "cli") return "cli";
   return "gui";
 }
-var emptyListenerDisposal, SessionRuntimeControllerLeaseError, SessionRuntimeRegistry, SessionRuntime, SessionRuntimeConsumerImpl;
+var emptyListenerDisposal, SessionRuntimeControllerLeaseError, SessionRuntimeInputLifetimeEndedError, SessionRuntimeRegistry, SessionRuntime, SessionRuntimeConsumerImpl;
 var init_registry2 = __esm({
   "packages/daemon/src/terminal/session-runtime/registry.ts"() {
     "use strict";
@@ -67493,6 +67864,12 @@ var init_registry2 = __esm({
         this.name = "SessionRuntimeControllerLeaseError";
       }
       code;
+    };
+    SessionRuntimeInputLifetimeEndedError = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "SessionRuntimeInputLifetimeEndedError";
+      }
     };
     SessionRuntimeRegistry = class {
       generation;
@@ -67782,6 +68159,10 @@ var init_registry2 = __esm({
       /** Resolve pending ownership before an asynchronous owner-authorized mutation. */
       async verifyWindowOwnership() {
         await this.#mirror.verifyRegisteredWindows();
+      }
+      /** Ownership is being read again: input and geometry wait, they are not refused for good. */
+      windowOwnershipPending() {
+        return !this.#disposed && this.#mirror.windowOwnershipPending();
       }
       /** Install the bounded registered-session membership reader. */
       setRegisteredWindowReader(reader) {
@@ -68254,6 +68635,8 @@ var init_registry2 = __esm({
       #consumersByClientId = /* @__PURE__ */ new Map();
       #terminalReplicas = /* @__PURE__ */ new Map();
       #terminalReplicaClocks = /* @__PURE__ */ new Map();
+      /** The renderer's last reported cell size; every pane's image placements use it. */
+      #cellPixels = null;
       #outputTraces;
       #outputObservations = /* @__PURE__ */ new Map();
       #createTraceCorrelator;
@@ -68511,7 +68894,8 @@ var init_registry2 = __esm({
         }) : null;
         const started = this.#observability.enabled ? this.#observability.nowMicros() : 0;
         const replicaOwner = expectedLifetime ? this.#terminalReplicas.get(semanticPaneId3) : this.#terminalReplicaOwner(semanticPaneId3);
-        if (!replicaOwner) throw new Error("Input target lifetime unavailable");
+        if (!replicaOwner)
+          throw new SessionRuntimeInputLifetimeEndedError("Input target lifetime unavailable");
         if (causalProbe) {
           this.#activeCausalCellProbes += 1;
           let settled = false;
@@ -68535,7 +68919,7 @@ var init_registry2 = __esm({
         }
         try {
           if (expectedLifetime && (expectedLifetime.generation !== this.generation || this.#terminalReplicas.get(semanticPaneId3) !== replicaOwner || replicaOwner.inputAdmissionIncarnation() !== expectedLifetime.incarnation))
-            throw new Error("Input target lifetime changed");
+            throw new SessionRuntimeInputLifetimeEndedError("Input target lifetime changed");
           if (input.kind === "text")
             this.#mirror.sendText(
               this.session,
@@ -68635,6 +69019,9 @@ var init_registry2 = __esm({
       setCellPixels(clientId, width, height, precise) {
         this.#assertConnected(clientId);
         this.#mirror.setCellPixels?.(this.session, width, height, precise);
+        this.#cellPixels = { width, height, ...precise ? { precise } : {} };
+        for (const owner of this.#terminalReplicas.values())
+          owner.setCellPixels(width, height, precise);
       }
       fitViewportWithAuthority(clientId, lease, cols, rows, semanticWindowId) {
         this.assertGeometryAuthority(clientId, lease);
@@ -68804,6 +69191,12 @@ var init_registry2 = __esm({
             }
           );
           owner = candidate;
+          if (this.#cellPixels)
+            owner.setCellPixels(
+              this.#cellPixels.width,
+              this.#cellPixels.height,
+              this.#cellPixels.precise
+            );
           this.#terminalReplicas.set(semanticPaneId3, owner);
         }
         return owner;
@@ -76039,7 +76432,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PANE_STREAM_OPEN_RETRY_DELAYS_MS, PANE_STREAM_OWNERSHIP_WAIT_MS, PANE_STREAM_OWNERSHIP_HELD_FRAMES, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -76104,6 +76497,8 @@ var init_pane_stream_websocket = __esm({
       #redemptionTimeoutMs;
       #flowBudgets;
       #drainTickMs;
+      #openRetryDelaysMs;
+      #ownershipWaitMs;
       #maxSocketBufferedBytes;
       #maxInputFrames;
       #maxInputBytes;
@@ -76143,6 +76538,8 @@ var init_pane_stream_websocket = __esm({
         this.#flowBudgets = options.flowBudgets ?? DEFAULT_PANE_STREAM_FLOW_BUDGETS;
         this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
         this.#drainTickMs = boundedInteger2(options.drainTickMs, 15, 1e3);
+        this.#openRetryDelaysMs = options.openRetryDelaysMs ?? PANE_STREAM_OPEN_RETRY_DELAYS_MS;
+        this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
         this.#maxSocketBufferedBytes = boundedInteger2(
           options.maxSocketBufferedBytes,
           32 << 20,
@@ -76467,6 +76864,8 @@ var init_pane_stream_websocket = __esm({
                 leaseManager: this.#leaseManager,
                 ledger: this.#ledger,
                 drainTickMs: this.#drainTickMs,
+                openRetryDelaysMs: this.#openRetryDelaysMs,
+                ownershipWaitMs: this.#ownershipWaitMs,
                 maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
                 maxInputFrames: this.#maxInputFrames,
                 maxInputBytes: this.#maxInputBytes,
@@ -76640,6 +77039,9 @@ var init_pane_stream_websocket = __esm({
         socket.off("error", this.#onClose);
       }
     };
+    PANE_STREAM_OPEN_RETRY_DELAYS_MS = [150, 400];
+    PANE_STREAM_OWNERSHIP_WAIT_MS = 2e3;
+    PANE_STREAM_OWNERSHIP_HELD_FRAMES = 256;
     GRAPHICS_MAX_QUEUED_DIGESTS = 256;
     GRAPHICS_SEND_WINDOW_BYTES = 2 * 1024 * 1024;
     PaneStreamLiveConnection = class {
@@ -76664,6 +77066,8 @@ var init_pane_stream_websocket = __esm({
       #leaseManager;
       #ledger;
       #drainTickMs;
+      #openRetryDelaysMs;
+      #ownershipWaitMs;
       #maxSocketBufferedBytes;
       #maxInputFrames;
       #maxInputBytes;
@@ -76767,6 +77171,8 @@ var init_pane_stream_websocket = __esm({
         this.#leaseManager = options.leaseManager;
         this.#ledger = options.ledger;
         this.#drainTickMs = options.drainTickMs;
+        this.#openRetryDelaysMs = options.openRetryDelaysMs;
+        this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
         this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
         this.#maxInputFrames = options.maxInputFrames;
         this.#maxInputBytes = options.maxInputBytes;
@@ -76829,7 +77235,11 @@ var init_pane_stream_websocket = __esm({
             ...this.#diagnosticCapabilities.length > 0 ? { diagnosticCapabilities: [...this.#diagnosticCapabilities] } : {}
           });
           this.#recordDiagnosticLifecycle("pane-stream-server-ready");
-        } catch {
+        } catch (error) {
+          this.#closeCause = {
+            cause: "ready-frame-failed",
+            error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+          };
           this.close(1011, "stream-unavailable-describe");
           return;
         }
@@ -76863,9 +77273,13 @@ var init_pane_stream_websocket = __esm({
           clientId: this.#clientId,
           // Whether this connection held input when it went: the next stream of
           // the same client can only be granted input once that is released.
-          ...this.#heldInput === null ? {} : { heldInput: this.#heldInput }
+          ...this.#heldInput === null ? {} : { heldInput: this.#heldInput },
+          // Keys not delivered because their pane lifetime had ended (#397).
+          ...this.#inputLifetimeEndedDropped > 0 ? { droppedEndedLifetimeInputs: this.#inputLifetimeEndedDropped } : {}
         });
         this.#closed = true;
+        this.#ownershipHeld.length = 0;
+        this.#ownershipWake?.();
         for (const demand of this.#surfaceDemands.values()) demand.close();
         this.#surfaceDemands.clear();
         this.#surfaceViewer?.close();
@@ -76925,7 +77339,10 @@ var init_pane_stream_websocket = __esm({
       async #subscribeAll() {
         let described;
         try {
-          described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+          described = await this.#retryOpenStep(
+            "describe-session",
+            () => this.#mirror.describeSession(this.#descriptor.sessionName)
+          );
         } catch (error) {
           this.#fail("describe-session-failed", error);
           return;
@@ -76978,6 +77395,32 @@ var init_pane_stream_websocket = __esm({
           }
         }
         this.#closeIfAllPanesGone();
+      }
+      /**
+       * One step of a stream's opening, tried again after a failure (#585): on a
+       * loaded host one slow tmux answer failed the step, the step closed the whole
+       * stream with 1011, and nothing was tried twice. A refusal of authority is a
+       * decision, not a failure, and is never repeated. Each repeat is logged.
+       */
+      async #retryOpenStep(step, run) {
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            return await run();
+          } catch (error) {
+            const delayMs = this.#openRetryDelaysMs[attempt];
+            if (delayMs === void 0 || this.#closed || error instanceof SessionRuntimeControllerLeaseError)
+              throw error;
+            logger.info("pane-stream", "stream open step failed; trying again", {
+              session: this.#descriptor.sessionName,
+              clientId: this.#clientId,
+              step,
+              attempt: attempt + 1,
+              error: (error instanceof Error ? error.message : String(error)).slice(0, 300)
+            });
+            await new Promise((resolve47) => setTimeout(resolve47, delayMs));
+            if (this.#closed) throw error;
+          }
+        }
       }
       async #subscribeSemantic(known) {
         const binding = this.#sessionRuntimeBinding;
@@ -77049,16 +77492,19 @@ var init_pane_stream_websocket = __esm({
           const pending = [];
           let ready = false;
           let negotiated = false;
-          const delivery = await binding.openTerminalDelivery(
-            channel.semanticPaneId,
-            offer,
-            (message) => {
-              if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
-                pending.push(message);
-              else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-            },
-            this.#descriptor.workspaceName
-          );
+          const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
+            pending.length = 0;
+            return binding.openTerminalDelivery(
+              channel.semanticPaneId,
+              offer,
+              (message) => {
+                if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
+                  pending.push(message);
+                else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+              },
+              this.#descriptor.workspaceName
+            );
+          });
           return {
             channel,
             delivery,
@@ -77930,17 +78376,23 @@ var init_pane_stream_websocket = __esm({
         if (frame.type === "presence") {
           if (!this.#acceptAuthorityGeneration(frame.generation)) return;
           this.#usesExplicitAuthority = true;
-          if (!this.#sessionRuntimeBinding?.updatePresence) return this.#failProtocol("protocol-error");
-          const snapshot3 = this.#sessionRuntimeBinding.updatePresence(frame.state);
-          if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot3);
+          const binding = this.#sessionRuntimeBinding;
+          if (!binding?.updatePresence) return this.#failProtocol("protocol-error");
+          this.#afterHeldFrames(() => {
+            const snapshot3 = binding.updatePresence(frame.state);
+            if (!binding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot3);
+          });
           return;
         }
         if (frame.type === "activity") {
           if (!this.#acceptAuthorityGeneration(frame.generation)) return;
           this.#usesExplicitAuthority = true;
-          if (!this.#sessionRuntimeBinding?.noteActivity) return this.#failProtocol("protocol-error");
-          const snapshot3 = this.#sessionRuntimeBinding.noteActivity(frame.activity);
-          if (!this.#sessionRuntimeBinding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot3);
+          const binding = this.#sessionRuntimeBinding;
+          if (!binding?.noteActivity) return this.#failProtocol("protocol-error");
+          this.#afterHeldFrames(() => {
+            const snapshot3 = binding.noteActivity(frame.activity);
+            if (!binding.onAuthoritySnapshot) this.#sendAuthoritySnapshot(snapshot3);
+          });
           return;
         }
         if (frame.type === "authority-request") {
@@ -77948,38 +78400,45 @@ var init_pane_stream_websocket = __esm({
           this.#usesExplicitAuthority = true;
           if (!this.#sessionRuntimeBinding?.requestAuthority || !this.#sessionRuntimeBinding.authoritySnapshot)
             return this.#failProtocol("protocol-error");
-          let lease = null;
-          try {
-            lease = this.#sessionRuntimeBinding.requestAuthority(frame.authority);
-          } catch (error) {
-            if (!(error instanceof SessionRuntimeControllerLeaseError) || error.code !== "controller-conflict")
-              return this.#failProtocol("input-rejected");
-          }
-          if (lease) this.#requestedAuthorities.add(frame.authority);
-          this.#sendFrame(null, {
-            type: "authority-receipt",
-            requestId: frame.requestId,
-            authority: frame.authority,
-            status: lease ? "granted" : "rejected",
-            lease,
-            snapshot: this.#sessionRuntimeBinding.authoritySnapshot()
-          });
+          const binding = this.#sessionRuntimeBinding;
+          const request3 = () => {
+            let lease = null;
+            try {
+              lease = binding.requestAuthority(frame.authority);
+            } catch (error) {
+              if (this.#holdForWindowOwnership(error, request3)) return;
+              if (!(error instanceof SessionRuntimeControllerLeaseError) || error.code !== "controller-conflict")
+                return this.#failProtocol("input-rejected");
+            }
+            if (lease) this.#requestedAuthorities.add(frame.authority);
+            this.#sendFrame(null, {
+              type: "authority-receipt",
+              requestId: frame.requestId,
+              authority: frame.authority,
+              status: lease ? "granted" : "rejected",
+              lease,
+              snapshot: binding.authoritySnapshot()
+            });
+          };
+          this.#afterWindowOwnership(request3);
           return;
         }
         if (frame.type === "authority-release") {
           if (!this.#acceptAuthorityGeneration(frame.generation)) return;
           this.#usesExplicitAuthority = true;
-          this.#requestedAuthorities.delete(frame.authority);
-          if (!this.#sessionRuntimeBinding?.releaseAuthority)
-            return this.#failProtocol("protocol-error");
-          const snapshot3 = this.#sessionRuntimeBinding.releaseAuthority(frame.authority);
-          this.#sendFrame(null, {
-            type: "authority-receipt",
-            requestId: frame.requestId,
-            authority: frame.authority,
-            status: "released",
-            lease: null,
-            snapshot: snapshot3
+          const binding = this.#sessionRuntimeBinding;
+          if (!binding?.releaseAuthority) return this.#failProtocol("protocol-error");
+          this.#afterHeldFrames(() => {
+            this.#requestedAuthorities.delete(frame.authority);
+            const snapshot3 = binding.releaseAuthority(frame.authority);
+            this.#sendFrame(null, {
+              type: "authority-receipt",
+              requestId: frame.requestId,
+              authority: frame.authority,
+              status: "released",
+              lease: null,
+              snapshot: snapshot3
+            });
           });
           return;
         }
@@ -78022,7 +78481,7 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         if (frame.type === "semantic-intent") {
-          this.#acceptSemanticIntent(frame.operationId, frame.intent);
+          this.#afterHeldFrames(() => this.#acceptSemanticIntent(frame.operationId, frame.intent));
           return;
         }
         if (frame.type === "terminal-surface-watch") {
@@ -78154,38 +78613,42 @@ var init_pane_stream_websocket = __esm({
           }
           if (!this.#prepareInputAuthority(true)) return;
           this.#nextViewportSeq += 1;
-          try {
-            if (frame.semanticWindowId === void 0)
-              this.#sessionRuntimeBinding.fitViewport(frame.authorityLease, frame.cols, frame.rows);
-            else
-              this.#sessionRuntimeBinding.fitViewport(
-                frame.authorityLease,
-                frame.cols,
-                frame.rows,
-                frame.semanticWindowId
-              );
-            this.#sendFrame(null, {
-              type: "viewport-ack",
-              seq: frame.seq,
-              cols: frame.cols,
-              rows: frame.rows,
-              outcome: "ok",
-              authorityLease: frame.authorityLease
-            });
-          } catch (error) {
-            if (error instanceof SessionRuntimeControllerLeaseError && (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")) {
+          const fit = () => {
+            try {
+              if (frame.semanticWindowId === void 0)
+                this.#sessionRuntimeBinding.fitViewport(frame.authorityLease, frame.cols, frame.rows);
+              else
+                this.#sessionRuntimeBinding.fitViewport(
+                  frame.authorityLease,
+                  frame.cols,
+                  frame.rows,
+                  frame.semanticWindowId
+                );
               this.#sendFrame(null, {
                 type: "viewport-ack",
                 seq: frame.seq,
                 cols: frame.cols,
                 rows: frame.rows,
-                outcome: "geometry-authority-conflict",
+                outcome: "ok",
                 authorityLease: frame.authorityLease
               });
-              return;
+            } catch (error) {
+              if (error instanceof SessionRuntimeControllerLeaseError && (error.code === "invalid-client-capability" || error.code === "stale-controller-lease")) {
+                this.#sendFrame(null, {
+                  type: "viewport-ack",
+                  seq: frame.seq,
+                  cols: frame.cols,
+                  rows: frame.rows,
+                  outcome: "geometry-authority-conflict",
+                  authorityLease: frame.authorityLease
+                });
+                return;
+              }
+              if (this.#holdForWindowOwnership(error, fit)) return;
+              this.#failProtocol("input-rejected");
             }
-            this.#failProtocol("input-rejected");
-          }
+          };
+          this.#afterWindowOwnership(fit);
           return;
         }
         this.#acceptInput(
@@ -78392,84 +78855,195 @@ var init_pane_stream_websocket = __esm({
         this.#inputWindowFrames += 1;
         this.#inputWindowBytes += frameBytes;
         channel.nextInputSeq += 1;
-        try {
-          this.#sessionRuntimeBinding.assertController(pane);
-          if (semanticDelivery)
-            this.#sessionRuntimeBinding.sendInput(
-              pane,
-              { kind, data },
-              performanceTraceId,
-              causalProbe,
-              causalProbe ? (result2) => {
-                if (this.#closed) return;
-                if (result2.status === "proved") {
-                  this.#sendFrame(null, { type: "causal-cell-proof", proof: result2.proof });
-                } else {
-                  this.#sendFrame(null, {
-                    type: "causal-cell-failure",
-                    failure: {
-                      version: 1,
-                      capability: "causal-cell-v1",
-                      traceId: result2.traceId,
-                      reason: result2.reason,
-                      ...result2.diagnostic ? { diagnostic: result2.diagnostic } : {}
-                    }
-                  });
-                }
-              } : void 0,
-              expectedLifetime
-            );
-          else if (kind === "text") channel.sub.sendText(data);
-          else if (kind === "key") channel.sub.sendKey(data);
-          else throw new Error("Byte input requires semantic runtime");
-          let ackStartedAtMicros = null;
-          let ackStartedAtSharedMicros = null;
-          if (trace) {
-            try {
-              ackStartedAtMicros = this.#observability.nowMicros();
-            } catch {
-            }
-            if (this.#diagnosticSharedRawMicros) {
-              try {
-                ackStartedAtSharedMicros = this.#sharedMicros();
-              } catch {
-              }
-            }
-          }
-          sendControl2(this.#socket, { type: "input-ack", pane, seq });
-          if (trace && ackStartedAtMicros !== null) {
-            let ackEndedAtMicros = null;
-            try {
-              ackEndedAtMicros = this.#observability.nowMicros();
-            } catch {
-            }
-            let ackEndedAtSharedMicros = null;
-            if (ackStartedAtSharedMicros !== null) {
-              try {
-                ackEndedAtSharedMicros = this.#sharedMicros();
-              } catch {
-              }
-            }
-            if (ackEndedAtMicros !== null) {
-              try {
-                this.#observability.recordSpan(
-                  "transport",
-                  "pane-stream-input-ack-socket-send",
-                  ackStartedAtMicros,
-                  ackEndedAtMicros,
-                  trace,
-                  ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null ? void 0 : {
-                    startedAtMicros: ackStartedAtSharedMicros,
-                    endedAtMicros: ackEndedAtSharedMicros
+        const deliver = () => {
+          try {
+            this.#sessionRuntimeBinding.assertController(pane);
+            if (semanticDelivery)
+              this.#sessionRuntimeBinding.sendInput(
+                pane,
+                { kind, data },
+                performanceTraceId,
+                causalProbe,
+                causalProbe ? (result2) => {
+                  if (this.#closed) return;
+                  if (result2.status === "proved") {
+                    this.#sendFrame(null, { type: "causal-cell-proof", proof: result2.proof });
+                  } else {
+                    this.#sendFrame(null, {
+                      type: "causal-cell-failure",
+                      failure: {
+                        version: 1,
+                        capability: "causal-cell-v1",
+                        traceId: result2.traceId,
+                        reason: result2.reason,
+                        ...result2.diagnostic ? { diagnostic: result2.diagnostic } : {}
+                      }
+                    });
                   }
-                );
+                } : void 0,
+                expectedLifetime
+              );
+            else if (kind === "text") channel.sub.sendText(data);
+            else if (kind === "key") channel.sub.sendKey(data);
+            else throw new Error("Byte input requires semantic runtime");
+            let ackStartedAtMicros = null;
+            let ackStartedAtSharedMicros = null;
+            if (trace) {
+              try {
+                ackStartedAtMicros = this.#observability.nowMicros();
               } catch {
               }
+              if (this.#diagnosticSharedRawMicros) {
+                try {
+                  ackStartedAtSharedMicros = this.#sharedMicros();
+                } catch {
+                }
+              }
             }
+            sendControl2(this.#socket, { type: "input-ack", pane, seq });
+            if (trace && ackStartedAtMicros !== null) {
+              let ackEndedAtMicros = null;
+              try {
+                ackEndedAtMicros = this.#observability.nowMicros();
+              } catch {
+              }
+              let ackEndedAtSharedMicros = null;
+              if (ackStartedAtSharedMicros !== null) {
+                try {
+                  ackEndedAtSharedMicros = this.#sharedMicros();
+                } catch {
+                }
+              }
+              if (ackEndedAtMicros !== null) {
+                try {
+                  this.#observability.recordSpan(
+                    "transport",
+                    "pane-stream-input-ack-socket-send",
+                    ackStartedAtMicros,
+                    ackEndedAtMicros,
+                    trace,
+                    ackStartedAtSharedMicros === null || ackEndedAtSharedMicros === null ? void 0 : {
+                      startedAtMicros: ackStartedAtSharedMicros,
+                      endedAtMicros: ackEndedAtSharedMicros
+                    }
+                  );
+                } catch {
+                }
+              }
+            }
+          } catch (error) {
+            if (this.#holdForWindowOwnership(error, deliver)) return;
+            if (error instanceof SessionRuntimeInputLifetimeEndedError) {
+              this.#noteInputLifetimeEnded(pane, error);
+              return;
+            }
+            this.#fail("control-frame-handler-failed", error);
           }
-        } catch (error) {
-          this.#fail("control-frame-handler-failed", error);
+        };
+        this.#afterWindowOwnership(deliver);
+      }
+      /**
+       * Input and geometry frames that arrive while registered-window ownership is
+       * being read again (another session was created or killed) wait for that
+       * read, in arrival order, instead of closing the stream. The mirror refuses
+       * them meanwhile; before, the stream closed with 1011 and the client had to
+       * reconnect. Bounded: a read that does not settle in time closes as before.
+       */
+      #ownershipHeld = [];
+      #ownershipDraining = false;
+      /** Ends the drain's wait when the stream closes. */
+      #ownershipWake = null;
+      #afterWindowOwnership(run) {
+        if (this.#ownershipHeld.length === 0 && !this.#mirror.windowOwnershipPending?.()) {
+          run();
+          return;
         }
+        this.#holdUntilWindowOwnership(run);
+      }
+      /**
+       * Frames whose effect depends on authority order (release, presence,
+       * activity, intents) are not held for the read themselves, but must not
+       * overtake frames that are.
+       */
+      #afterHeldFrames(run) {
+        if (this.#ownershipHeld.length === 0) {
+          run();
+          return;
+        }
+        this.#holdUntilWindowOwnership(run);
+      }
+      /** A refusal while ownership is pending holds the frame; anything else is the caller's. */
+      #holdForWindowOwnership(error, run) {
+        if (!(error instanceof SessionRuntimeControllerLeaseError) || error.code !== "controller-conflict" || !this.#mirror.windowOwnershipPending?.())
+          return false;
+        this.#ownershipHeld.unshift(run);
+        if (!this.#ownershipDraining) void this.#drainWindowOwnership();
+        return true;
+      }
+      #holdUntilWindowOwnership(run) {
+        if (this.#ownershipHeld.length >= PANE_STREAM_OWNERSHIP_HELD_FRAMES) {
+          this.#ownershipHeld.length = 0;
+          this.#fail("window-ownership-held-overflow");
+          return;
+        }
+        this.#ownershipHeld.push(run);
+        if (!this.#ownershipDraining) void this.#drainWindowOwnership();
+      }
+      async #drainWindowOwnership() {
+        this.#ownershipDraining = true;
+        try {
+          await this.#drainWindowOwnershipOnce();
+        } finally {
+          this.#ownershipDraining = false;
+        }
+      }
+      async #drainWindowOwnershipOnce() {
+        const deadline = Date.now() + this.#ownershipWaitMs;
+        while (!this.#closed && this.#ownershipHeld.length > 0) {
+          if (this.#mirror.windowOwnershipPending?.()) {
+            const left = deadline - Date.now();
+            if (left <= 0) {
+              this.#ownershipHeld.length = 0;
+              this.#fail("window-ownership-unverified");
+              return;
+            }
+            const timers = [];
+            const wait = (ms) => new Promise((resolve47) => {
+              const timer = setTimeout(resolve47, ms);
+              timer.unref?.();
+              timers.push(timer);
+            });
+            const read = this.#mirror.verifyWindowOwnership?.();
+            await Promise.race([
+              // Without a read to wait on, poll instead of spinning.
+              read ? read.catch(() => wait(25)) : wait(25),
+              wait(left),
+              new Promise((resolve47) => {
+                this.#ownershipWake = resolve47;
+              })
+            ]);
+            this.#ownershipWake = null;
+            for (const timer of timers) clearTimeout(timer);
+            continue;
+          }
+          const run = this.#ownershipHeld.shift();
+          const before = this.#ownershipHeld.length;
+          run();
+          if (this.#ownershipHeld.length > before) continue;
+        }
+      }
+      #inputLifetimeEndedLogged = /* @__PURE__ */ new Set();
+      #inputLifetimeEndedDropped = 0;
+      #noteInputLifetimeEnded(pane, error) {
+        this.#inputLifetimeEndedDropped += 1;
+        if (this.#inputLifetimeEndedLogged.has(pane)) return;
+        this.#inputLifetimeEndedLogged.add(pane);
+        logger.info("pane-stream", "input for an ended pane lifetime not delivered", {
+          session: this.#descriptor.sessionName,
+          clientId: this.#clientId,
+          pane,
+          error: error.message.slice(0, 200)
+        });
       }
       #failProtocol(code2) {
         try {
@@ -81096,7 +81670,7 @@ function createFleetPreviewCapture(run, native2) {
   const snapshot3 = async (liveSessionId, signal, windowId, paneId) => {
     const nativeEpoch = native2?.serverEpoch() ?? null;
     let sessionGuard;
-    const readSessions = async () => {
+    const readSessions2 = async () => {
       const raw = await run(
         ["list-panes", "-a", "-F", "#{pid}	#{session_id}	#{session_created}	#{session_name}"],
         signal
@@ -81109,7 +81683,7 @@ function createFleetPreviewCapture(run, native2) {
         }
       return discoverLiveSessionSummaries(() => raw);
     };
-    const session = (await readSessions()).find((s) => s.liveSessionId === liveSessionId);
+    const session = (await readSessions2()).find((s) => s.liveSessionId === liveSessionId);
     if (!session) return null;
     const readPanes = async () => (await run(
       [
@@ -81186,7 +81760,7 @@ function createFleetPreviewCapture(run, native2) {
       signal
     ) : null;
     const captured = owned ? owned.output : await run(["capture-pane", "-p", "-t", pane, "-S", "-24"], signal);
-    const [currentSessions, currentPanes] = await Promise.all([readSessions(), readPanes()]);
+    const [currentSessions, currentPanes] = await Promise.all([readSessions2(), readPanes()]);
     if (!currentSessions.some((s) => s.liveSessionId === liveSessionId)) return null;
     if (selectedWindowId && !currentPanes.some((r) => r[3] === selectedWindowId && r[0] === pane))
       return null;
@@ -88993,7 +89567,7 @@ var init_plugin_store = __esm({
 
 // packages/daemon/src/plugins/worktree-calls.ts
 import { spawn as spawn9 } from "node:child_process";
-import { homedir as homedir5 } from "node:os";
+import { homedir as homedir6 } from "node:os";
 import { z as z130 } from "zod";
 function fail3(message) {
   throw new WorktreeCallError(message);
@@ -89054,7 +89628,7 @@ function cliRunner(command3, timeoutMs = 6e4) {
   return (args, env) => new Promise((resolve47, reject) => {
     const [file, ...prefix] = command3;
     const child = spawn9(file, [...prefix, ...args], {
-      cwd: homedir5(),
+      cwd: homedir6(),
       env,
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -92908,7 +93482,7 @@ __export(auth_service_exports, {
 import * as crypto2 from "node:crypto";
 import { readFileSync as readFileSync35, existsSync as existsSync33 } from "node:fs";
 import { join as join56 } from "node:path";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir7 } from "node:os";
 function base64url(buf) {
   const b = typeof buf === "string" ? Buffer.from(buf) : buf;
   return b.toString("base64url");
@@ -93052,7 +93626,7 @@ var init_auth_service = __esm({
       checkSSHKeyAuthorization(userId, publicKey) {
         if (resolveRuntimeNamespace().development) return false;
         try {
-          const home = userId === process.env.USER ? homedir6() : `/home/${userId}`;
+          const home = userId === process.env.USER ? homedir7() : `/home/${userId}`;
           const authKeysPath = join56(home, ".ssh", "authorized_keys");
           if (!existsSync33(authKeysPath)) return false;
           const authorizedKeys = readFileSync35(authKeysPath, "utf-8");
@@ -96078,7 +96652,7 @@ var init_inspect = __esm({
 
 // packages/daemon/src/lib/filesystem-browser.ts
 import { realpathSync as realpathSync26, readdirSync as readdirSync9, statSync as statSync27 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir8 } from "node:os";
 import { isAbsolute as isAbsolute31, join as join57, resolve as resolve33, sep as sep13 } from "node:path";
 function isUnderRoot(canonical, root) {
   if (canonical === root) return true;
@@ -99776,7 +100350,7 @@ import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
 import { z as z142 } from "zod";
 import { realpathSync as realpathSync29 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
+import { homedir as homedir9 } from "node:os";
 import { isAbsolute as isAbsolute34, resolve as pathResolve } from "node:path";
 import { randomUUID as randomUUID51 } from "node:crypto";
 import { WebSocketServer as WebSocketServer4 } from "ws";
@@ -99878,7 +100452,7 @@ function sandboxResolveDir(rawDir) {
   if (trimmed.includes("\0")) {
     return { error: "invalid-path", message: "Path contains a null byte", status: 400 };
   }
-  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir8();
+  const home = process.env.TMUX_IDE_HOME_OVERRIDE && process.env.TMUX_IDE_HOME_OVERRIDE.trim().length > 0 ? process.env.TMUX_IDE_HOME_OVERRIDE : homedir9();
   let candidate = trimmed;
   if (candidate === "~") {
     candidate = home;
@@ -99914,6 +100488,12 @@ function sandboxResolveDir(rawDir) {
   return { canonical };
 }
 function createApp(options = {}) {
+  const lookupSession = (name) => {
+    const sessions = readSessions();
+    if (sessions === null) return "unavailable";
+    return sessions.find((session) => session.name === name) ?? "not-found";
+  };
+  const sessionMissing = (c, missing) => missing === "unavailable" ? c.json({ error: "Tmux session discovery is unavailable", code: "tmux-unavailable" }, 503) : c.json({ error: "Session not found" }, 404);
   const authConfig = options.authConfig ?? { method: "none", token_expiry: 86400 };
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
@@ -100140,7 +100720,12 @@ function createApp(options = {}) {
     });
   });
   app.get("/api/sessions", (c) => {
-    const sessions = discoverSessions();
+    const sessions = readSessions();
+    if (sessions === null)
+      return c.json(
+        { error: "Tmux session discovery is unavailable", code: "tmux-unavailable" },
+        503
+      );
     const overviews = buildOverviews(sessions);
     return c.json({ sessions: overviews });
   });
@@ -100256,11 +100841,8 @@ function createApp(options = {}) {
   });
   app.get("/api/project/:name", (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const detail = buildProjectDetail(session);
     return c.json({ ...detail });
   });
@@ -100368,8 +100950,8 @@ function createApp(options = {}) {
     const backend2 = options.applicationShellInventoryBackend;
     if (!backend2) {
       if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V1_VERSION)) {
-        const standaloneSession = discoverSessions().find((candidate) => candidate.name === name);
-        if (!standaloneSession) return c.json({ error: "Session not found" }, 404);
+        const standaloneSession = lookupSession(name);
+        if (typeof standaloneSession === "string") return sessionMissing(c, standaloneSession);
         markV1Compatibility();
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
@@ -100438,13 +101020,12 @@ function createApp(options = {}) {
     try {
       panes = listSessionPanes(name);
     } catch {
-      return c.json({ error: "Session not found" }, 404);
+      const session = lookupSession(name);
+      return sessionMissing(c, typeof session === "string" ? session : "not-found");
     }
     if (panes.length === 0) {
-      const sessions = discoverSessions();
-      if (!sessions.find((s) => s.name === name)) {
-        return c.json({ error: "Session not found" }, 404);
-      }
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
     }
     return c.json({
       panes: panes.map((p) => ({
@@ -100463,9 +101044,8 @@ function createApp(options = {}) {
   });
   app.get("/api/project/:name/terminals", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const records = loadTerminals(session.dir);
     const terminals = records.map((t) => {
       const bridge = defaultPtyBridgeRegistry.peek(t.id);
@@ -100490,9 +101070,8 @@ function createApp(options = {}) {
     zValidator("json", terminalCreateRequestSchema),
     async (c) => {
       const name = c.req.param("name");
-      const sessions = discoverSessions();
-      const session = sessions.find((s) => s.name === name);
-      if (!session) return c.json({ error: "Session not found" }, 404);
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
       const body = c.req.valid("json");
       let id2 = body.id;
       let scripted = false;
@@ -100530,9 +101109,8 @@ function createApp(options = {}) {
     async (c) => {
       const name = c.req.param("name");
       const id2 = c.req.param("id");
-      const sessions = discoverSessions();
-      const session = sessions.find((s) => s.name === name);
-      if (!session) return c.json({ error: "Session not found" }, 404);
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
       try {
         const record2 = renameTerminal(session.dir, id2, c.req.valid("json").name);
         if (!record2) return c.json({ error: "Terminal not found" }, 404);
@@ -100546,9 +101124,8 @@ function createApp(options = {}) {
   app.delete("/api/project/:name/terminals/:id", async (c) => {
     const name = c.req.param("name");
     const id2 = c.req.param("id");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const removedRecord = deleteTerminal(session.dir, id2);
     const killed = defaultPtyBridgeRegistry.delete(id2);
     if (!removedRecord && !killed) {
@@ -100559,18 +101136,14 @@ function createApp(options = {}) {
   });
   app.get("/api/project/:name/events", (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     return c.json({ events: [] });
   });
   app.get("/api/project/:name/stream", (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     return streamSSE3(c, async (stream) => {
       projectStreamConnections += 1;
       sseMetrics.connections = projectStreamConnections;
@@ -100596,9 +101169,9 @@ function createApp(options = {}) {
         writeChanges(session);
         while (!closed) {
           await stream.sleep(250);
-          const current = discoverSessions().find((candidate) => candidate.name === name);
-          if (!current) break;
-          writeChanges(current);
+          const current = lookupSession(name);
+          if (current === "not-found") break;
+          if (current !== "unavailable") writeChanges(current);
           const now = Date.now();
           if (now - lastPing >= 25e3) {
             writeSse("ping", { at: (/* @__PURE__ */ new Date()).toISOString() });
@@ -100613,11 +101186,8 @@ function createApp(options = {}) {
   });
   app.post("/api/project/:name/inject", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     let body;
     try {
       body = await c.req.json();
@@ -100650,11 +101220,8 @@ function createApp(options = {}) {
   });
   app.post("/api/project/:name/send", zValidator("json", sendCommandSchema), async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const { target, message, noEnter } = c.req.valid("json");
     const panes = listSessionPanes(name);
     const pane = resolvePane(panes, target);
@@ -100688,9 +101255,8 @@ function createApp(options = {}) {
   });
   app.get("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     try {
       const resolved2 = await resolveConfig(session.dir);
       if (!resolved2.launchConfig || !resolved2.path) {
@@ -100712,9 +101278,8 @@ function createApp(options = {}) {
   });
   app.post("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     let body;
     try {
       body = await c.req.json();
@@ -100746,9 +101311,8 @@ function createApp(options = {}) {
   const execFileAsync2 = promisify4(execFile15);
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     try {
       await execFileAsync2("tmux-ide", ["restart", "--json"], {
         cwd: session.dir,
@@ -100763,11 +101327,8 @@ function createApp(options = {}) {
   });
   app.post("/api/project/:name/launch", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const state = getSessionState(name);
     if (state.running) {
       return c.json({ ok: true, session: name, status: "already_running" });
@@ -100787,11 +101348,8 @@ function createApp(options = {}) {
   });
   app.post("/api/project/:name/stop", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const state = getSessionState(name);
     if (!state.running) {
       return c.json({ ok: true, session: name, status: "not_running" });
@@ -100807,7 +101365,8 @@ function createApp(options = {}) {
     return streamSSE3(c, async (stream) => {
       let prevOverviews = [];
       const poll = () => {
-        const sessions = discoverSessions();
+        const sessions = readSessions();
+        if (sessions === null) return;
         const overviews = buildOverviews(sessions);
         const prevNames = new Set(prevOverviews.map((s) => s.name));
         const currNames = new Set(overviews.map((s) => s.name));
@@ -102432,6 +102991,14 @@ async function startEmbeddedDaemonGeneration(opts) {
       };
       terminalInventoryRuntime = new WorkspaceTerminalInventoryRuntime(terminalRuntimeOptions);
       await terminalInventoryRuntime.whenReady();
+      const snapshotInventory = terminalInventoryRuntime;
+      startDaemonCrashSnapshot(
+        daemonCrashSnapshotStart(
+          opts,
+          (args) => fleetFactsTmuxRunner(args),
+          () => ["disposed", "failed"].includes(snapshotInventory.lifecycleState())
+        )
+      );
       const getTerminalAttachmentRuntime = () => {
         if (terminalAttachmentRuntime) return terminalAttachmentRuntime;
         terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({
@@ -103270,6 +103837,7 @@ var init_daemon_embed = __esm({
     "use strict";
     init_tmux_pane_reader();
     init_tmux_native_browser();
+    init_daemon_crash_snapshot();
     init_native_surface_context();
     init_native_surface_provider();
     init_src2();
@@ -103365,9 +103933,11 @@ var init_daemon_embed = __esm({
 // packages/daemon/src/lib/headless-daemon.ts
 var headless_daemon_exports = {};
 __export(headless_daemon_exports, {
+  OWN_SERVER_PROOF_RESTARTS: () => OWN_SERVER_PROOF_RESTARTS,
   SIGNAL_STOP_DEADLINE_MS: () => SIGNAL_STOP_DEADLINE_MS,
   SIGNAL_STOP_MAX_MS: () => SIGNAL_STOP_MAX_MS,
   SIGNAL_STOP_TIMEOUT_EXIT_CODE: () => SIGNAL_STOP_TIMEOUT_EXIT_CODE,
+  ownServerProofRetry: () => ownServerProofRetry,
   runHeadlessDaemon: () => runHeadlessDaemon
 });
 function activeResourceCounts() {
@@ -103441,8 +104011,16 @@ async function assertAttachableDaemon(deps2, info, options) {
     );
   }
   assertIdentityMatches(info, identity4);
+  let first = true;
   await assertCanonicalDaemonServerIntent(info, options.tmuxServerIntent ?? null, {
-    identity: async () => identity4
+    ...deps2.serverProof ? { serverProof: deps2.serverProof } : {},
+    identity: async () => {
+      if (first) {
+        first = false;
+        return identity4;
+      }
+      return deps2.probeCanonicalDaemonIdentity(info, void 0, true);
+    }
   });
   const health = await deps2.probeCanonicalDaemonHealth(info);
   if (!health) {
@@ -103490,8 +104068,15 @@ async function findLiveCanonicalDaemon(deps2, options, predecessor) {
 function delay3(ms) {
   return new Promise((resolve47) => setTimeout(resolve47, ms));
 }
+function ownServerProofRetry(error, state) {
+  if (!(error instanceof DaemonBootstrapError) || error.reason !== "tmux-server-unproven" || state.restarts >= OWN_SERVER_PROOF_RESTARTS)
+    return null;
+  return { delayMs: 250 * (state.restarts + 1) };
+}
 function isTransientAttachabilityError(error) {
-  return error instanceof IdeError && (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY");
+  return error instanceof IdeError && (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY") || // A generation started on a replaced tmux server proves it a moment
+  // later (soak o3: the daemon exited at startup instead of waiting).
+  daemonServerProofPending(error);
 }
 async function waitForAttachableDaemon(deps2, info, options, timeoutMs = DAEMON_ATTACHABILITY_TIMEOUT_MS, shouldAbort = () => false) {
   const deadline = Date.now() + timeoutMs;
@@ -103659,6 +104244,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
         handle = await deps2.startEmbeddedDaemon({
           launcher: "headless",
           plugins: true,
+          ...options.crashSnapshotSource ? { crashSnapshotSource: options.crashSnapshotSource } : {},
           ...options.supervisionId ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor } : {},
           ...restoreTmuxWorkspaces ? { restoreTmuxWorkspaces: true } : {},
           port,
@@ -103779,7 +104365,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
         deps2,
         info,
         options,
-        DAEMON_ATTACHABILITY_TIMEOUT_MS,
+        deps2.attachabilityTimeoutMs ?? DAEMON_ATTACHABILITY_TIMEOUT_MS,
         () => signalRequested
       );
       options.onOwnedReady?.(info);
@@ -103789,8 +104375,29 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
         if (stopFailure) throw stopFailure;
         return "stopped";
       }
-      throw error;
+      const retry = ownServerProofRetry(error, {
+        startReason,
+        restarts: lifecycle.ownServerProofRestarts ?? 0
+      });
+      if (!retry) throw error;
+      lifecycle.ownServerProofRestarts = (lifecycle.ownServerProofRestarts ?? 0) + 1;
+      logger.warn(
+        "daemon-lifecycle",
+        "generation could not prove its own tmux server; starting it again",
+        {
+          generation,
+          startReason,
+          reason: error.reason,
+          restart: lifecycle.ownServerProofRestarts,
+          delayMs: retry.delayMs
+        }
+      );
+      await (deps2.delay ?? delay3)(retry.delayMs);
+      if (signalRequested) return "stopped";
+      lifecycle.startReason = "tmux-server-unproven";
+      return "restart";
     }
+    lifecycle.ownServerProofRestarts = 0;
     lifecycle.lastPort = info.port;
     emitStatus(deps2, options.json === true, "ready", info);
     logger[generation > 1 ? "info" : "debug"]("daemon-lifecycle", "generation ready", {
@@ -103833,7 +104440,7 @@ async function runHeadlessDaemonGeneration(options, deps2, restoreTmuxWorkspaces
     deps2.offSignal("SIGTERM", onSigterm);
   }
 }
-var SIGNAL_STOP_DEADLINE_MS, SIGNAL_STOP_MAX_MS, SIGNAL_STOP_TIMEOUT_EXIT_CODE, defaultDependencies2, DAEMON_ATTACHABILITY_TIMEOUT_MS, DAEMON_ATTACHABILITY_POLL_MS;
+var SIGNAL_STOP_DEADLINE_MS, SIGNAL_STOP_MAX_MS, SIGNAL_STOP_TIMEOUT_EXIT_CODE, defaultDependencies2, OWN_SERVER_PROOF_RESTARTS, DAEMON_ATTACHABILITY_TIMEOUT_MS, DAEMON_ATTACHABILITY_POLL_MS;
 var init_headless_daemon = __esm({
   "packages/daemon/src/lib/headless-daemon.ts"() {
     "use strict";
@@ -103842,6 +104449,7 @@ var init_headless_daemon = __esm({
     init_canonical_daemon();
     init_src2();
     init_daemon_embed();
+    init_bootstrap_coordinator();
     init_errors2();
     init_log();
     init_auth_token();
@@ -103860,6 +104468,7 @@ var init_headless_daemon = __esm({
       onSignal: (signal, listener) => process.on(signal, listener),
       offSignal: (signal, listener) => process.off(signal, listener)
     };
+    OWN_SERVER_PROOF_RESTARTS = 4;
     DAEMON_ATTACHABILITY_TIMEOUT_MS = 15e3;
     DAEMON_ATTACHABILITY_POLL_MS = 25;
   }
@@ -104200,10 +104809,10 @@ __export(open_browser_exports, {
 });
 import { accessSync as accessSync11, constants as constants20, realpathSync as realpathSync31, statSync as statSync29 } from "node:fs";
 import { delimiter as delimiter5, isAbsolute as isAbsolute35, join as join63, resolve as resolve38 } from "node:path";
-import { homedir as homedir9 } from "node:os";
+import { homedir as homedir10 } from "node:os";
 function resolveTerminalBrowser(environment = process.env, platform2 = process.platform) {
   const configured = environment.TMUX_IDE_TERMINAL_BROWSER_BIN;
-  const home = environment.HOME ?? homedir9();
+  const home = environment.HOME ?? homedir10();
   const bundled = platform2 === "darwin" && isAbsolute35(home) ? [
     join63(
       home,
@@ -104830,7 +105439,7 @@ import {
 } from "node:fs";
 import { randomUUID as randomUUID53 } from "node:crypto";
 import { dirname as dirname49, join as join65 } from "node:path";
-import { homedir as homedir10 } from "node:os";
+import { homedir as homedir11 } from "node:os";
 import { z as z143 } from "zod";
 function defaults() {
   const namespace = resolveRuntimeNamespace();
@@ -104838,7 +105447,7 @@ function defaults() {
     plan: (executable) => planDaemonService({
       platform: process.platform,
       uid: process.getuid?.() ?? 0,
-      home: homedir10(),
+      home: homedir11(),
       configHome: process.env.XDG_CONFIG_HOME || void 0,
       executable,
       path: process.env.PATH || "/usr/bin:/bin",
@@ -105818,7 +106427,7 @@ function tmuxFeaturesRow(probeServer, probeBinary) {
   const upgrade = running ? "; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux" : "";
   const details = {
     full: "bundled tmux: full features",
-    stock: `stock tmux: reduced features${upgrade}`,
+    stock: `stock tmux: reduced features (tab positions in saved output are reconstructed)${upgrade}`,
     older: `older tmux-ide tmux: reduced features${upgrade}`,
     partial: "this tmux has only some tmux-ide commands: no pane dividers",
     "no-server": "could not read the tmux server's features",
@@ -105849,14 +106458,23 @@ function plainTmuxRow(pathTmux, bundled) {
     optional: true
   };
 }
-function snapshotRow(snapshot3, liveSessions2, nowMs) {
+function snapshotRow(snapshot3, liveSessions2, nowMs, serverStartMs = null) {
   const label4 = "crash snapshot (restore)";
-  const hint = "Only the chrome updater writes it, while a session is adopted: `tmux-ide adopt --all` starts it";
+  const hint = "The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer";
   if (!snapshot3) {
     return liveSessions2?.length ? { label: label4, pass: false, detail: `none yet. ${hint}`, optional: true } : { label: label4, pass: true, detail: "none yet (no sessions running)", optional: true };
   }
   const ageMs = nowMs - Date.parse(snapshot3.savedAt);
   const age = ageMs >= DAY_MS ? `${Math.floor(ageMs / DAY_MS)} days old` : `${Math.max(0, Math.round(ageMs / 6e4))} min old`;
+  if (liveSessions2 && serverStartMs !== null && snapshotIsRestorePoint(snapshot3, { serverStartMs, sessions: liveSessions2 })) {
+    const gone = snapshot3.sessions.map((session) => session.name).filter((name) => !liveSessions2.includes(name));
+    return {
+      label: label4,
+      pass: false,
+      detail: `restore point kept: saved ${age}, before this tmux server started; ${gone.length} of its sessions ${gone.length === 1 ? "is" : "are"} not running (${gone.slice(0, 5).join(", ")}${gone.length > 5 ? ", \u2026" : ""}). \`tmux-ide restore\` brings them back; delete snapshot.json to let a new snapshot replace it`,
+      optional: true
+    };
+  }
   const saved = new Set(snapshot3.sessions.map((session) => session.name));
   const missing = (liveSessions2 ?? []).filter((name) => !saved.has(name));
   if (missing.length)
@@ -105888,11 +106506,29 @@ function safeBundledTmux() {
     return null;
   }
 }
+function doctorTmuxServer() {
+  const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
+  const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
+  return socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+}
+function liveServerStartMs() {
+  try {
+    const server = doctorTmuxServer();
+    const seconds = Number(
+      execFileSync23(resolveTmuxExecutable(), [...server, "display-message", "-p", "#{start_time}"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 3e3
+      }).trim()
+    );
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1e3 : null;
+  } catch {
+    return null;
+  }
+}
 function liveListableSessions() {
   try {
-    const socketPath = process.env[TMUX_SOCKET_PATH_ENV];
-    const socketName = process.env.TMUX_IDE_TMUX_SOCKET_NAME;
-    const server = socketPath ? ["-S", socketPath] : socketName ? ["-L", socketName] : [];
+    const server = doctorTmuxServer();
     return execFileSync23(
       resolveTmuxExecutable(),
       [...server, "list-sessions", "-F", "#{session_name}"],
@@ -106006,7 +106642,7 @@ async function doctor({
   } catch {
   }
   checks.push(plainTmuxRow(firstOnPath("tmux"), safeBundledTmux()));
-  checks.push(snapshotRow(readSnapshot(), liveListableSessions(), Date.now()));
+  checks.push(snapshotRow(readSnapshot(), liveListableSessions(), Date.now(), liveServerStartMs()));
   checks.push(nodeVersionRow(process.versions.node));
   checks.push(
     check(
@@ -111438,6 +112074,27 @@ var init_worktree = __esm({
   }
 });
 
+// packages/daemon/src/lib/update-daemon-outcome.ts
+var update_daemon_outcome_exports = {};
+__export(update_daemon_outcome_exports, {
+  daemonUpdateOutcome: () => daemonUpdateOutcome
+});
+function daemonUpdateOutcome(running, cliVersion) {
+  if (compareProductVersions(running.productVersion, cliVersion) !== 1)
+    return { status: "ready", message: `Daemon ready: ${running.productVersion}` };
+  const how = running.supervised ? `restart its service with tmux-ide daemon service restart; the service starts the installation it was set up with, so if that is not v${cliVersion}, set the service up from this installation first` : running.embedded ? `quit what it runs in: it runs inside another tmux-ide process (pid ${running.pid}), such as an open app, then run tmux-ide update --daemon again` : `stop it (pid ${running.pid}), then run tmux-ide update --daemon again`;
+  return {
+    status: "kept-newer",
+    message: `The running daemon is v${running.productVersion}, newer than this CLI (v${cliVersion}). It was left running: a CLI never replaces a newer daemon. To run v${cliVersion}'s daemon instead, ${how}.`
+  };
+}
+var init_update_daemon_outcome = __esm({
+  "packages/daemon/src/lib/update-daemon-outcome.ts"() {
+    "use strict";
+    init_semver();
+  }
+});
+
 // packages/daemon/src/lib/managed-installer-update.ts
 import { mkdtempSync as mkdtempSync3, readFileSync as readFileSync48, realpathSync as realpathSync37, rmSync as rmSync10 } from "node:fs";
 import { dirname as dirname57, join as join73 } from "node:path";
@@ -111629,8 +112286,13 @@ function planUpdate(input) {
     guidance: guidance[method]
   };
 }
-function renderPlan2(plan, { current, latest, dryRun }) {
-  const status2 = latest && deriveStatus(latest, current).updateAvailable ? `tmux-ide v${current} \u2192 v${latest} available` : latest ? `tmux-ide v${current} is up to date (registry: v${latest})` : `tmux-ide v${current} (latest version unknown)`;
+function renderPlan2(plan, {
+  current,
+  latest,
+  dryRun,
+  source = "registry"
+}) {
+  const status2 = latest && deriveStatus(latest, current).updateAvailable ? `tmux-ide v${current} \u2192 v${latest} available` : source === "cache" ? `tmux-ide v${current}: could not reach the npm registry (last known release: ${latest ? `v${latest}` : "unknown"})` : latest ? `tmux-ide v${current} is up to date (registry: v${latest})` : `tmux-ide v${current} (latest version unknown)`;
   return [
     status2,
     "",
@@ -111640,11 +112302,19 @@ function renderPlan2(plan, { current, latest, dryRun }) {
     "After updating, relaunch the app. Use tmux-ide update --daemon to replace a running daemon with installed code."
   ].join("\n");
 }
-function runUpdate({ cliDir, dryRun, json: json3 = false }, dependencies = {}) {
+function updateFailure(what, error) {
+  const { status: status2, signal, message } = error;
+  const how = typeof status2 === "number" ? `exited with status ${status2}` : typeof signal === "string" ? `was stopped by ${signal}` : `could not run (${String(message).split("\n")[0]})`;
+  return new IdeError(
+    `The update did not finish: ${what} ${how}. Its own message is above. Retry with: tmux-ide update`,
+    { code: "UPDATE_FAILED", cause: error instanceof Error ? error : void 0 }
+  );
+}
+async function runUpdate({ cliDir, dryRun, json: json3 = false }, dependencies = {}) {
   if (resolveRuntimeNamespace().development)
     throw new Error("Development instances rebuild exact artifacts; package updates are disabled");
   const current = (dependencies.currentVersion ?? getCurrentVersion)();
-  const { latest } = (dependencies.status ?? getUpdateStatus)({ currentVersion: current });
+  const { latest, source: latestSource = "registry" } = await (dependencies.status ?? ((scope2) => refreshUpdateStatus({ ...scope2, fetchLatest: dependencies.fetchLatest })))({ currentVersion: current });
   const source = installOrigin(cliDir);
   let plan = source.origin === "unknown" ? {
     method: "unknown",
@@ -111680,19 +112350,27 @@ function runUpdate({ cliDir, dryRun, json: json3 = false }, dependencies = {}) {
     }
   }
   const output = dependencies.output ?? console.log;
-  if (!json3) output(renderPlan2(plan, { current, latest, dryRun }));
+  if (!json3) output(renderPlan2(plan, { current, latest, dryRun, source: latestSource }));
   let executed = false;
   if (!dryRun && plan.executable && plan.args) {
-    (dependencies.execute ?? execFileSync31)(plan.executable, plan.args, {
-      stdio: json3 ? ["ignore", 2, 2] : "inherit"
-    });
+    try {
+      (dependencies.execute ?? execFileSync31)(plan.executable, plan.args, {
+        stdio: json3 ? ["ignore", 2, 2] : "inherit"
+      });
+    } catch (error) {
+      throw updateFailure([plan.executable, ...plan.args].join(" "), error);
+    }
     executed = true;
   }
   if (!dryRun && plan.installerPrefix && plan.channel) {
-    runManagedInstallerUpdate(plan.installerPrefix, plan.channel, json3, dependencies.execute);
+    try {
+      runManagedInstallerUpdate(plan.installerPrefix, plan.channel, json3, dependencies.execute);
+    } catch (error) {
+      throw updateFailure("the installer", error);
+    }
     executed = true;
   }
-  if (json3) output(JSON.stringify({ ...plan, current, latest, dryRun, executed }));
+  if (json3) output(JSON.stringify({ ...plan, current, latest, latestSource, dryRun, executed }));
   return plan;
 }
 var UPDATE_COMMANDS;
@@ -111703,6 +112381,7 @@ var init_update = __esm({
     init_runtime_namespace();
     init_semver();
     init_update_check();
+    init_errors2();
     init_install_origin();
     UPDATE_COMMANDS = {
       npm: "npm install -g tmux-ide@latest",
@@ -111962,6 +112641,7 @@ init_compiled();
 init_errors2();
 init_output();
 init_state_home();
+init_invocation_directory();
 init_hosted();
 configureTmuxClientResolver(resolveOrdinaryTmuxClient);
 if (process.argv[2] === "__plugin-host") {
@@ -112334,7 +113014,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
     }
   }
   const env = openTuiLaunchEnvironment(process.env, {
-    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CWD: invocationDirectory(),
     TMUX_IDE_CLI: nodeCliPath,
     ...automaticDiagnosticLog ? {
       TMUX_IDE_TUI_LOG: automaticDiagnosticLog,
@@ -112425,7 +113105,7 @@ Install bun (https://bun.sh) \u2014 the TUI surfaces run on it. Sources ship wit
       launch2.bin,
       launch2.argv,
       hostedEnvVars({
-        cwd: process.cwd(),
+        cwd: invocationDirectory(),
         cli: nodeCliPath,
         path: process.env.PATH,
         home: process.env.TMUX_IDE_HOME,
@@ -112620,7 +113300,10 @@ try {
       port: values.port,
       json: json2,
       expectedVersion: pkg.version,
-      supervisionId: values.supervised
+      supervisionId: values.supervised,
+      // The crash snapshot's file and builder live in the chrome adapter,
+      // which the daemon engine may not import (#783).
+      crashSnapshotSource: (await Promise.resolve().then(() => (init_snapshot2(), snapshot_exports))).fleetCrashSnapshotSource
     });
     await new Promise((resolveFlush) => process.stdout.write("", resolveFlush));
     process.exit(0);
@@ -113306,8 +113989,8 @@ try {
           process.exit(1);
         }
         const teams = await Promise.resolve().then(() => (init_claude_agent_teams(), claude_agent_teams_exports));
-        const { homedir: homedir11 } = await import("node:os");
-        const tilde = (text2) => text2.replaceAll(`${homedir11()}/`, "~/");
+        const { homedir: homedir12 } = await import("node:os");
+        const tilde = (text2) => text2.replaceAll(`${homedir12()}/`, "~/");
         if (action === "status") {
           const status2 = teams.claudeAgentTeamsStatus();
           if (json2) console.log(JSON.stringify(status2, null, 2));
@@ -113864,13 +114547,25 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
         const current = inspectCanonicalDaemonInfo2();
         if (current.status !== "valid")
           throw new IdeError("Daemon upgrade did not publish a current owner");
+        const cliVersion = (await Promise.resolve().then(() => __toESM(require_package(), 1))).version;
+        const outcome = (await Promise.resolve().then(() => (init_update_daemon_outcome(), update_daemon_outcome_exports))).daemonUpdateOutcome(
+          {
+            productVersion: current.info.productVersion,
+            pid: current.info.pid,
+            supervised: Boolean(current.info.supervisionId),
+            embedded: current.info.provenance?.launcher === "embedded"
+          },
+          cliVersion
+        );
         console.log(
           json2 ? JSON.stringify({
             ok: true,
-            status: "ready",
+            status: outcome.status,
             productVersion: current.info.productVersion,
-            instanceId: current.info.instanceId
-          }) : `Daemon ready: ${current.info.productVersion}`
+            instanceId: current.info.instanceId,
+            // The installer prints the guidance when it updates the daemon.
+            ...outcome.status === "kept-newer" ? { cliVersion, message: outcome.message } : {}
+          }) : outcome.message
         );
         break;
       }
@@ -113908,7 +114603,7 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
       }
       const { runUpdate: runUpdate2 } = await Promise.resolve().then(() => (init_update(), update_exports));
       const dryRun = values["dry-run"] === true;
-      runUpdate2({ cliDir: __dirname5, dryRun, json: json2 });
+      await runUpdate2({ cliDir: __dirname5, dryRun, json: json2 });
       break;
     }
     case "skill-sync": {

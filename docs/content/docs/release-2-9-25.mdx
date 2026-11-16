@@ -1,0 +1,149 @@
+---
+title: tmux-ide 2.9.25
+metaTitle: "What's new in 2.9.25"
+description: "Terminal streams follow a split or a closed pane without reconnecting, survive sessions coming and going, and stock tmux servers load panes with tabs."
+---
+
+`2.9.25` is a CLI/daemon release with more connection fixes, fixes for tmux
+servers that are not tmux-ide's own, and installer fixes. It adds no commands.
+Native Mac alpha 0.1.18 uses its new stream capability; older apps and the TUI
+work with it as before.
+
+## Splits and closed panes no longer reconnect the terminal
+
+Until now, when another tmux client split or closed a pane (an agent, a second
+terminal, a script), every app viewing that session lost its stream with 1012
+`topology-changed` and reconnected. The Mac app showed "Reconnecting… attempt
+1" for 0.8 to 4.3 s.
+
+A client that offers the new stream capability keeps its stream. The daemon
+sends it the panes that were added and removed, opens the new pane on the same
+connection and ends the removed one. Mac app 0.1.18 offers it to a local
+daemon of 2.9.25 or later. In the app's soak, on a separate daemon with sessions
+created and killed and panes split for 300 s, the app did not disconnect once
+and followed all 6 pane changes in place, the slowest in 166 ms.
+
+A client that does not offer the capability gets exactly what it got before.
+The TUI does not offer it yet and still reconnects after a split.
+
+A pane enters a stream only if the stream was opened for its whole session, and
+the daemon's own inventory of that same session lists the pane. A pane of
+another session, another tmux server or a session that replaced this one under
+the same name never does. If anything does not add up, the stream closes as it
+did before.
+
+## Sessions coming and going no longer close the stream
+
+When another tmux client created or killed a session, the next key or resize in
+the Mac app closed its stream with 1011 "Window ownership is being verified",
+and the app reconnected. In a soak it happened at about every second change.
+
+The daemon now checks window ownership again right away, and holds keys and
+resizes for up to 2 s (or 256 frames) meanwhile. They arrive in order once the
+check is done. In the reproduction, a key every 40 ms while another client
+created and killed a session, the stream closed after 2 keys before the fix.
+With it, the stream took 379 keys and stayed open.
+
+## More connection fixes
+
+- A daemon restarted right after its tmux server was replaced could exit with
+  "Cannot prove the requested tmux server" (`tmux-server-unproven`) when tmux
+  answered slowly. A supervised daemon then restarted in a loop; without a
+  supervisor the app had no daemon. The daemon now starts that generation
+  again, up to four times, 250 ms to 1 s apart. In a reproduction (a
+  `kill-server`, a new server, tmux answers delayed 0.3 to 1 s), the daemon died
+  in 5 of 6 runs before the fix. With it, it survived every run with delays of
+  0.3 and 0.6 s. When every tmux answer takes over 1 s, it still exits after the
+  last try.
+- A slow tmux answer while a stream opened closed the whole stream with 1011.
+  Reading the session and opening each pane are now tried again after 150 ms
+  and 400 ms first.
+- A key typed at the moment tmux restarts the daemon's control client no longer
+  closes the stream with 1011 "Input target lifetime unavailable". The key is
+  dropped, and the pane's own end tells the client what happened.
+
+## Mac app sessions and agents
+
+When you also attached a terminal to a session the Mac app shows, with tmux's
+`window-size latest` the terminal took the window's size. The app could not win
+it back, and when the terminal left, tmux re-wrapped the app's output in the
+middle of words. Now, when the app is focused or resized, the daemon makes it
+tmux's latest client again, so whichever client you used last sets the size.
+The app takes it back only then, never on a timer, so the two clients do not
+fight over it.
+Mac app 0.1.18 also says when another client holds the window at another size.
+
+The rest of the Mac app's changes are in the
+[native alpha](/docs/native-alpha) 0.1.18 notes.
+
+## Images
+
+Images placed without a size in columns and rows were sized as if every cell
+were 10 by 20 pixels. The daemon now uses the cell size the Mac app reports, so
+those images fit on any font, zoom or display. Until a window reports its size,
+10 by 20 still applies.
+
+## Stock tmux servers and restore points
+
+- On a server started by Homebrew's or another stock tmux, a pane whose screen
+  or history held a tab character is loaded. Before, the
+  session never connected, and tabs are in the output of `ls`, `git`, `make`
+  and most tools. Tabs in output printed before you opened the pane are placed
+  at the default stops. See
+  [Troubleshooting](/docs/troubleshooting) for the few cases where a line can be
+  a few columns off until the program draws it again.
+- `tmux-ide restore` has a restore point. The background service now writes the
+  snapshot within a minute of a change on its default tmux server, also when no
+  session is adopted. Before, only the chrome updater wrote it, so a server
+  started by plain `tmux` had none.
+- After a `kill-server`, a new server no longer replaces the old server's
+  snapshot while that snapshot names a session the new server lacks. Writing
+  resumes once `tmux-ide restore` brought those sessions back, or after you
+  delete `~/.tmux-ide/snapshot.json`. `tmux-ide doctor` says when a restore
+  point is kept and which sessions are missing. See
+  [Move to tmux-ide's own tmux](/docs/tmux-upgrade).
+
+## Installer and update
+
+- A failed or cancelled install no longer leaves its lock behind. Every later
+  run said "Another installation is running". The lock now records its owner,
+  and a later run takes over a lock whose owner is gone.
+- On Ubuntu 26.04, two installers could both hold the lock: its `mkdir` can
+  report success to both of two racing calls. The lock no longer relies on
+  `mkdir` failing.
+- `tmux-ide update` could report "The tmux-ide 2.9.22 daemon could not be
+  moved to 2.9.24" although the new daemon came up, when launchd took more than
+  15 s to start it. The
+  installer now waits up to a minute for the new daemon and reports the
+  restart. If the old daemon is still running, it warns at once.
+- `tmux-ide update` and `--dry-run` ask the npm registry instead of an old
+  cached answer before they say "up to date". When the registry cannot be
+  reached, they say so and name the last known release. A failed update prints
+  one line instead of a stack trace.
+- `tmux-ide update --daemon` with a daemon newer than the CLI, for example
+  after a rollback, printed only "Daemon ready". It now says the newer daemon
+  was left running and how to run this version's daemon instead. With `--json`
+  the status is `kept-newer`.
+
+## CLI and TUI
+
+- `tmux-ide app` started from a directory that was deleted crashed with
+  `ENOENT uv_cwd`. It now starts from your home directory.
+- Unadopting one session removed the popup key, the status-bar clicks, the
+  right-click menus and the Alt and prefix keys of every adopted session on that
+  tmux server. They now stay until the last adopted session is unadopted.
+- `tmux-ide doctor` says that tab positions are reconstructed on a stock tmux
+  server.
+- When the tmux socket cannot be read, the TUI's session list says tmux is
+  unavailable (503 `tmux-unavailable`) instead of showing no sessions, and its
+  event stream no longer reports every session as removed and added again.
+  The `/api/project/:name` routes answer 503 instead of 404 "Session not found".
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. A running older daemon
+restarts on 2.9.25 by itself; your tmux sessions keep running. Update remote
+machines too: the fixes are in the daemon on the machine that runs tmux.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
