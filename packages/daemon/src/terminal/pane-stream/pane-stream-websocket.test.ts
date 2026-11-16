@@ -275,6 +275,8 @@ class FakeMirror implements PaneStreamMirror {
   layoutRuntimeSessionId = "$1";
   describeGate: Promise<void> | null = null;
   describeFailure = false;
+  /** Errors the next layout subscriptions throw, one each, before any works. */
+  layoutFailures: Error[] = [];
 
   constructor(panes: string[]) {
     this.panes = panes;
@@ -332,6 +334,8 @@ class FakeMirror implements PaneStreamMirror {
       }) => void;
     },
   ) {
+    const failure = this.layoutFailures.shift();
+    if (failure) throw failure;
     if (authority) {
       const layouts = this.initialLayouts ?? [
         {
@@ -5125,6 +5129,38 @@ describe("a step of the opening that fails", () => {
       ],
     ]);
     logged.mockRestore();
+  });
+
+  it("subscribes to the layout again when the session's inventory was not settled yet", async () => {
+    // Release soak, 16 Nov: a stream re-issued right after a pane change closed
+    // 1011 semantic-layout-subscribe-failed ("trusted inventory … lacks verified
+    // identity"); the next one, 100 ms later, worked.
+    const { h } = flaky(0);
+    h.mirror.layoutFailures.push(new Error("trusted inventory for alpha lacks verified identity"));
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(h.mirror.layoutFailures).toEqual([]);
+  });
+
+  it("does not repeat a layout subscription refused for a changed pane set", async () => {
+    const { h } = flaky(0);
+    const changed = Object.assign(new Error("topology changed"), {
+      name: "MirrorTopologyChangedError",
+    });
+    h.mirror.layoutFailures.push(changed, new Error("must not be reached"));
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+    );
+    expect(h.mirror.layoutFailures).toHaveLength(1);
   });
 
   it("closes with its cause once every try has failed", async () => {

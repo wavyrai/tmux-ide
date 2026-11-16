@@ -1680,7 +1680,11 @@ export class PaneStreamLiveConnection {
    * stream with 1011, and nothing was tried twice. A refusal of authority is a
    * decision, not a failure, and is never repeated. Each repeat is logged.
    */
-  async #retryOpenStep<T>(step: string, run: () => Promise<T>): Promise<T> {
+  async #retryOpenStep<T>(
+    step: string,
+    run: () => Promise<T>,
+    final: (error: unknown) => boolean = () => false,
+  ): Promise<T> {
     for (let attempt = 0; ; attempt += 1) {
       try {
         return await run();
@@ -1689,7 +1693,8 @@ export class PaneStreamLiveConnection {
         if (
           delayMs === undefined ||
           this.#closed ||
-          error instanceof SessionRuntimeControllerLeaseError
+          error instanceof SessionRuntimeControllerLeaseError ||
+          final(error)
         )
           throw error;
         logger.info("pane-stream", "stream open step failed; trying again", {
@@ -1725,24 +1730,38 @@ export class PaneStreamLiveConnection {
     let stagedAuthority: MirrorLayoutAuthoritySnapshot | null = null;
     let authorityMalformed = false;
     let layoutActivated = false;
+    let layoutAttempt = 0;
     // Establish the single session layout observer first. MirrorService owns
     // this lifecycle and may share native control state with delivery setup;
     // only the independent pane delivery opens below are parallelized.
     try {
-      if (!this.#mirror.subscribeLayout) throw new Error("authoritative layout is unavailable");
-      const subscription = await this.#mirror.subscribeLayout(
-        this.#descriptor.sessionName,
-        () => undefined,
-        {
-          expectedSemanticPaneIds: expectedPaneIds,
-          expectedRuntimeSessionId: this.#descriptor.runtimeSessionId!,
-          onAuthority: (snapshot) => {
-            this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
-            if (snapshot.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
-            else if (!layoutActivated) stagedAuthority = snapshot;
-            else this.#onLayoutAuthority(snapshot);
-          },
+      const subscribeLayout = this.#mirror.subscribeLayout?.bind(this.#mirror);
+      if (!subscribeLayout) throw new Error("authoritative layout is unavailable");
+      // The session's trusted inventory can be unsettled for a moment after a
+      // pane change ("lacks verified identity"): a stream re-issued at once
+      // closed 1011 while the next, 100 ms later, opened. Try again, as the
+      // other opening steps do (#585). A changed pane set is a decision, not
+      // a failure, and still closes 1012 at once. A try that failed is
+      // disowned: its authority callback is ignored.
+      const subscription = await this.#retryOpenStep(
+        "semantic-layout-subscribe",
+        () => {
+          const attempt = ++layoutAttempt;
+          stagedAuthority = null;
+          authorityMalformed = false;
+          return subscribeLayout(this.#descriptor.sessionName, () => undefined, {
+            expectedSemanticPaneIds: expectedPaneIds,
+            expectedRuntimeSessionId: this.#descriptor.runtimeSessionId!,
+            onAuthority: (snapshot) => {
+              if (attempt !== layoutAttempt) return;
+              this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
+              if (snapshot.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
+              else if (!layoutActivated) stagedAuthority = snapshot;
+              else this.#onLayoutAuthority(snapshot);
+            },
+          });
         },
+        (error) => error instanceof Error && error.name === "MirrorTopologyChangedError",
       );
       if (this.#closed) {
         await subscription.close().catch(() => undefined);
