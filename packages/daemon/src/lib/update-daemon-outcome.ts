@@ -11,14 +11,27 @@ import { compareProductVersions } from "./semver.ts";
  * and how to run this version's daemon instead.
  */
 export function daemonUpdateOutcome(
-  running: { readonly productVersion: string; readonly pid: number; readonly supervised: boolean },
+  running: {
+    readonly productVersion: string;
+    readonly pid: number;
+    readonly supervised: boolean;
+    /** The daemon runs inside another tmux-ide process (an app or TUI), not on its own. */
+    readonly embedded?: boolean;
+  },
   cliVersion: string,
 ): { status: "ready" | "kept-newer"; message: string } {
   if (compareProductVersions(running.productVersion, cliVersion) !== 1)
     return { status: "ready", message: `Daemon ready: ${running.productVersion}` };
+  // A service restart runs the launcher the service was set up with, which need
+  // not be this CLI's installation: say what it does, not which version it loads.
   const how = running.supervised
-    ? "restart its service: tmux-ide daemon service restart"
-    : `stop it (pid ${running.pid}), then run tmux-ide update --daemon again`;
+    ? "restart its service with tmux-ide daemon service restart; the service starts " +
+      `the installation it was set up with, so if that is not v${cliVersion}, set the ` +
+      "service up from this installation first"
+    : running.embedded
+      ? `quit what it runs in: it runs inside another tmux-ide process (pid ${running.pid}), ` +
+        "such as an open app, then run tmux-ide update --daemon again"
+      : `stop it (pid ${running.pid}), then run tmux-ide update --daemon again`;
   return {
     status: "kept-newer",
     message:

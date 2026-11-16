@@ -2434,6 +2434,7 @@ try {
             productVersion: current.info.productVersion,
             pid: current.info.pid,
             supervised: Boolean(current.info.supervisionId),
+            embedded: current.info.provenance?.launcher === "embedded",
           },
           cliVersion,
         );
@@ -2444,7 +2445,10 @@ try {
                 status: outcome.status,
                 productVersion: current.info.productVersion,
                 instanceId: current.info.instanceId,
-                ...(outcome.status === "kept-newer" ? { cliVersion } : {}),
+                // The installer prints the guidance when it updates the daemon.
+                ...(outcome.status === "kept-newer"
+                  ? { cliVersion, message: outcome.message }
+                  : {}),
               })
             : outcome.message,
         );

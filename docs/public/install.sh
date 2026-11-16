@@ -149,7 +149,12 @@ if (info && Number.isInteger(info.pid) && typeof info.productVersion === 'string
       return false;
     };
     const succeeded = result.status === 0 && (status?.status === 'ready' || status?.status === 'not-running');
-    if (succeeded && status.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
+    // A rollback: a CLI never replaces a newer daemon. Say so instead of a retry
+    // that refuses again, with the command's own guidance for switching.
+    if (result.status === 0 && status?.status === 'kept-newer') {
+      note(`The tmux-ide ${status.productVersion} daemon is newer than ${version} and was left running on purpose; your sessions are safe.`);
+      if (typeof status.message === 'string') note(status.message.slice(0, 600));
+    } else if (succeeded && status.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
     else if (!succeeded) {
       if (arrived()) note(`Restarted the daemon on ${version}; tmux sessions kept running.`);
       else warn(`The tmux-ide ${info.productVersion} daemon could not be moved to ${version}; your sessions are safe. Retry: ${command} update --daemon`);
