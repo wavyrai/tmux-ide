@@ -480,6 +480,9 @@ describe("SessionRuntimeTransportBinder", () => {
       "Cannot hand controller authority to a passive transport",
     );
     interactive.assertController("pane.a");
+    // A pane the passive stream gains in place (#723) is no authorship either.
+    passive.amendPaneGrant({ added: ["pane.c"], removed: [] });
+    expect(binder.resolveExecutionHandle("alpha", "host:shared", "pane.c")).toBeUndefined();
     await Promise.all([passive.close(), interactive.close()]);
     await registry.dispose();
   });
