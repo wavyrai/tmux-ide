@@ -191,3 +191,43 @@ fn only_a_daemon_release_that_knows_the_bundle_is_offered_it() {
         assert!(!knows_topology_bundle(unknown), "{unknown:?}");
     }
 }
+
+/// Review of 799ce7fc: the gate pinned in released versions, not only
+/// relative to its own constant. 120 ships with daemon 2.9.25 (the owner holds
+/// 2.9.25 for #723). A released daemon offered 120 would give neither 118 nor
+/// 119, and a full interactive stream would silently lose zlib graphics,
+/// browser icons and reader badges.
+#[test]
+fn released_daemons_before_2_9_25_keep_118_and_2_9_25_gets_120() {
+    for released in ["2.9.22", "2.9.23", "2.9.24"] {
+        assert!(!knows_topology_bundle(Some(released)), "{released}");
+        let offer = offered_versions(
+            true,
+            true,
+            true,
+            true,
+            knows_topology_bundle(Some(released)),
+        );
+        assert!(offer.contains(&118), "{released}: {offer:?}");
+        assert!(
+            !offer.contains(&119) && !offer.contains(&120),
+            "{released}: {offer:?}"
+        );
+    }
+    for knowing in ["2.9.25", "2.9.26", "2.10.0", "3.0.0"] {
+        assert!(knows_topology_bundle(Some(knowing)), "{knowing}");
+        let offer = offered_versions(true, true, true, true, knows_topology_bundle(Some(knowing)));
+        assert!(
+            offer.contains(&120) && !offer.contains(&118),
+            "{knowing}: {offer:?}"
+        );
+    }
+    for unknown in ["2.9.25-rc.1", "2.9.25+build", "not a version", "2.9"] {
+        assert!(!knows_topology_bundle(Some(unknown)), "{unknown}");
+        let offer = offered_versions(true, true, true, true, knows_topology_bundle(Some(unknown)));
+        assert!(
+            offer.contains(&118) && !offer.contains(&120),
+            "{unknown}: {offer:?}"
+        );
+    }
+}
