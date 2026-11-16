@@ -43,9 +43,18 @@ impl From<io::Error> for TunnelError {
 struct OwnedChild(Child, Option<ChildStdin>);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
-        // The guard ends the forward itself once the lifeline closes, also when
-        // the guard shell is killed below.
+        // The guard ends the forward once the lifeline closes, reaps it and
+        // exits. While the shell lives the forward's pid stays its child, so
+        // the watcher's late KILL cannot reach a reused pid (review of
+        // 18c558c5). Only a guard that has not ended by then is killed.
         drop(self.1.take());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if !matches!(self.0.try_wait(), Ok(None)) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -57,13 +66,15 @@ impl Drop for OwnedChild {
 /// writer, the watcher reads end of file and ends the forward (TERM, then KILL
 /// a second later). TERM to the shell itself is passed on to the forward. No
 /// process is ever found by name: only the forward this shell started is
-/// signalled. `$0` names the shell in `ps` as the app's tunnel.
-const GUARD: &str = r#"exec 3<&0
-"$@" </dev/null &
+/// signalled. `$0` names the shell in `ps` as the app's tunnel. The shell's
+/// own messages ("Terminated", "Killed: 9") go nowhere: only the forward's
+/// stderr reaches the tunnel, which classifies it.
+const GUARD: &str = r#"exec 3<&0 4>&2 2>/dev/null
+"$@" </dev/null 2>&4 3<&- 4>&- &
 tunnel=$!
-{ read -r _ <&3; kill -TERM "$tunnel" 2>/dev/null; sleep 1; kill -KILL "$tunnel" 2>/dev/null; } &
+{ read -r _ <&3; kill -TERM "$tunnel"; sleep 1; kill -KILL "$tunnel"; } 4>&- &
 guard=$!
-exec 3<&-
+exec 3<&- 4>&-
 trap 'kill -TERM "$tunnel" 2>/dev/null' TERM HUP INT
 wait "$tunnel"
 status=$?

@@ -229,3 +229,100 @@ fn the_guard_passes_on_the_forwards_exit_and_stderr() {
     assert!(matches!(wait_exit(&tunnel), TunnelError::HostKey));
     tunnel.shutdown().unwrap();
 }
+
+/// The forward gets TERM first (ssh can close its channels), KILL only if it
+/// is still there a second later. Review of 18c558c5, mutant G7.
+#[test]
+fn a_forward_is_sent_term_before_kill() {
+    let dir = std::env::temp_dir().join(format!("tmux-ide-guard-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let marker = dir.join("term");
+    let _ = std::fs::remove_file(&marker);
+    let script = format!(
+        "trap 'echo term > \"{}\"; exit 0' TERM; while :; do /bin/sleep 0.05; done",
+        marker.display()
+    );
+    let (mut holder, _guard, forward) = guarded_under(&script);
+    holder.0.kill().unwrap();
+    holder.0.wait().unwrap();
+    assert!(gone_within(forward.0, Duration::from_secs(3)));
+    assert!(marker.exists(), "the forward was not sent TERM");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The guard shell's own job messages never reach the stderr the tunnel
+/// classifies: only what the forward wrote.
+#[test]
+fn only_the_forwards_stderr_reaches_the_tunnel() {
+    let mut guard = Reaped(
+        guarded(&shell(
+            "printf 'Permission denied (publickey).' >&2; kill -KILL $$",
+        ))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap(),
+    );
+    let mut stderr = String::new();
+    guard
+        .0
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert_eq!(stderr, "Permission denied (publickey).");
+}
+
+/// On a clean shutdown the guard shell outlives its forward and reaps it, so
+/// the forward is never an orphan whose pid the watcher's late KILL could
+/// reach after reuse (review of 18c558c5, item 2).
+#[test]
+fn a_shut_down_forward_is_reaped_by_its_guard_not_orphaned() {
+    let tunnel = Tunnel::spawn_command(
+        shell("trap '/bin/sleep 0.3; exit 0' TERM; while :; do /bin/sleep 0.05; done"),
+        1234,
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let forward = loop {
+        let out = Command::new("/usr/bin/pgrep")
+            .args(["-f", "trap '/bin/sleep 0.3"])
+            .output()
+            .unwrap();
+        let found: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .filter(|pid: &u32| {
+                let parent = Command::new("/bin/ps")
+                    .args(["-o", "ppid=", "-p", &pid.to_string()])
+                    .output()
+                    .unwrap();
+                let parent = String::from_utf8_lossy(&parent.stdout).trim().to_owned();
+                let command = Command::new("/bin/ps")
+                    .args(["-o", "command=", "-p", &parent])
+                    .output()
+                    .unwrap();
+                String::from_utf8_lossy(&command.stdout).contains(GUARD_NAME)
+            })
+            .collect();
+        if let Some(pid) = found.first() {
+            break Forward(*pid);
+        }
+        assert!(Instant::now() < deadline, "the forward did not start");
+        thread::sleep(Duration::from_millis(20));
+    };
+    let stopping = thread::spawn(move || tunnel.shutdown());
+    let mut orphaned = false;
+    while alive(forward.0) {
+        let parent = Command::new("/bin/ps")
+            .args(["-o", "ppid=", "-p", &forward.0.to_string()])
+            .output()
+            .unwrap();
+        orphaned |= String::from_utf8_lossy(&parent.stdout).trim() == "1";
+        thread::sleep(Duration::from_millis(10));
+    }
+    stopping.join().unwrap().unwrap();
+    assert!(!orphaned, "the forward was orphaned before it ended");
+}

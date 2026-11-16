@@ -167,6 +167,10 @@ impl RemoteTransport {
     pub fn retire(&self) {
         self.tunnel.retire();
     }
+    /// Whether its forward still runs (advisory, as `Tunnel::check`).
+    pub(crate) fn healthy(&self) -> bool {
+        self.tunnel.check().is_ok()
+    }
     pub fn capabilities(&self, cancelled: &AtomicBool) -> Result<Vec<u8>, TransportError> {
         if cancelled.load(Ordering::Acquire) {
             return Err(TransportError::Cancelled);
