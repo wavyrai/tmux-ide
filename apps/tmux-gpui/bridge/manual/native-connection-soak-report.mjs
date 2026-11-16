@@ -11,7 +11,9 @@ const LAYOUT = "Updating the terminal layout…";
  * A disconnect belongs to the fault whose tag the app read when it began
  * ("name#n"), or to "idle" when none was being injected. A pane change the
  * stream followed in place (capability 119) is no disconnect: the window
- * stayed up and only said that its layout was being updated.
+ * stayed up and only said that its layout was being updated. It is counted
+ * from the app's `panes` events (the pane set changed on the same stream),
+ * which an inactive window sends too, though it never shows that status.
  */
 export function summarise({ events, injected, inactive, seconds, exit }) {
   const name = (tag) => (tag ?? "").split("#")[0] || "idle";
@@ -43,14 +45,18 @@ export function summarise({ events, injected, inactive, seconds, exit }) {
     if (event.event === "down") {
       entry.disconnects += 1;
       if (event.frozen) entry.frozen += 1;
+    } else if (event.event === "panes") {
+      // The open stream's pane set changed with no reconnect: followed in
+      // place, in an active or an inactive window.
+      entry.inPlace += 1;
     } else if (
       event.event === "up" &&
       (event.manual ?? []).length === 0 &&
       (event.trail ?? []).length > 0 &&
       event.trail.every((status) => status === LAYOUT)
     ) {
+      // An active window said it was updating its layout: no disconnect.
       entry.disconnects -= 1;
-      entry.inPlace += 1;
       entry.inPlaceMs.push(event.ms);
     } else if (event.event === "up") {
       // A recovery that needed the user is counted as stuck, not as recovered.
@@ -113,7 +119,7 @@ export function table(report) {
   const rule = "|---|---|---|---|---|---|---|---|---|---|---|";
   const lines = report.faults.map(
     (f) =>
-      `| ${f.fault} | ${f.injected} | ${f.disconnects} | ${f.recovered} | ${f.p50 ?? "-"} | ${f.p95 ?? "-"} | ${f.max ?? "-"} | ${f.stuck}${f.needs.length ? ` (${f.needs.join(", ")})` : ""} | ${f.ended}${f.unexpectedEnds ? ` (${f.unexpectedEnds} unexpected)` : ""} | ${f.silentKeyLoss} | ${f.inPlace}${f.inPlace ? ` (${f.inPlaceMax} ms)` : ""} |`,
+      `| ${f.fault} | ${f.injected} | ${f.disconnects} | ${f.recovered} | ${f.p50 ?? "-"} | ${f.p95 ?? "-"} | ${f.max ?? "-"} | ${f.stuck}${f.needs.length ? ` (${f.needs.join(", ")})` : ""} | ${f.ended}${f.unexpectedEnds ? ` (${f.unexpectedEnds} unexpected)` : ""} | ${f.silentKeyLoss} | ${f.inPlace}${f.inPlace && f.inPlaceMax !== null ? ` (${f.inPlaceMax} ms)` : ""} |`,
   );
   return [
     `window: ${report.inactive ? "inactive" : "active"}; faults for ${report.seconds} s`,

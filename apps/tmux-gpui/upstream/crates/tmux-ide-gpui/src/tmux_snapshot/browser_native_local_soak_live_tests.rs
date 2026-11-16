@@ -136,6 +136,10 @@ fn connection_soak() {
     let mut next_beat = 1u64;
     let mut beat_due = Instant::now();
     let mut window_active = true;
+    // The open stream's pane set, to see a change it followed in place. Counted
+    // from the panes, not the status line: an inactive window never says
+    // "Updating the terminal layout…" (PM, 17 Nov).
+    let mut baseline: Option<(u64, Vec<String>)> = None;
     let started = Instant::now();
     while signal("stop").is_none() {
         let Some(state) = next(&bridge).or_else(|| {
@@ -176,6 +180,25 @@ fn connection_soak() {
             });
             opened = true;
             continue;
+        }
+        let panes: Vec<String> = state.panes.iter().map(|p| p.id.clone()).collect();
+        if !opened
+            || state.request != request
+            || state.reconnect_attempt.is_some()
+            || state.retained_preview
+        {
+            // Another stream, or one being replaced: no change was followed.
+            baseline = None;
+        } else if state.frame.is_some() {
+            if let Some((_, before)) = baseline
+                .as_ref()
+                .filter(|(r, b)| *r == request && *b != panes)
+            {
+                let fault = signal("fault").unwrap_or_default().trim().to_owned();
+                emit(serde_json::json!({"event": "panes", "fault": fault,
+                    "from": before.len(), "to": panes.len(), "inactive": !window_active}));
+            }
+            baseline = Some((request, panes));
         }
         let attached = opened
             && state.request == request
