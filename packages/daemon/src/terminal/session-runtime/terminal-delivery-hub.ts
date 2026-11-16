@@ -2584,12 +2584,13 @@ function semanticPayload(
   // append-only history is proved here; trim/reflow and changed dimensions
   // retain the full seed boundary. Equality includes wrapped and all cells.
   const snapshot = target.state.snapshot;
+  const trim = baseline ? historyTrim(baseline.history, snapshot.history) : 0;
   if (
     baseline &&
     baselineIncarnation === update.incarnation &&
     baseline.cols === snapshot.cols &&
     baseline.rows === snapshot.rows &&
-    baseline.history.length <= snapshot.history.length
+    baseline.history.length - trim <= snapshot.history.length
   ) {
     // Identity reuse is cheap, but detached equal histories must not turn a
     // cooperative seed into an unbounded synchronous cell comparison.
@@ -2604,8 +2605,8 @@ function semanticPayload(
         ? terminalReplicaRowsEqual(left, right)
         : null;
     };
-    for (let index = 0; index < baseline.history.length; index++)
-      if (equal(baseline.history[index]!, snapshot.history[index]!) !== true)
+    for (let index = trim; index < baseline.history.length; index++)
+      if (equal(baseline.history[index]!, snapshot.history[index - trim]!) !== true)
         return semanticSeed(target);
     const rows: { index: number; row: TerminalReplicaSnapshot["grid"][number] }[] = [];
     for (let index = 0; index < snapshot.grid.length; index++) {
@@ -2613,19 +2614,20 @@ function semanticPayload(
       if (same === null) return semanticSeed(target);
       if (!same) rows.push({ index, row: snapshot.grid[index]! });
     }
-    const appendedRows = snapshot.history.length - baseline.history.length;
+    const retained = baseline.history.length - trim;
+    const appendedRows = snapshot.history.length - retained;
     // Compact patches serialize synchronously. Do not move a large appended
     // suffix or repaint across the seed-only cooperative encoding boundary.
     if ((rows.length + appendedRows) * snapshot.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS)
       return semanticSeed(target);
-    const append = snapshot.history.slice(baseline.history.length);
+    const append = snapshot.history.slice(retained);
     return {
       frame: "patch",
       baseRevision: baselineRevision,
       revision: update.revision,
       patch: {
         rows,
-        ...(append.length ? { historyDelta: { trim: 0, append } } : {}),
+        ...(append.length || trim ? { historyDelta: { trim, append } } : {}),
         cursor: snapshot.cursor,
         modes: snapshot.modes,
         placements: snapshot.placements,
@@ -2634,6 +2636,36 @@ function semanticPayload(
     };
   }
   return semanticSeed(target);
+}
+
+/**
+ * How many of the baseline's oldest history rows the target dropped, proved by
+ * row identity only: the replica keeps each surviving row object when tmux
+ * trims at its history-limit. Zero when nothing was trimmed or no shift is
+ * proved; the caller still checks every retained row exactly.
+ */
+function historyTrim(
+  baseline: TerminalReplicaSnapshot["history"],
+  target: TerminalReplicaSnapshot["history"],
+): number {
+  const first = target[0];
+  if (first === undefined || baseline[0] === first) return 0;
+  // A shared row object (a blank row) can recur; prove at most a few shifts.
+  let candidates = 0;
+  for (let trim = 1; trim < baseline.length; trim++) {
+    if (baseline[trim] !== first) continue;
+    if (++candidates > 4) return 0;
+    const retained = baseline.length - trim;
+    if (retained > target.length) continue;
+    let same = true;
+    for (let index = 0; index < retained; index++)
+      if (baseline[trim + index] !== target[index]) {
+        same = false;
+        break;
+      }
+    if (same) return trim;
+  }
+  return 0;
 }
 
 /** Account represented cells without traversing/serializing the snapshot. */
