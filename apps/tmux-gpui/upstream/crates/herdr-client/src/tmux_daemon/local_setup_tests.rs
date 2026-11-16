@@ -219,3 +219,46 @@ fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
         );
     }
 }
+/// A command may use what is left of the run's deadline: a command that takes
+/// 15.5 s (a clock that jumps once it started) with 20 s on the run is not cut
+/// off, as it was by a 15 s limit of its own. One that takes 20.5 s is stopped
+/// at the run's deadline. (The welcome reads a run that stopped before 19.5 s
+/// as "stopped before it answered", so a 15 s limit told a timed-out run's
+/// user the wrong thing.)
+#[test]
+fn a_command_may_wait_until_the_runs_own_deadline() {
+    let fixture = Fixture::new();
+    let installation = fixture.installation();
+    fs::write(
+        &installation.node,
+        b"#!/bin/sh\nsleep 0.2; printf 'tmux-ide v2.9.12\\n'\n",
+    )
+    .unwrap();
+    let installation = fixture.installation();
+    let started = Instant::now();
+    let run_deadline = started + Duration::from_secs(20);
+    // The command starts on the real clock, and every later look finds `by` ms gone.
+    let late = |by: u64| {
+        let started = std::cell::Cell::new(false);
+        move || Instant::now() + Duration::from_millis(if started.replace(true) { by } else { 0 })
+    };
+    let output = process::run(
+        &installation,
+        &["--version"],
+        &AtomicBool::new(false),
+        run_deadline,
+        &late(15_500),
+    )
+    .unwrap();
+    assert_eq!(output, b"tmux-ide v2.9.12\n");
+    assert!(matches!(
+        process::run(
+            &installation,
+            &["--version"],
+            &AtomicBool::new(false),
+            run_deadline,
+            &late(20_500),
+        ),
+        Err(LocalSetupError::Stopped)
+    ));
+}

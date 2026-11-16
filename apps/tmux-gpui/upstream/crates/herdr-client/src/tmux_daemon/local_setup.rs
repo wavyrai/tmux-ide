@@ -74,7 +74,7 @@ impl LocalSetupInstallation {
     /// daemon may survive cancellation; cancellation stops only this CLI waiter.
     pub fn run(&self, cancel: &AtomicBool) -> Result<(), LocalSetupError> {
         self.execute(cancel, |args, deadline| {
-            process::run(self, args, cancel, deadline)
+            process::run(self, args, cancel, deadline, &Instant::now)
         })
     }
     fn execute(
@@ -128,7 +128,10 @@ impl LocalSetupInstallation {
     }
 }
 fn check(cancel: &AtomicBool, deadline: Instant) -> Result<(), LocalSetupError> {
-    if cancel.load(Ordering::Acquire) || Instant::now() >= deadline {
+    check_at(cancel, deadline, Instant::now())
+}
+fn check_at(cancel: &AtomicBool, deadline: Instant, now: Instant) -> Result<(), LocalSetupError> {
+    if cancel.load(Ordering::Acquire) || now >= deadline {
         Err(LocalSetupError::Stopped)
     } else {
         Ok(())
