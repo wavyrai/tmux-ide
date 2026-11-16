@@ -8,7 +8,7 @@ use super::{
 use std::{
     io::{self, Read},
     net::TcpListener,
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Condvar, Mutex,
         mpsc::{self, RecvTimeoutError, SyncSender},
@@ -39,12 +39,59 @@ impl From<io::Error> for TunnelError {
         Self::Io(Arc::new(error))
     }
 }
-struct OwnedChild(Child);
+/// The guard's lifeline: the app holds the only writer of its stdin.
+struct OwnedChild(Child, Option<ChildStdin>);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
+        // The guard ends the forward itself once the lifeline closes, also when
+        // the guard shell is killed below.
+        drop(self.1.take());
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+/// What the forward runs under (#723 follow-up, 16 Nov: three `ssh -N -L`
+/// forwards outlived the app by two weeks). A shell starts the forward and a
+/// watcher that blocks on the shell's stdin, a pipe whose only writer is the
+/// app. When the app quits, crashes or is killed, the kernel closes that
+/// writer, the watcher reads end of file and ends the forward (TERM, then KILL
+/// a second later). TERM to the shell itself is passed on to the forward. No
+/// process is ever found by name: only the forward this shell started is
+/// signalled. `$0` names the shell in `ps` as the app's tunnel.
+const GUARD: &str = r#"exec 3<&0
+"$@" </dev/null &
+tunnel=$!
+{ read -r _ <&3; kill -TERM "$tunnel" 2>/dev/null; sleep 1; kill -KILL "$tunnel" 2>/dev/null; } &
+guard=$!
+exec 3<&-
+trap 'kill -TERM "$tunnel" 2>/dev/null' TERM HUP INT
+wait "$tunnel"
+status=$?
+while kill -0 "$tunnel" 2>/dev/null; do
+  wait "$tunnel"
+  status=$?
+done
+kill "$guard" 2>/dev/null
+exit "$status""#;
+/// The marker `ps` shows for a forward's guard shell.
+pub(super) const GUARD_NAME: &str = "tmux-ide-ssh-tunnel";
+/// `command` under the guard: it ends when the app's end of stdin closes.
+pub(super) fn guarded(command: &Command) -> Command {
+    let mut guarded = Command::new("/bin/sh");
+    guarded
+        .args(["-c", GUARD, GUARD_NAME])
+        .arg(command.get_program())
+        .args(command.get_args());
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => guarded.env(key, value),
+            None => guarded.env_remove(key),
+        };
+    }
+    if let Some(dir) = command.get_current_dir() {
+        guarded.current_dir(dir);
+    }
+    guarded
 }
 /// This guard may be dropped on the UI thread. It is not a connection identity
 /// proof: all forwarded HTTP/WebSocket connections still require their own proof.
@@ -97,14 +144,14 @@ impl Tunnel {
         }
         Ok(())
     }
-    pub(super) fn spawn_command(mut command: Command, port: u16) -> Result<Self, TunnelError> {
-        let mut child = OwnedChild(
-            command
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()?,
-        );
+    pub(super) fn spawn_command(command: Command, port: u16) -> Result<Self, TunnelError> {
+        let mut spawned = guarded(&command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let lifeline = spawned.stdin.take();
+        let mut child = OwnedChild(spawned, lifeline);
         let mut stderr = child
             .0
             .stderr
