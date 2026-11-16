@@ -28,13 +28,20 @@ fn drain(reader: &mut impl Read, output: &mut Vec<u8>) -> Result<bool, LocalSetu
         }
     }
 }
+/// When one command of a setup run must have answered: when the run must.
+/// The welcome reads a run that stopped at its 20 s deadline as a time-out
+/// and anything shorter as "stopped before it answered"; a 15 s limit per
+/// command made a hung `update` the second kind.
+pub(super) fn command_deadline(run: Instant, _now: Instant) -> Instant {
+    run
+}
 pub(super) fn run(
     installation: &LocalSetupInstallation,
     args: &[&str],
     cancel: &AtomicBool,
     deadline: Instant,
 ) -> Result<Vec<u8>, LocalSetupError> {
-    let deadline = deadline.min(Instant::now() + Duration::from_secs(15));
+    let deadline = command_deadline(deadline, Instant::now());
     check(cancel, deadline)?;
     let mut child = Owned(
         Command::new(&installation.node)

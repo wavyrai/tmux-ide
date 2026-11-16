@@ -669,7 +669,10 @@ mod tests {
     fn the_docs_name_the_opaque_themes_as_the_picker_does() {
         let docs = include_str!("../../../../../../../docs/content/docs/native-alpha.mdx");
         let presets: Vec<Preset> =
-            serde_json::from_str(include_str!("appearance/catalog.json")).unwrap();
+            match serde_json::from_str(include_str!("appearance/catalog.json")) {
+                Ok(presets) => presets,
+                Err(error) => panic!("catalog.json: {error}"),
+            };
         let mut opaque: Vec<String> = Vec::new();
         for (preset, themes) in presets.iter().zip(catalog().chunks(2)) {
             let shown: Vec<&Theme> = themes
@@ -681,11 +684,13 @@ mod tests {
                 opaque.push(preset.name.clone());
             }
         }
-        let listed = docs
+        let Some(listed) = docs
             .split("density chosen per theme; ")
             .nth(1)
             .and_then(|rest| rest.split(" stay opaque").next())
-            .expect("the notes list the opaque themes");
+        else {
+            panic!("the notes list the opaque themes");
+        };
         let mut listed: Vec<String> = listed
             .replace('\n', " ")
             .split(", ")
@@ -699,7 +704,10 @@ mod tests {
         let system = &presets[0];
         assert_eq!(system.mode, "system");
         for name in [system.name.as_str(), "Linen", "Linen Dark"] {
-            assert!(presets.iter().any(|p| p.name == name), "{name} is not a preset");
+            assert!(
+                presets.iter().any(|p| p.name == name),
+                "{name} is not a preset"
+            );
             assert!(docs.contains(name), "the notes do not name {name}");
         }
     }

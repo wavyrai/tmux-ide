@@ -219,3 +219,16 @@ fn setup_accepts_2_9_6_and_later_patches_but_not_the_next_minor() {
         );
     }
 }
+/// A command may use what is left of the run's 20 s. A limit of its own ended a
+/// hung `update` at about 15 s, and the welcome, which measures the run, then
+/// said "It stopped before it answered" for a run that had timed out.
+#[test]
+fn a_command_may_wait_until_the_runs_own_deadline() {
+    let now = Instant::now();
+    let run = now + Duration::from_secs(20);
+    assert_eq!(process::command_deadline(run, now), run);
+    assert_eq!(
+        process::command_deadline(run, now + Duration::from_millis(300)),
+        run
+    );
+}
