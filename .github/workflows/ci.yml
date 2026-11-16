@@ -73,6 +73,21 @@ jobs:
       - name: Format check
         run: pnpm run format:check
 
+      # A pull request that commits bin/cli.js (a release prep regenerates it)
+      # must commit the build of its own sources. Other pull requests leave the
+      # committed copy alone; the release workflow checks the tagged commit.
+      - name: Committed bin/cli.js is the build of this commit
+        if: github.event_name == 'pull_request' && matrix.node == 22
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename' | grep -Fxq bin/cli.js; then
+            pnpm run check:cli-bundle
+          else
+            echo "bin/cli.js is not changed by this pull request."
+          fi
+
       - name: Build
         run: pnpm build
 
