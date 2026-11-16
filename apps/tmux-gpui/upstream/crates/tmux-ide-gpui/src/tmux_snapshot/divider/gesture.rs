@@ -330,7 +330,7 @@ impl SnapshotView {
             self.browser_commands = None;
             self.browser_state.input_ready = false;
             // The command channel is dropped with it: only a reopen reconnects.
-            self.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
+            self.browser_state.status = "Connection lost. Reopen Tmux IDE to reconnect.".into();
             cx.notify();
         }
         if self.divider.as_ref().is_some_and(|d| d.gesture.is_some()) && !self.resize_gesture.busy()

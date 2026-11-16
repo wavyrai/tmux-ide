@@ -582,7 +582,7 @@ fn titlebar_status_says_inactive_in_background_and_connecting_until_granted() {
             false,
             false,
             1,
-            "Window inactive — activate tmux-ide to type",
+            "Window inactive — activate Tmux IDE to type",
         ),
         (false, true, 2, "Connecting…"),
         (true, true, 3, "Connected"),
@@ -590,7 +590,7 @@ fn titlebar_status_says_inactive_in_background_and_connecting_until_granted() {
             false,
             false,
             4,
-            "Window inactive — activate tmux-ide to type",
+            "Window inactive — activate Tmux IDE to type",
         ),
     ] {
         assert!(
@@ -610,7 +610,7 @@ fn foreground_change_alone_refreshes_the_cached_status() {
     assert!(adapter.apply(&mut s, &shown, false, true, 4, 0).unwrap());
     assert_eq!(s.status, "Connecting…");
     assert!(adapter.apply(&mut s, &shown, false, false, 4, 1).unwrap());
-    assert_eq!(s.status, "Window inactive — activate tmux-ide to type");
+    assert_eq!(s.status, "Window inactive — activate Tmux IDE to type");
 }
 
 /// #649: while the frame and the pane layout disagree (a resize or a split

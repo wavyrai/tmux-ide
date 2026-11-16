@@ -517,7 +517,7 @@ impl NativePresentation {
         } else if !coherent {
             "Updating the terminal layout…"
         } else if !foreground {
-            "Window inactive — activate tmux-ide to type"
+            "Window inactive — activate Tmux IDE to type"
         } else if !input_authority {
             "Connecting…"
         } else {

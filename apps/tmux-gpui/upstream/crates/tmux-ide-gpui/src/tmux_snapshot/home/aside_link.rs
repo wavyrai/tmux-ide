@@ -23,6 +23,9 @@ pub(super) struct AsideLink {
     /// Home's palette: the muted and text inks, and the ring.
     bezel: bezel_theme::Theme,
     activate: Option<Rc<Activation>>,
+    /// Home's own handle for this action, so Home's Tab order can name it
+    /// (#803); without one the element keeps a handle of its own.
+    stop: Option<FocusHandle>,
 }
 
 impl AsideLink {
@@ -43,7 +46,14 @@ impl AsideLink {
             danger: false,
             bezel: bezel.clone(),
             activate: None,
+            stop: None,
         }
+    }
+
+    /// The focus handle Home keeps for this action (see `stop`).
+    pub(super) fn stop(mut self, stop: Option<FocusHandle>) -> Self {
+        self.stop = stop;
+        self
     }
 
     /// Marks the action destructive (see `danger`).
@@ -64,8 +74,13 @@ impl AsideLink {
 
 impl RenderOnce for AsideLink {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let focus = window.use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle());
-        let focus = focus.read(cx).clone();
+        let focus = match self.stop.clone() {
+            Some(stop) => stop,
+            None => window
+                .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone(),
+        };
         let bezel = self.bezel;
         let enabled = self.enabled && self.activate.is_some();
         // A destructive action turns to the danger ink when it is the one
@@ -80,6 +95,8 @@ impl RenderOnce for AsideLink {
         let probe = self.selector.clone();
         let focused = focus.is_focused(window);
         let click = self.activate.clone();
+        let press = self.activate.clone();
+        let pressed = focus.clone();
         let activate = self.activate;
         div()
             .id(self.id)
@@ -127,10 +144,123 @@ impl RenderOnce for AsideLink {
                     click(&(), window, cx);
                 }
             })
+            // Return and Space press the focused action and go no further:
+            // the same keys act on Home's table when it has the keyboard.
+            .on_key_down(move |event, window, cx| {
+                let key = &event.keystroke;
+                let m = &key.modifiers;
+                if !pressed.is_focused(window)
+                    || m.platform
+                    || m.control
+                    || m.alt
+                    || m.shift
+                    || !matches!(key.key.as_str(), "enter" | "space")
+                {
+                    return;
+                }
+                cx.stop_propagation();
+                window.prevent_default();
+                if enabled
+                    && !event.is_held
+                    && let Some(press) = &press
+                {
+                    press(&(), window, cx);
+                }
+            })
             .on_action(move |_: &bezel_ui::focus::Activate, window, cx| {
                 if enabled && let Some(activate) = &activate {
                     activate(&(), window, cx);
                 }
             })
+    }
+}
+
+/// One machine action, by what it acts on, never by where it is drawn: a
+/// list that shifts must not move a focused Disconnect onto another machine
+/// (review of #803). `server: None` is the machine's Disconnect.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(in crate::tmux_snapshot) struct Stop {
+    pub machine: String,
+    pub server: Option<String>,
+}
+impl Stop {
+    pub fn disconnect(machine: &str) -> Self {
+        Self {
+            machine: machine.into(),
+            server: None,
+        }
+    }
+    pub fn server(machine: &str, server: &str) -> Self {
+        Self {
+            machine: machine.into(),
+            server: Some(server.into()),
+        }
+    }
+}
+/// Home's keyboard stops for the machines' text actions (#803): one handle
+/// per action, kept across frames, and which of them the last table paint
+/// drew enabled, in the order it drew them. In a machine, each "Use for new
+/// sessions" comes before its Disconnect, so Disconnect is never a machine's
+/// first stop.
+#[derive(Default)]
+pub(in crate::tmux_snapshot) struct Stops {
+    handles: std::collections::BTreeMap<Stop, FocusHandle>,
+    shown: Vec<Stop>,
+}
+impl Stops {
+    /// A new table paint: nothing is shown until it draws it.
+    pub(super) fn begin(&mut self) {
+        self.shown.clear();
+    }
+    /// The handle of `stop`; a keyboard stop if `enabled`.
+    pub(super) fn stop(&mut self, stop: Stop, enabled: bool, cx: &mut App) -> FocusHandle {
+        let handle = self
+            .handles
+            .entry(stop.clone())
+            .or_insert_with(|| cx.focus_handle())
+            .clone();
+        if enabled && !self.shown.contains(&stop) {
+            self.shown.push(stop);
+        }
+        handle
+    }
+    /// The enabled actions on screen, in keyboard order: machine by machine as
+    /// drawn, and in a machine its servers' actions before its Disconnect.
+    pub(super) fn order(&self) -> Vec<FocusHandle> {
+        let machine_rank = |stop: &Stop| {
+            self.shown
+                .iter()
+                .position(|s| s.machine == stop.machine)
+                .unwrap_or(usize::MAX)
+        };
+        let mut order: Vec<&Stop> = self.shown.iter().collect();
+        order.sort_by_key(|stop| (machine_rank(stop), stop.server.is_none()));
+        order
+            .into_iter()
+            .filter_map(|stop| self.handles.get(stop).cloned())
+            .collect()
+    }
+    pub(super) fn focused(&self, window: &Window) -> bool {
+        self.handles.values().any(|stop| stop.is_focused(window))
+    }
+    /// Whether the keyboard is on an action the last table paint did not draw
+    /// (an empty-state table draws no machine at all).
+    pub(super) fn focused_unshown(&self, window: &Window) -> bool {
+        self.handles
+            .iter()
+            .any(|(stop, handle)| handle.is_focused(window) && !self.shown.contains(stop))
+    }
+    /// Forgets the actions `exists` no longer has; true if one of them held
+    /// the keyboard, which then is on nothing that is on screen.
+    pub(super) fn retain(&mut self, window: &Window, exists: impl Fn(&Stop) -> bool) -> bool {
+        let mut stranded = false;
+        self.handles.retain(|stop, handle| {
+            let keep = exists(stop);
+            stranded |= !keep && handle.is_focused(window);
+            keep
+        });
+        let handles = &self.handles;
+        self.shown.retain(|stop| handles.contains_key(stop));
+        stranded
     }
 }

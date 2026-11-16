@@ -225,7 +225,7 @@ impl SnapshotView {
         } else if self.attention.pending_close.is_some() {
             Some("Couldn't open attention. Try again.")
         } else if self.attention.next >= 9_007_199_254_740_991 {
-            Some("Couldn't open attention. Reopen tmux-ide to try again.")
+            Some("Couldn't open attention. Reopen Tmux IDE to try again.")
         } else {
             self.attention.next += 1;
             let scope = self.attention.next;

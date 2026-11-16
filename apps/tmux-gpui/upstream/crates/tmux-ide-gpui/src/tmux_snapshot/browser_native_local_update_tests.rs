@@ -107,7 +107,7 @@ fn a_different_daemon_after_identity_retries_is_refused_not_adopted() {
     assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(
         last_catalog(&events).status,
-        "Previous session identity changed or disappeared — select a session"
+        "That session is gone or was replaced. Choose a session."
     );
 }
 
@@ -429,7 +429,7 @@ fn selects_a_session(local: &Local) {
     assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(
         local.state.status,
-        "Previous session identity changed or disappeared — select a session"
+        "That session is gone or was replaced. Choose a session."
     );
 }
 

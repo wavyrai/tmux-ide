@@ -46,7 +46,7 @@ test("resume smoke waits for the current presence acknowledgement before sending
           presenceRevision: phase,
           inputReady: false,
           snapshot: {},
-          status: "Window inactive — activate tmux-ide to type",
+          status: "Window inactive — activate Tmux IDE to type",
         });
       } else if (command.input?.data?.cols === 95) {
         assert.equal(events.at(-1).presenceRevision, 2);

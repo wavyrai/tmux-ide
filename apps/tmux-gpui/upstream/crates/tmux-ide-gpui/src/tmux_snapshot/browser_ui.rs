@@ -408,6 +408,7 @@ impl SnapshotView {
     ) -> AnyElement {
         self.observe_pointer();
         self.prepare_home_filter(cx);
+        self.reconcile_home_asides(window, cx);
         self.reconcile_sidebar_keyboard(window, cx);
         self.restore_tab_focus(window, cx);
         self.restore_tab_selection();

@@ -246,7 +246,7 @@ fn an_unknown_daemon_listing_the_server_online_under_another_generation_is_not_t
     assert!(local.recovery.is_none());
     assert_eq!(
         local.state.status,
-        "Previous session identity changed or disappeared — select a session"
+        "That session is gone or was replaced. Choose a session."
     );
 }
 

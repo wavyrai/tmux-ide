@@ -223,7 +223,16 @@ fn an_unavailable_list_shows_one_strip_not_two(cx: &mut TestAppContext) {
     // A lost connection is not this case: its own red strip stays.
     draw(&view, cx, |v| {
         v.browser_commands = None;
-        v.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
+        v.browser_state.status = "Connection lost. Reopen Tmux IDE to reconnect.".into();
     });
-    assert!(strips(cx).contains(&"home-guidance-error"));
+    // ... and is the only one: the status line would repeat its sentence.
+    assert_eq!(strips(cx), ["home-guidance-error"]);
+    // With the machines' table still on screen there is no red strip, so
+    // the status line is what says it.
+    draw(&view, cx, |v| {
+        v.browser_state.fleet = Some(
+            serde_json::from_value(serde_json::json!({"groups":[],"omittedGroups":0})).unwrap(),
+        );
+    });
+    assert_eq!(strips(cx), ["home-status-warning"]);
 }

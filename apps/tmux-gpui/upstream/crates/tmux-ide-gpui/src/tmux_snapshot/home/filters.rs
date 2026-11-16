@@ -6,6 +6,8 @@ use super::*;
 
 pub(in crate::tmux_snapshot) struct Controls {
     pub(super) actions: [FocusHandle; 5],
+    /// The machines' text actions, as keyboard stops after the action row (#803).
+    pub(super) asides: std::cell::RefCell<aside_link::Stops>,
     pub(super) recovery_queued: Option<(u64, u64)>,
     pub(super) recovery_error: bool,
     pub(super) preference_queued: Option<(u64, u64, u64)>,
@@ -32,6 +34,7 @@ impl SnapshotView {
         if self.home_filter.is_none() {
             self.home_filter = Some(Controls {
                 actions: std::array::from_fn(|_| cx.focus_handle()),
+                asides: Default::default(),
                 recovery_queued: None,
                 recovery_error: false,
                 preference_queued: None,
@@ -57,7 +60,10 @@ impl SnapshotView {
             return true;
         }
         // Enter/Space belong to GPUI's focused-button key-up activation.
-        if self.home_action_index(window).is_some() || self.whats_new_focused(window) {
+        if self.home_action_index(window).is_some()
+            || self.whats_new_focused(window)
+            || self.home_aside_focused(window)
+        {
             return false;
         }
         if self.home_fleet_nav_key(event, window, cx) {

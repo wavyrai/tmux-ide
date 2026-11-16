@@ -192,7 +192,7 @@ impl SnapshotView {
             self.browser_state.input_ready = false;
             self.browser_request = request;
             self.browser_commands = None;
-            self.browser_state.status = "Connection lost. Reopen tmux-ide to reconnect.".into();
+            self.browser_state.status = "Connection lost. Reopen Tmux IDE to reconnect.".into();
         }
         cx.notify();
     }

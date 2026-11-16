@@ -505,7 +505,14 @@ impl SnapshotView {
         let list_failure_said = status_shown
             && connected
             && self.browser_state.home_phase == browser::HomePhase::Unavailable;
-        if status_shown {
+        // #693: with the connection lost and no table to show, the red strip
+        // below says so; the status line would say the same sentence above it.
+        let lost_said = !connected
+            && !waiting
+            && act.is_none()
+            && self.browser_state.fleet.is_none()
+            && notice.is_none();
+        if status_shown && !lost_said {
             let status = match notice.filter(|_| act.is_some()) {
                 Some(notice) => crate::notifications::safe_text(notice, 480),
                 None => status_message(&self.browser_state, connected),

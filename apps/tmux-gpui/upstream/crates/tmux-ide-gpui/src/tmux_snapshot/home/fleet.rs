@@ -356,6 +356,13 @@ impl SnapshotView {
                     true,
                     &bezel,
                 )
+                .stop(self.home_filter.as_ref().map(|controls| {
+                    controls.asides.borrow_mut().stop(
+                        aside_link::Stop::disconnect(&group.id),
+                        true,
+                        cx,
+                    )
+                }))
                 .danger()
                 .on_press(cx.listener(move |view, _: &(), window, cx| {
                     cx.stop_propagation();
@@ -508,7 +515,7 @@ impl SnapshotView {
     }
 
     /// Whether new sessions go to `server`.
-    fn fleet_server_is_default(
+    pub(super) fn fleet_server_is_default(
         &self,
         group: &browser::fleet::Group,
         server: &browser::fleet::Server,
@@ -570,6 +577,13 @@ impl SnapshotView {
             enabled,
             &bezel,
         )
+        .stop(self.home_filter.as_ref().map(|controls| {
+            controls.asides.borrow_mut().stop(
+                aside_link::Stop::server(&group.id, &server.id),
+                enabled,
+                cx,
+            )
+        }))
         .on_press(cx.listener(move |view, _: &(), window, cx| {
             cx.stop_propagation();
             view.open_fleet_server(request, &token, window, cx);
@@ -611,6 +625,19 @@ impl SnapshotView {
         let fleet = self.browser_state.fleet.as_ref()?;
         if let Some(controls) = &self.home_filter {
             controls.rows.observe(window);
+            controls.asides.borrow_mut().begin();
+            // Once this paint is built: the keyboard must not stay on an action
+            // it did not draw, whatever the reason (review of #803).
+            cx.defer_in(window, |view, window, cx| {
+                if view
+                    .home_filter
+                    .as_ref()
+                    .is_some_and(|controls| controls.asides.borrow().focused_unshown(window))
+                {
+                    view.terminal_focus.focus(window, cx);
+                    cx.notify();
+                }
+            });
         }
         let bezel = self.home_palette();
         let view = self.home_fleet_view();
@@ -619,16 +646,7 @@ impl SnapshotView {
             self.home_filter.as_ref().is_some_and(|c| c.waiting_only),
         );
         let only = waiting.as_ref();
-        // A machine shows when its view does, and, under the pill's filter,
-        // when one of its sessions waits.
-        let shows_group = |group: &browser::fleet::Group| {
-            view.shows_group(group)
-                && (only.is_none()
-                    || group
-                        .sessions
-                        .iter()
-                        .any(|s| fleet_nav::shows(&view, only, group, s)))
-        };
+        let shows_group = |group: &browser::fleet::Group| shows_machine(&view, only, group);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
@@ -834,4 +852,21 @@ impl SnapshotView {
         }
         Some(body.into_any_element())
     }
+}
+
+/// Whether the table draws machine `group`: when its view does, and, under the
+/// pill's filter (`only`), when one of its sessions waits. Home's keyboard stops
+/// use the same rule, so a focused action on a machine the table stopped drawing
+/// gives the keyboard back (review of #803).
+pub(super) fn shows_machine(
+    view: &View,
+    only: Option<&std::collections::HashSet<String>>,
+    group: &browser::fleet::Group,
+) -> bool {
+    view.shows_group(group)
+        && (only.is_none()
+            || group
+                .sessions
+                .iter()
+                .any(|s| fleet_nav::shows(view, only, group, s)))
 }
