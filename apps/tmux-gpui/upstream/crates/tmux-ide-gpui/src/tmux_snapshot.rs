@@ -38,6 +38,7 @@ mod geometry;
 mod glass_ink;
 mod hit_regions;
 mod home;
+mod images_lost_notice;
 mod ink;
 mod input_gate;
 mod kbd;
@@ -77,6 +78,7 @@ mod tests;
 #[cfg(feature = "visual-capture")]
 pub(crate) mod visual_capture;
 mod welcome;
+mod window_size_notice;
 mod workspace_chrome;
 mod workspace_fleet_agents;
 
@@ -388,6 +390,8 @@ fn show_owned(
                         resize_gesture: Default::default(),
                         last_resize: None,
                         fit_settle: Default::default(),
+                        window_size: Default::default(),
+                        images_lost: Default::default(),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -486,6 +490,8 @@ struct SnapshotView {
     resize_gesture: divider::Owner,
     last_resize: Option<(u64, u16, u16)>,
     fit_settle: geometry::FitSettle,
+    window_size: window_size_notice::Watch,
+    images_lost: images_lost_notice::Watch,
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
@@ -752,6 +758,8 @@ impl SnapshotView {
                             } else {
                                 view.fit_settle.clear();
                             }
+                            view.observe_window_size(&frame, cx.background_executor().now());
+                            view.observe_images_lost(cx.background_executor().now());
                         });
                         if let Some(preview) = &resize_preview
                             && cards.is_none()

@@ -1352,9 +1352,38 @@ export class SessionChannel {
     }
     this.input.flush();
     this.clearWindowViewports();
-    this.restoreWindowSizing(this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`);
+    const target = this.attachedIdentity?.runtimeSessionId ?? `=${this.opts.session}`;
+    this.restoreWindowSizing(target);
     this.io.send(`refresh-client -C ${cols}x${rows}${this.cellPixelSuffix()}`);
+    this.reclaimWindowSize(target);
     this.clientViewport = { cols, rows };
+  }
+
+  /**
+   * Under `window-size latest` a second tmux client on the session (a terminal
+   * the user also attached) takes the window, and nothing this control client
+   * sends makes it tmux's latest client again: input and refresh-client are not
+   * client activity. Output then prints at the other client's width and tmux
+   * re-wraps it mid-word when that width goes away (#695). A fit is the app
+   * being used (it fits on focus and on a change of its canvas), so after one,
+   * when the window is not this client's size, switch to the same session:
+   * that makes this client the latest one. Only here, never on a timer or a
+   * notification, so two clients never fight; whichever the user used last
+   * wins, as between two terminals. Other window-size policies are the user's.
+   */
+  private reclaimWindowSize(target: string): void {
+    if (!this.geometryParticipating) return;
+    const quoted = tmuxSingleQuote(target);
+    // Two FIFO slots whichever branch runs, as in restoreWindowSizing.
+    this.io.commandListInline(
+      `if-shell -F -t ${quoted} '#{&&:#{==:#{window-size},latest},#{||:#{!=:#{window_width},#{client_width}},#{!=:#{window_height},#{client_height}}}}' ` +
+        tmuxSingleQuote(`switch-client -t ${quoted}`) +
+        " " +
+        tmuxSingleQuote(`display-message -p -t ${quoted} ''`),
+      2,
+      1,
+      () => {},
+    );
   }
 
   private clientViewport: { cols: number; rows: number } | null = null;

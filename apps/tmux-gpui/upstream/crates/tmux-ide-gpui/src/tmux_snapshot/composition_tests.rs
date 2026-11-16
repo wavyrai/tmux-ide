@@ -62,6 +62,8 @@ fn composition_commits_once_and_rejects_retired_input(cx: &mut TestAppContext) {
             resize_gesture: Default::default(),
             last_resize: None,
             fit_settle: Default::default(),
+            window_size: Default::default(),
+            images_lost: Default::default(),
             marked: String::new(),
             marked_selection: None,
             input_geometry: None,

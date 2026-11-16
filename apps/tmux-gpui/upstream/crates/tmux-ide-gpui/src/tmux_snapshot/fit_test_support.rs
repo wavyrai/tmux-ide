@@ -146,6 +146,8 @@ pub(super) fn fixture_view(
         resize_gesture: Default::default(),
         last_resize: None,
         fit_settle: Default::default(),
+        window_size: Default::default(),
+        images_lost: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: Some((
@@ -170,4 +172,28 @@ pub(super) fn fixture_view(
             crate::terminal_painter::TerminalPainter::default(),
         )),
     }
+}
+
+/// A blank frame of `cols` x `rows`: what tmux paints once it applied a fit.
+pub(super) fn blank_frame(cols: u16, rows: u16) -> DisplayFrame {
+    use herdr_client::protocol::{CellData, FrameData};
+    Arc::new(FrameData {
+        width: cols,
+        height: rows,
+        cursor: None,
+        hyperlinks: vec![],
+        graphics: vec![],
+        cells: vec![
+            CellData {
+                symbol: " ".into(),
+                fg: 0,
+                bg: 0,
+                modifier: 0,
+                skip: false,
+                hyperlink: None,
+            };
+            usize::from(cols) * usize::from(rows)
+        ],
+    })
+    .into()
 }

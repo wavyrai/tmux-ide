@@ -95,6 +95,61 @@ fn assert_woken(
     settle(snapshot, cx);
 }
 
+/// #695: a terminal takes the window, then nothing prints. With no frame after
+/// that, the notice still falls due: the task wakes once for it, renders it,
+/// and is idle again.
+#[gpui::test]
+fn a_held_window_wakes_the_task_once_for_its_notice(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let t0 = cx.executor().now();
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.window_size.hold_for_test(t0, (160, 40));
+            // The paint that saw the frame came from a render, which nudges.
+            view.idle_tick.nudge();
+        })
+    });
+    let rendered = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = rendered.clone();
+    let _watch = cx.update(|_, cx| cx.observe(&snapshot, move |_, _| seen.set(true)));
+    // A second and a bit, in ticks, with no frame and no input.
+    let wakes = wakes_over(&snapshot, cx, 70);
+    let now = cx.executor().now();
+    assert!(rendered.get(), "nothing re-rendered for the notice");
+    assert!((1..=3).contains(&wakes), "{wakes} wakes for one notice");
+    assert_eq!(
+        cx.update(|_, cx| snapshot.read(cx).window_size.notice(now)),
+        Some("Another tmux client is sizing this window (160×40)".into())
+    );
+    // One-shot: the task is idle again while the notice stays.
+    settle(&snapshot, cx);
+}
+
+/// Group H: images a daemon restart lost, then nothing prints. The notice
+/// still falls due: one wake renders it, then the task is idle again.
+#[gpui::test]
+fn lost_images_wake_the_task_once_for_their_notice(cx: &mut TestAppContext) {
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (snapshot, _mailbox, cx) = open(cx, sender);
+    settle(&snapshot, cx);
+    let t0 = cx.executor().now();
+    cx.update(|_, cx| {
+        snapshot.update(cx, |view, _| {
+            view.images_lost.hold_for_test(t0);
+            view.idle_tick.nudge();
+        })
+    });
+    let rendered = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = rendered.clone();
+    let _watch = cx.update(|_, cx| cx.observe(&snapshot, move |_, _| seen.set(true)));
+    let wakes = wakes_over(&snapshot, cx, 70);
+    assert!(rendered.get(), "nothing re-rendered for the notice");
+    assert!((1..=3).contains(&wakes), "{wakes} wakes for one notice");
+    settle(&snapshot, cx);
+}
+
 #[gpui::test]
 fn an_idle_home_never_wakes_the_task(cx: &mut TestAppContext) {
     let (sender, _receiver) = mpsc::sync_channel(64);

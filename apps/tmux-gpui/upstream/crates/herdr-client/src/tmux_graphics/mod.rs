@@ -82,6 +82,8 @@ pub struct GraphicsUpdate {
 pub struct PanePlacements {
     pub placements: Vec<KeyedPlacement>,
     pub requests: Vec<Request>,
+    /// Placeholder cells name an image the daemon does not hold (group H).
+    pub orphaned: bool,
 }
 struct Pane {
     incarnation: Option<String>,
@@ -116,7 +118,7 @@ impl Graphics {
     pub fn new(generation: String, issued_panes: Vec<String>) -> Result<Self, Error> {
         if uuid::Uuid::parse_str(&generation).is_err()
             || issued_panes.is_empty()
-            || issued_panes.len() > 24
+            || issued_panes.len() > crate::tmux_stream::MAX_PANES
         {
             return Err(Error::Identity);
         }
@@ -447,15 +449,10 @@ impl Graphics {
             return Ok(PanePlacements {
                 placements: Vec::new(),
                 requests: Vec::new(),
+                orphaned: false,
             });
         };
-        let Some(state) = &pane.state else {
-            return Ok(PanePlacements {
-                placements: Vec::new(),
-                requests: Vec::new(),
-            });
-        };
-        let resolved = pane.resolver.resolve(snapshot, state)?;
+        let (resolved, orphaned) = pane.resolver.resolve(snapshot, pane.state.as_ref())?;
         pane.visible.clear();
         let placements = resolved
             .into_iter()
@@ -484,6 +481,7 @@ impl Graphics {
         Ok(PanePlacements {
             placements,
             requests,
+            orphaned,
         })
     }
 

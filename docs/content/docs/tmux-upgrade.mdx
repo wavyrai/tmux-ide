@@ -216,9 +216,16 @@ bring back the layout and the agent conversations.
    tmux-ide restore --dry-run
    ```
 
-   The snapshot is written only while the chrome updater runs, that is while at
-   least one session is adopted. A server started by a script or a plain `tmux`
-   has no updater, and the snapshot can be days old.
+   The background service writes the snapshot within a minute of a change, also
+   for a server started by a script or a plain `tmux`. While a session is
+   adopted, the chrome updater writes it instead. With neither running, the
+   snapshot can be days old.
+
+   Starting a new server does not replace the snapshot of the one that ended.
+   Neither writer replaces it while it names a session the new server lacks.
+   Writing resumes once `tmux-ide restore` has brought those sessions back. To
+   drop the old snapshot without restoring it, delete
+   `~/.tmux-ide/snapshot.json`; the next write replaces it.
 
 2. Rebuild from it, with the agents' conversations:
 
@@ -249,7 +256,9 @@ bring back the layout and the agent conversations.
    `claude --resume <id>`. The newest file is the most recent conversation. Codex
    keeps its sessions in `~/.codex/sessions/`, and `codex resume` lists them.
 
-4. Adopt the sessions so the snapshot stays current:
+4. Check that the snapshot is current again: `tmux-ide doctor` shows its age.
+   If the background service is not running, adopt the sessions so the chrome
+   updater writes it:
 
    ```bash
    tmux-ide adopt --all

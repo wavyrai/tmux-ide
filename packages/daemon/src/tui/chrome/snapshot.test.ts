@@ -7,6 +7,7 @@ import {
   buildSnapshot,
   createSnapshotter,
   snapshotFingerprint,
+  snapshotIsRestorePoint,
   type FleetSnapshot,
 } from "./snapshot.ts";
 import type { ProcEntry } from "../detect/process-tree.ts";
@@ -264,6 +265,91 @@ describe("createSnapshotter", () => {
     });
     s.onTick();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  // A dead server's snapshot is what `restore` needs. The next server must
+  // not replace it while it still names sessions that are gone (#783).
+  describe("a restore point", () => {
+    const SAVED = Date.parse("2026-01-01T00:00:00.000Z");
+    const fleet = (...names: string[]) =>
+      buildSnapshot(
+        names.map((session) => paneLine({ session })),
+        [],
+        NO_PROCS,
+        "2026-01-01T00:00:00.000Z",
+      );
+
+    it("is the snapshot of an older server that names a session the running one lacks", () => {
+      const live = (serverStartMs: number, ...sessions: string[]) => ({ serverStartMs, sessions });
+      expect(snapshotIsRestorePoint(fleet("a", "b"), live(SAVED + 1000, "fresh"))).toBe(true);
+      expect(snapshotIsRestorePoint(fleet("a", "b"), live(SAVED + 1000, "a", "fresh"))).toBe(true);
+      // Restored: every session it names runs again.
+      expect(snapshotIsRestorePoint(fleet("a", "b"), live(SAVED + 1000, "b", "a", "x"))).toBe(
+        false,
+      );
+      // The same server that saved it: a session that ended is just gone.
+      expect(snapshotIsRestorePoint(fleet("a", "b"), live(SAVED - 1000, "a"))).toBe(false);
+      expect(snapshotIsRestorePoint(fleet("a", "b"), live(SAVED, "a"))).toBe(false);
+      expect(snapshotIsRestorePoint(null, live(SAVED + 1000, "fresh"))).toBe(false);
+      expect(snapshotIsRestorePoint(fleet("a"), live(Number.NaN, "fresh"))).toBe(false);
+    });
+
+    it("is not replaced by the updater, until its sessions run again or the file is gone", () => {
+      const write = vi.fn();
+      let file: FleetSnapshot | null = fleet("a", "b");
+      let current = fleet("fresh");
+      const s = createSnapshotter({
+        collect: () => current,
+        read: () => file,
+        write,
+        every: 1,
+        serverStartMs: () => SAVED + 60_000,
+      });
+      s.onTick();
+      current = fleet("fresh", "more");
+      s.onTick();
+      expect(write).not.toHaveBeenCalled();
+      // `tmux-ide restore` brought the sessions back.
+      current = fleet("a", "b", "fresh", "more");
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(1);
+      // Held again with tmux unchanged, then the user deletes the file to
+      // release it: the fleet already written once is written again.
+      file = fleet("gone");
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(1);
+      file = null;
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not stop the updater on the server that saved it", () => {
+      const write = vi.fn();
+      const s = createSnapshotter({
+        collect: () => fleet("a"),
+        read: () => fleet("a", "b"),
+        write,
+        every: 1,
+        serverStartMs: () => SAVED - 60_000,
+      });
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps writing when tmux cannot say when the server started", () => {
+      const write = vi.fn();
+      const s = createSnapshotter({
+        collect: () => fleet("fresh"),
+        read: () => fleet("a", "b"),
+        write,
+        every: 1,
+        serverStartMs: () => {
+          throw new Error("no server running");
+        },
+      });
+      s.onTick();
+      expect(write).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("never fires when every <= 0", () => {

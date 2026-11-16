@@ -619,6 +619,7 @@ mod tests {
     #[derive(serde::Deserialize)]
     struct Preset {
         id: String,
+        name: String,
         mode: String,
         dark: crate::tmux_snapshot::appearance::Colors,
         light: crate::tmux_snapshot::appearance::Colors,
@@ -659,6 +660,66 @@ mod tests {
             }
         }
         themes
+    }
+
+    /// The native-alpha notes name the themes whose sidebar stays opaque. The
+    /// names are the picker's, and the list is the one `frost` gives: a theme
+    /// is opaque when every variant it shows has no frost.
+    #[test]
+    fn the_docs_name_the_opaque_themes_as_the_picker_does() {
+        let docs = include_str!("../../../../../../../docs/content/docs/native-alpha.mdx");
+        let presets: Vec<Preset> =
+            match serde_json::from_str(include_str!("appearance/catalog.json")) {
+                Ok(presets) => presets,
+                Err(error) => panic!("catalog.json: {error}"),
+            };
+        let mut opaque: Vec<String> = Vec::new();
+        for (preset, themes) in presets.iter().zip(catalog().chunks(2)) {
+            let shown: Vec<&Theme> = themes
+                .iter()
+                .filter(|(_, mode, _)| preset.mode == "system" || *mode == preset.mode)
+                .map(|(_, _, theme)| theme)
+                .collect();
+            if shown.iter().all(|theme| super::frost(theme).is_none()) {
+                opaque.push(preset.name.clone());
+            }
+        }
+        let Some(listed) = docs
+            .split("density chosen per theme; ")
+            .nth(1)
+            .and_then(|rest| rest.split(" stay opaque").next())
+        else {
+            panic!("the notes list the opaque themes");
+        };
+        let mut listed: Vec<String> = listed
+            .replace('\n', " ")
+            .split(", ")
+            .flat_map(|part| part.split(" and "))
+            .map(|name| name.trim().to_owned())
+            .collect();
+        listed.sort();
+        opaque.sort();
+        assert_eq!(listed, opaque);
+        // The default, and the two themes it shows, by the picker's names.
+        let system = &presets[0];
+        assert_eq!(system.mode, "system");
+        for name in [system.name.as_str(), "Linen", "Linen Dark"] {
+            assert!(
+                presets.iter().any(|p| p.name == name),
+                "{name} is not a preset"
+            );
+            assert!(docs.contains(name), "the notes do not name {name}");
+        }
+        // Every mention of the default names it in full.
+        let mentions: Vec<&str> = docs.split("default theme, ").skip(1).collect();
+        assert!(!mentions.is_empty(), "the notes name the default theme");
+        for after in mentions {
+            assert!(
+                after.starts_with(system.name.as_str()),
+                "the default theme, {after:.30}"
+            );
+        }
+        assert!(!docs.contains("default System theme"));
     }
 
     #[test]

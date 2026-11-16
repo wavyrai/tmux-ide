@@ -61,6 +61,11 @@ fn decode(grapheme: &str, foreground: &Color, left: Option<Cell>) -> Option<Cell
     {
         image = left.image;
     }
+    // Image 0 (the default colour, no high byte) is no image: kitty ids start
+    // at 1. Such a cell is the character as text, never a placeholder.
+    if image == 0 {
+        return None;
+    }
     Some(Cell { image, row, column })
 }
 fn runs(row: &Row, y: usize) -> Result<Vec<Rect>, Error> {
@@ -100,13 +105,19 @@ fn runs(row: &Row, y: usize) -> Result<Vec<Rect>, Error> {
     Ok(result)
 }
 impl Resolver {
+    /// The placements the pane's cells and state resolve to, and whether any
+    /// placeholder cell names an image the daemon does not hold (`orphaned`: a
+    /// daemon restart lost it; group H). Cells are scanned even without a state,
+    /// which a new daemon has not published for a pane it holds no image for.
     pub(super) fn resolve(
         &mut self,
         snapshot: &Snapshot,
-        state: &State,
-    ) -> Result<Vec<(Placement, u32)>, Error> {
+        state: Option<&State>,
+    ) -> Result<(Vec<(Placement, u32)>, bool), Error> {
         let mut output = Vec::new();
-        if state.images.iter().any(|image| image.placeholder.is_some()) {
+        let mut orphaned = false;
+        let images = state.map_or(&[][..], |state| &state.images[..]);
+        {
             let mut previous = std::mem::take(&mut self.rows).into_iter();
             for (y, row) in snapshot.grid.iter().enumerate() {
                 let cached = previous
@@ -149,11 +160,8 @@ impl Resolver {
             }
             done.extend(open);
             for rect in done {
-                let Some(image) = state
-                    .images
-                    .iter()
-                    .find(|image| image.image_id == rect.image)
-                else {
+                let Some(image) = images.iter().find(|image| image.image_id == rect.image) else {
+                    orphaned = true;
                     continue;
                 };
                 let Some(grid) = &image.placeholder else {
@@ -179,21 +187,15 @@ impl Resolver {
                     image.image_id,
                 ));
             }
-        } else {
-            self.rows.clear();
         }
-        for placement in &state.placements {
-            if let Some(image) = state
-                .images
-                .iter()
-                .find(|image| image.digest == placement.digest)
-            {
+        for placement in state.map_or(&[][..], |state| &state.placements[..]) {
+            if let Some(image) = images.iter().find(|image| image.digest == placement.digest) {
                 output.push((placement.clone(), image.image_id));
             }
         }
         if output.len() > 256 {
             return Err(Error::Bounds);
         }
-        Ok(output)
+        Ok((output, orphaned))
     }
 }

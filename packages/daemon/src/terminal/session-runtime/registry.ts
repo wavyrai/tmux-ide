@@ -220,6 +220,18 @@ export class SessionRuntimeControllerLeaseError extends Error {
   }
 }
 
+/**
+ * An input fenced to a pane lifetime (capability 105) whose lifetime has
+ * ended: its owner is gone or was replaced. The input must not reach another
+ * lifetime; the pane's delivery tells the client that its lifetime ended.
+ */
+export class SessionRuntimeInputLifetimeEndedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionRuntimeInputLifetimeEndedError";
+  }
+}
+
 export interface SessionRuntimeConsumer {
   readonly generation: SessionRuntimeGeneration;
   readonly session: string;
@@ -694,6 +706,11 @@ export class SessionRuntimeRegistry implements PaneStreamMirror {
   /** Resolve pending ownership before an asynchronous owner-authorized mutation. */
   async verifyWindowOwnership(): Promise<void> {
     await this.#mirror.verifyRegisteredWindows();
+  }
+
+  /** Ownership is being read again: input and geometry wait, they are not refused for good. */
+  windowOwnershipPending(): boolean {
+    return !this.#disposed && this.#mirror.windowOwnershipPending();
   }
 
   /** Install the bounded registered-session membership reader. */
@@ -1264,6 +1281,12 @@ class SessionRuntime {
   readonly #consumersByClientId = new Map<string, SessionRuntimeConsumerImpl>();
   readonly #terminalReplicas = new Map<string, SessionRuntimeTerminalReplicaOwner>();
   readonly #terminalReplicaClocks = new Map<string, { epoch: number; revision: number }>();
+  /** The renderer's last reported cell size; every pane's image placements use it. */
+  #cellPixels: {
+    width: number;
+    height: number;
+    precise?: { width: number; height: number };
+  } | null = null;
   #outputTraces: RuntimeTraceCorrelator | null;
   readonly #outputObservations = new Map<
     string,
@@ -1658,7 +1681,8 @@ class SessionRuntime {
     const replicaOwner = expectedLifetime
       ? this.#terminalReplicas.get(semanticPaneId)
       : this.#terminalReplicaOwner(semanticPaneId);
-    if (!replicaOwner) throw new Error("Input target lifetime unavailable");
+    if (!replicaOwner)
+      throw new SessionRuntimeInputLifetimeEndedError("Input target lifetime unavailable");
     if (causalProbe) {
       this.#activeCausalCellProbes += 1;
       let settled = false;
@@ -1689,7 +1713,7 @@ class SessionRuntime {
           this.#terminalReplicas.get(semanticPaneId) !== replicaOwner ||
           replicaOwner.inputAdmissionIncarnation() !== expectedLifetime.incarnation)
       )
-        throw new Error("Input target lifetime changed");
+        throw new SessionRuntimeInputLifetimeEndedError("Input target lifetime changed");
       if (input.kind === "text")
         this.#mirror.sendText(
           this.session,
@@ -1818,6 +1842,9 @@ class SessionRuntime {
   ): void {
     this.#assertConnected(clientId);
     this.#mirror.setCellPixels?.(this.session, width, height, precise);
+    this.#cellPixels = { width, height, ...(precise ? { precise } : {}) };
+    for (const owner of this.#terminalReplicas.values())
+      owner.setCellPixels(width, height, precise);
   }
 
   fitViewportWithAuthority(
@@ -2042,6 +2069,12 @@ class SessionRuntime {
         },
       );
       owner = candidate;
+      if (this.#cellPixels)
+        owner.setCellPixels(
+          this.#cellPixels.width,
+          this.#cellPixels.height,
+          this.#cellPixels.precise,
+        );
       this.#terminalReplicas.set(semanticPaneId, owner);
     }
     return owner;

@@ -1,4 +1,8 @@
-import { assertCanonicalDaemonServerIntent } from "./canonical-daemon-bootstrap.ts";
+import {
+  assertCanonicalDaemonServerIntent,
+  daemonServerProofPending,
+  type CanonicalDaemonBootstrapDependencies,
+} from "./canonical-daemon-bootstrap.ts";
 import { resolveTmuxServerIntent } from "./runtime-namespace.ts";
 import {
   canonicalDaemonUrl,
@@ -25,10 +29,12 @@ import {
   type EmbeddedDaemonHandle,
   type EmbeddedDaemonOptions,
 } from "./daemon-embed.ts";
+import { DaemonBootstrapError } from "@tmux-ide/daemon-client/bootstrap-coordinator";
 import { DaemonStartupError, IdeError } from "./errors.ts";
 import { logger, reserveStdoutForProtocol } from "./log.ts";
 import { generateAuthToken } from "./auth-token.ts";
 import type { DaemonRestartRequest } from "./daemon-restart-request.ts";
+import type { CrashSnapshotSource } from "./daemon-crash-snapshot.ts";
 
 export interface HeadlessDaemonOptions {
   readonly tmuxServerIntent?: ReturnType<typeof resolveTmuxServerIntent>;
@@ -41,6 +47,8 @@ export interface HeadlessDaemonOptions {
   readonly sessionName?: string;
   /** Product version is diagnostic only; protocol compatibility is authoritative. */
   readonly expectedVersion?: string;
+  /** The crash snapshot's file and builder, from the chrome adapter (#783). */
+  readonly crashSnapshotSource?: CrashSnapshotSource;
 }
 
 export interface HeadlessDaemonDependencies {
@@ -65,6 +73,12 @@ export interface HeadlessDaemonDependencies {
   readonly signalStopDeadlineMs?: number;
   /** How long a signalled stop may take in all. Defaults to SIGNAL_STOP_MAX_MS. */
   readonly signalStopMaxMs?: number;
+  /** This side's proof of the requested tmux server. Defaults to the bootstrap's own tmux read. */
+  readonly serverProof?: CanonicalDaemonBootstrapDependencies["serverProof"];
+  /** How long a just-published generation may take to become attachable. Defaults to 15 s. */
+  readonly attachabilityTimeoutMs?: number;
+  /** The pause before a generation that could not prove its server is started again. */
+  readonly delay?: (ms: number) => Promise<void>;
 }
 
 /**
@@ -89,6 +103,8 @@ interface HeadlessLifecycle {
   generations: number;
   /** Why the next generation starts: "initial", or what retired the previous one. */
   startReason: string;
+  /** Consecutive restarts of a generation that could not prove its own tmux server. */
+  ownServerProofRestarts?: number;
   /**
    * The port the previous generation served on. A restart in place keeps it
    * when it can, so a client reconnects where it was instead of having to
@@ -205,8 +221,18 @@ async function assertAttachableDaemon(
     );
   }
   assertIdentityMatches(info, identity);
+  // The first read is the one just made; the proof's own retries read again,
+  // or they would only ever see this identity without its proof.
+  let first = true;
   await assertCanonicalDaemonServerIntent(info, options.tmuxServerIntent ?? null, {
-    identity: async () => identity,
+    ...(deps.serverProof ? { serverProof: deps.serverProof } : {}),
+    identity: async () => {
+      if (first) {
+        first = false;
+        return identity;
+      }
+      return deps.probeCanonicalDaemonIdentity(info, undefined, true);
+    },
   });
   const health = await deps.probeCanonicalDaemonHealth(info);
   if (!health) {
@@ -278,13 +304,44 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** How often a restarted generation that cannot prove its own tmux server is started again. */
+export const OWN_SERVER_PROOF_RESTARTS = 4;
+
+/**
+ * A generation this daemon just started and published could not prove its
+ * own tmux server in the handshake: the proof timed out on a slow tmux, or was
+ * read while the server was being replaced (soak o3: the first generation of a
+ * restarted daemon; the kill-server harness: the first generation and restarts
+ * in place). That is not another daemon managing another server, so the
+ * process must not exit at once: the generation is started again after a
+ * short, growing pause, a bounded number of times. A server intent that is
+ * really wrong still ends the process, after the last try. A proof that names
+ * another server (mismatch) is not retried: it ends the process at once, as
+ * before.
+ */
+export function ownServerProofRetry(
+  error: unknown,
+  state: { readonly startReason: string; readonly restarts: number },
+): { delayMs: number } | null {
+  if (
+    !(error instanceof DaemonBootstrapError) ||
+    error.reason !== "tmux-server-unproven" ||
+    state.restarts >= OWN_SERVER_PROOF_RESTARTS
+  )
+    return null;
+  return { delayMs: 250 * (state.restarts + 1) };
+}
+
 const DAEMON_ATTACHABILITY_TIMEOUT_MS = 15_000;
 const DAEMON_ATTACHABILITY_POLL_MS = 25;
 
-function isTransientAttachabilityError(error: unknown): error is IdeError {
+function isTransientAttachabilityError(error: unknown): boolean {
   return (
-    error instanceof IdeError &&
-    (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY")
+    (error instanceof IdeError &&
+      (error.code === "DAEMON_IDENTITY_UNAVAILABLE" || error.code === "DAEMON_UNHEALTHY")) ||
+    // A generation started on a replaced tmux server proves it a moment
+    // later (soak o3: the daemon exited at startup instead of waiting).
+    daemonServerProofPending(error)
   );
 }
 
@@ -512,6 +569,9 @@ async function runHeadlessDaemonGeneration(
         handle = await deps.startEmbeddedDaemon({
           launcher: "headless",
           plugins: true,
+          ...(options.crashSnapshotSource
+            ? { crashSnapshotSource: options.crashSnapshotSource }
+            : {}),
           ...(options.supervisionId
             ? { supervisionId: options.supervisionId, predecessor: lifecycle.predecessor }
             : {}),
@@ -653,7 +713,7 @@ async function runHeadlessDaemonGeneration(
         deps,
         info,
         options,
-        DAEMON_ATTACHABILITY_TIMEOUT_MS,
+        deps.attachabilityTimeoutMs ?? DAEMON_ATTACHABILITY_TIMEOUT_MS,
         () => signalRequested,
       );
       options.onOwnedReady?.(info);
@@ -663,8 +723,29 @@ async function runHeadlessDaemonGeneration(
         if (stopFailure) throw stopFailure;
         return "stopped";
       }
-      throw error;
+      const retry = ownServerProofRetry(error, {
+        startReason,
+        restarts: lifecycle.ownServerProofRestarts ?? 0,
+      });
+      if (!retry) throw error;
+      lifecycle.ownServerProofRestarts = (lifecycle.ownServerProofRestarts ?? 0) + 1;
+      logger.warn(
+        "daemon-lifecycle",
+        "generation could not prove its own tmux server; starting it again",
+        {
+          generation,
+          startReason,
+          reason: (error as DaemonBootstrapError).reason,
+          restart: lifecycle.ownServerProofRestarts,
+          delayMs: retry.delayMs,
+        },
+      );
+      await (deps.delay ?? delay)(retry.delayMs);
+      if (signalRequested) return "stopped";
+      lifecycle.startReason = "tmux-server-unproven";
+      return "restart";
     }
+    lifecycle.ownServerProofRestarts = 0;
 
     lifecycle.lastPort = info.port;
     emitStatus(deps, options.json === true, "ready", info);

@@ -555,10 +555,13 @@ export function unadoptSession(session: string): void {
   // fallback if the fleet probe races a tab closing.
   clearPaneChromeWindows([session]);
   for (const argv of unadoptOptionCommands(session)) runTmux(argv);
-  // KNOWN SIMPLIFICATION: the popup key AND the status-click router are
-  // SERVER-wide binds, so unadopting one session removes them for ALL adopted
-  // sessions. Acceptable for now — best-effort so a missing bind (already
+  // The popup key, the status-click router, the right-click menus and every
+  // Alt/prefix key are SERVER-wide binds. Another session on this server that
+  // is still adopted keeps using them, so they go only with the last adopted
+  // session (this session's marker is already gone above). A probe that fails
+  // reads as "none left", as before. Best-effort so a missing bind (already
   // unadopted) doesn't throw. Unbind the SAME configured keys adopt bound.
+  if (listAdoptedSessions().length > 0) return;
   const keys = getAppConfig().keys;
   // The mouse binds (status-click router + the two right-click menu openers).
   for (const undo of [
@@ -600,5 +603,5 @@ export function unadoptSession(session: string): void {
     }
   }
   // The updater only needs to run while something is adopted.
-  if (listAdoptedSessions().length === 0) stopUpdater();
+  stopUpdater();
 }

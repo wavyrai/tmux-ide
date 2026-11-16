@@ -44,6 +44,7 @@ import {
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
+import { invocationDirectory } from "../packages/daemon/src/lib/invocation-directory.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -453,7 +454,7 @@ async function execBunWidget(
     }
   }
   const env = openTuiLaunchEnvironment(process.env, {
-    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CWD: invocationDirectory(),
     TMUX_IDE_CLI: nodeCliPath,
     ...(automaticDiagnosticLog
       ? {
@@ -566,7 +567,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
       launch.bin,
       launch.argv,
       hostedEnvVars({
-        cwd: process.cwd(),
+        cwd: invocationDirectory(),
         cli: nodeCliPath,
         path: process.env.PATH,
         home: process.env.TMUX_IDE_HOME,
@@ -833,6 +834,10 @@ try {
       json,
       expectedVersion: pkg.version,
       supervisionId: values.supervised,
+      // The crash snapshot's file and builder live in the chrome adapter,
+      // which the daemon engine may not import (#783).
+      crashSnapshotSource: (await import("../packages/daemon/src/tui/chrome/snapshot.ts"))
+        .fleetCrashSnapshotSource,
     });
     // The daemon cleanup is complete here. Exit explicitly because stores and
     // native adapters may retain harmless timers/handles that must not turn a

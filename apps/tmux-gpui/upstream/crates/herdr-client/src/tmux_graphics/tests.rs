@@ -94,6 +94,76 @@ fn production_typescript_placeholder_vectors_match_and_preserve_rich_canonical_p
     }
 }
 
+/// Group H (owner, 16 Nov): placeholder cells whose image the daemon does not
+/// have, as after a daemon restart, are reported so the window can say so;
+/// cells whose image it has are not.
+#[test]
+fn placeholders_the_daemon_has_no_image_for_are_reported() {
+    for (index, vector) in vectors().into_iter().enumerate() {
+        let now = Instant::now();
+        let committed = committed(&vector);
+        // A new daemon: no graphics state for the pane at all.
+        let mut fresh = graphics();
+        let placements = fresh.placements("pane", &committed, now).unwrap();
+        assert!(placements.placements.is_empty());
+        assert!(placements.orphaned, "{}", vector["kind"]);
+        // A state that holds other images only.
+        let mut other = graphics();
+        other.bind("pane", &committed).unwrap();
+        let mut unrelated = vector["state"].clone();
+        for image in unrelated["images"].as_array_mut().unwrap() {
+            image["imageId"] = json!(4242);
+        }
+        state(&mut other, "pane", &unrelated, now);
+        assert!(other.placements("pane", &committed, now).unwrap().orphaned);
+        // The image arrives: nothing is orphaned. (Only the first vector's cells
+        // name nothing but its own image; the others also carry cells of image 5,
+        // which their state does not hold, and stay orphaned.)
+        let mut held = graphics();
+        held.bind("pane", &committed).unwrap();
+        state(&mut held, "pane", &vector["state"], now);
+        assert_eq!(
+            held.placements("pane", &committed, now).unwrap().orphaned,
+            index != 0,
+            "{}",
+            vector["kind"]
+        );
+    }
+}
+
+/// U+10EEEE in the default colour names image 0, which no image has (kitty
+/// ids start at 1): it is text, not a placeholder, and never an orphan
+/// (review of ba4c1fc7: `cat` of a file holding the character).
+#[test]
+fn a_placeholder_character_in_default_colours_is_text() {
+    let now = Instant::now();
+    let value = json!({"v":1,"k":"terminal-semantic-compact","f":"s","r":0,"s":[2,1,[[0,[[2,"\u{10eeee}",1,0,0,0]]]],[],[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]});
+    let Update::Seed { snapshot, .. } =
+        decode_compact(&serde_json::to_vec(&value).unwrap()).unwrap()
+    else {
+        panic!("seed expected")
+    };
+    assert!(
+        snapshot.grid[0]
+            .cells()
+            .iter()
+            .any(|cell| cell.grapheme.starts_with('\u{10eeee}'))
+    );
+    let committed = CommittedPane {
+        snapshot: Some(Arc::new(snapshot)),
+        identity: Arc::new(CommittedIdentity {
+            generation: GENERATION.into(),
+            incarnation: "pane:1".into(),
+            delivery_nonce: "f8da3f73-66c3-4621-bf6f-547ee1d5fd1c".into(),
+            canonical_revision: 1,
+            canonical_state_hash: "verified-by-terminal-store".into(),
+        }),
+    };
+    let placements = graphics().placements("pane", &committed, now).unwrap();
+    assert!(placements.placements.is_empty());
+    assert!(!placements.orphaned);
+}
+
 #[test]
 fn image_bytes_decode_once_and_last_chunk_is_digest_guarded() {
     let vector = &vectors()[0];

@@ -28,13 +28,19 @@ fn drain(reader: &mut impl Read, output: &mut Vec<u8>) -> Result<bool, LocalSetu
         }
     }
 }
+/// Run one command of a setup run. It may use what is left of the run's own
+/// deadline and no more: the welcome reads a run that stopped at that deadline
+/// as a time-out and anything shorter as "stopped before it answered", so a
+/// shorter limit per command (it was 15 s) made a hung `update` the second kind.
+/// `now` is the clock the deadline is measured on (tests move it).
 pub(super) fn run(
     installation: &LocalSetupInstallation,
     args: &[&str],
     cancel: &AtomicBool,
     deadline: Instant,
+    now: &dyn Fn() -> Instant,
 ) -> Result<Vec<u8>, LocalSetupError> {
-    let deadline = deadline.min(Instant::now() + Duration::from_secs(15));
+    let check = |cancel: &AtomicBool, deadline: Instant| check_at(cancel, deadline, now());
     check(cancel, deadline)?;
     let mut child = Owned(
         Command::new(&installation.node)
@@ -77,8 +83,6 @@ pub(super) fn run(
                 return Ok(output);
             }
         }
-        thread::sleep(
-            Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
-        );
+        thread::sleep(Duration::from_millis(10).min(deadline.saturating_duration_since(now())));
     }
 }

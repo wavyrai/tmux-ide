@@ -390,6 +390,7 @@ fn stale_ready_does_not_clear_recovery() {
         missing_since: None,
         ended: false,
         identity_retried: false,
+        fleet_refreshed: false,
     });
     local
         .command(Command::NativeTerminalReady {

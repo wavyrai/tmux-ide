@@ -13,8 +13,9 @@ import {
   fixtureAutoReply,
   fixtureState,
 } from "../mirror/__tests__/simulated-channel.ts";
-import { SessionRuntimeRegistry } from "./registry.ts";
+import { SessionRuntimeInputLifetimeEndedError, SessionRuntimeRegistry } from "./registry.ts";
 import { PARK_AFTER_MS } from "./terminal-replica-owner.ts";
+import { KittyImageStore } from "../graphics/kitty-graphics.ts";
 import {
   SYSTEM_SESSION_RUNTIME_SCHEDULER,
   type SessionRuntimeScheduler,
@@ -187,6 +188,64 @@ async function finishSeed(sim: SimulatedChannel): Promise<void> {
 }
 
 describe("SessionRuntimeRegistry", () => {
+  it("keeps a fenced key away from a pane whose lifetime was replaced or is of another generation", async () => {
+    // #397 drops such a key instead of closing the stream, so this fence must hold:
+    // a reused pane id must never receive input fenced to its predecessor.
+    const { registry, sims } = rig();
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const subscribing = editor.subscribe("pane.alpha", () => {});
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    await finishSeed(sims[0]!);
+    await subscribing;
+    const lease = editor.acquireController();
+    // An unfenced key creates the pane's owner, as the pane's current lifetime.
+    editor.sendInput(lease, "pane.alpha", { kind: "text", data: "a" });
+    for (const fence of [
+      { generation: GENERATION_A, incarnation: `${GENERATION_A}:5` },
+      { generation: "22222222-2222-4222-8222-222222222222", incarnation: `${GENERATION_A}:0` },
+    ])
+      expect(() =>
+        editor.sendInput(
+          lease,
+          "pane.alpha",
+          { kind: "text", data: "x" },
+          undefined,
+          undefined,
+          undefined,
+          fence,
+        ),
+      ).toThrow(SessionRuntimeInputLifetimeEndedError);
+    await editor.close();
+    await registry.dispose();
+  });
+
+  it("names input fenced to a pane lifetime that has no owner as an ended lifetime", async () => {
+    const { registry, sims } = rig();
+    const editor = registry.connect("alpha-session", "terminal-attachment", "client:editor");
+    const subscribing = editor.subscribe("pane.alpha", () => {});
+    await vi.waitFor(() => expect(sims).toHaveLength(1));
+    await finishSeed(sims[0]!);
+    await subscribing;
+    const lease = editor.acquireController();
+    // A pane with no replica owner, as after the control client exited.
+    expect(() =>
+      editor.sendInput(
+        lease,
+        "pane.beta",
+        { kind: "text", data: "x" },
+        undefined,
+        undefined,
+        undefined,
+        {
+          generation: GENERATION_A,
+          incarnation: `${GENERATION_A}:0`,
+        },
+      ),
+    ).toThrow(SessionRuntimeInputLifetimeEndedError);
+    await editor.close();
+    await registry.dispose();
+  });
+
   it("publishes a passive client connection to existing consumers without stealing authority", async () => {
     const { registry } = rig();
     try {
@@ -922,6 +981,31 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
     expect(registry.activeControlChannelCount()).toBe(0);
     expect(sims[0]!.disposed).toBe(true);
+  });
+
+  // Group H: image placements without c/r use the renderer's cell size, in
+  // every pane of the session, including panes opened after it was reported.
+  it("gives the renderer's cell pixels to every pane's images, now and later", async () => {
+    // The pane's own image store, reached through the session and the pane's
+    // real replica owner and interpreter.
+    const spy = vi.spyOn(KittyImageStore.prototype, "setCellPixels");
+    const { registry } = rig(GENERATION_A, true);
+    try {
+      const consumer = registry.connect(FIXTURE.session, "opentui", "cells");
+      consumer.setCellPixels(16, 32, { width: 16_250, height: 32_500 });
+      expect(spy).not.toHaveBeenCalled();
+      await consumer.subscribeReplica("pane.alpha", () => {});
+      expect(spy).toHaveBeenLastCalledWith(16, 32, { width: 16_250, height: 32_500 });
+      consumer.setCellPixels(20, 40);
+      expect(spy).toHaveBeenLastCalledWith(20, 40, undefined);
+      expect(spy).toHaveBeenCalledTimes(2);
+      // A size the mirror refuses never reaches the images.
+      expect(() => consumer.setCellPixels(0, 40)).toThrow(RangeError);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+      await registry.dispose();
+    }
   });
 
   it.each(["replica", "mirror"] as const)(

@@ -11,6 +11,43 @@ function failing(stderr: string | null) {
   };
 }
 
+describe("live tmux session summaries", () => {
+  it("keeps ordinary sessions independent from durable workspace intent", () => {
+    expect(
+      discoverLiveSessionSummaries(() =>
+        [
+          "41\t$0\t100\tordinary",
+          "41\t$0\t100\tordinary",
+          "41\t$0\t100\tordinary",
+          "41\t$1\t101\tsecond",
+          "41\t$2\t102\t_tmux-ide-chrome",
+          "41\t$4\t104\t_tmux-ide-dev-keeper",
+          "41\t$3\t103\tzz-scratch",
+          "41\t$3\t103\tzz-scratch",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      expect.objectContaining({ sessionName: "ordinary", paneCount: 3 }),
+      expect.objectContaining({ sessionName: "second", paneCount: 1 }),
+    ]);
+  });
+
+  it("keeps an identity across rename and replaces it across recreation", () => {
+    const read = (row: string) => discoverLiveSessionSummaries(() => row)[0]!.liveSessionId;
+    expect(read("41\t$0\t100\tbefore")).toBe(read("41\t$0\t100\tafter"));
+    expect(read("41\t$0\t100\tbefore")).not.toBe(read("41\t$1\t101\tbefore"));
+    expect(read("41\t$0\t100\tbefore")).not.toBe(read("42\t$0\t100\tbefore"));
+  });
+
+  it("keeps legacy names visible while hiding new internal development keepers", () => {
+    expect(
+      discoverLiveSessionSummaries(
+        () => "41\t$1\t100\ttmux-ide-dev-keeper\n41\t$2\t101\t_tmux-ide-dev-keeper",
+      ).map((session) => session.sessionName),
+    ).toEqual(["tmux-ide-dev-keeper"]);
+  });
+});
+
 describe("live session discovery when tmux cannot answer (#753)", () => {
   it("lists the sessions tmux reports", () => {
     const run = () => "4242\t$1\t1700000000\talpha\n4242\t$1\t1700000000\talpha";

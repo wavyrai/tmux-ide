@@ -104,6 +104,8 @@ pub enum GraphicsEvent {
 pub struct PaneGraphics {
     pub identity: Arc<CommittedIdentity>,
     pub placements: Vec<KeyedPlacement>,
+    /// Placeholder cells name an image the daemon does not hold (group H).
+    pub orphaned: bool,
 }
 pub struct Updates {
     pub materializing: BTreeSet<String>,
@@ -792,6 +794,7 @@ fn refresh_graphics(
             Arc::new(PaneGraphics {
                 identity: Arc::clone(&proof.identity),
                 placements: placements.placements,
+                orphaned: placements.orphaned,
             }),
         );
     }

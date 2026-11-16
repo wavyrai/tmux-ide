@@ -41,10 +41,10 @@ pub(super) enum NameSource {
     Title,
     Generated,
 }
-/// The most panes the native app streams for one session. It mirrors
-/// `PANE_STREAM_MAX_PANES` in packages/contracts/src/pane-stream.ts, which the
-/// daemon enforces when it issues a pane stream; keep the two equal.
-pub(super) const NATIVE_STREAM_MAX_PANES: u64 = 24;
+/// The most panes the native app streams for one session: the stream client's
+/// own limit, which mirrors `PANE_STREAM_MAX_PANES` in
+/// packages/contracts/src/pane-stream.ts (the daemon enforces it at issue).
+pub(super) const NATIVE_STREAM_MAX_PANES: u64 = herdr_client::tmux_stream::MAX_PANES as u64;
 /// What a session row says after its pane count when the native app cannot
 /// open that session.
 pub(super) const TOO_MANY_PANES: &str = "too many";
@@ -204,6 +204,9 @@ pub(super) struct State {
     pub frame: Option<DisplayFrame>,
     /// Kitty graphics placements in frame cells.
     pub graphics: Vec<super::kitty_graphics::Placement>,
+    /// A pane on screen shows placeholder cells for an image the daemon no
+    /// longer holds, as after a daemon restart (group H).
+    pub images_lost: bool,
     /// Prepared only by native transport; pipe publications cannot supply storage.
     #[cfg(target_os = "macos")]
     pub native_surfaces: Option<(DisplayFrame, Vec<crate::tmux_native_surface::Paint>)>,
@@ -651,6 +654,8 @@ impl Reader {
             status: p.status,
             frame: None,
             graphics: p.graphics,
+            // The development bridge does not report lost images.
+            images_lost: false,
             #[cfg(target_os = "macos")]
             native_surfaces: None,
         })
