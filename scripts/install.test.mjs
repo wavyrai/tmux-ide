@@ -41,6 +41,13 @@ function fixture(t) {
     "mkdir",
     'if [ -n "${MOCK_MKDIR_EXISTING_OK:-}" ] && [ "$#" -eq 1 ] && [ -d "$1" ]; then exit 0; fi; exec /bin/mkdir "$@"\n',
   );
+  // A probe for releases in use that cannot read anything: lsof fails, and so
+  // does sed when it is asked for a process's mapped files.
+  script("lsof", '[ -z "${MOCK_PROBE_FAIL:-}" ] || exit 1; exec /usr/sbin/lsof "$@"\n');
+  script(
+    "sed",
+    'if [ -n "${MOCK_PROBE_FAIL:-}" ]; then for arg in "$@"; do case "$arg" in /proc/*/maps) exit 2 ;; esac; done; fi; exec /usr/bin/sed "$@"\n',
+  );
   script(
     "rm",
     'case "${MOCK_RM_FAIL:-}:$*" in 1:*/.install.*) exit 1 ;; esac; exec /bin/rm "$@"\n',
@@ -751,6 +758,98 @@ test("retention cap refuses another install until explicit cleanup", (t) => {
   assert.equal(fs.readlinkSync(path.join(root, "current")), current);
   assert.equal(run({}, ["--prune", "--yes"]).status, 0);
   assert.equal(run().status, 0);
+});
+
+// A process started from an older release, the way a tmux server keeps the
+// release it was started from: its executable lies inside that release (a
+// copy of this Node.js, which runs where a copied system binary may not), and
+// it is started through a symlink outside it, like the `current` link that has
+// since moved on. Ends with the test.
+async function runFromRelease(t, root, release) {
+  const executable = path.join(release, "bin", "held-node");
+  fs.mkdirSync(path.dirname(executable), { recursive: true });
+  // A file of its own: tools that report mapped files name one path per file,
+  // so a hard link would share its name with the Node.js that runs the tests.
+  fs.copyFileSync(process.execPath, executable, fs.constants.COPYFILE_FICLONE);
+  const link = path.join(root, `via-link-${path.basename(release)}`);
+  fs.symlinkSync(executable, link);
+  const child = spawn(link, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  t.after(() => killGroup(child));
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+  return {
+    pid: child.pid,
+    async stop() {
+      process.kill(-child.pid, "SIGKILL");
+      await closed;
+    },
+  };
+}
+
+test("pruning keeps an older release that a running process uses", async (t) => {
+  const { root: home, prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  assert.equal(run().status, 0);
+  const used = fs.realpathSync(path.join(root, "current"));
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0);
+  const holder = await runFromRelease(t, home, used);
+  const pruned = run({}, ["--prune", "--yes"]);
+  assert.equal(pruned.status, 0, pruned.stderr);
+  assert.ok(fs.existsSync(path.join(used, "bin", "held-node")), "the release in use is kept");
+  assert.match(pruned.stdout, /Removed 1 retired release/);
+  assert.match(pruned.stdout, /kept 1 in use by a running process/);
+  await holder.stop();
+  assert.equal(run({}, ["--prune", "--yes"]).status, 0);
+  assert.equal(fs.existsSync(used), false, "once nothing runs from it, it is removed");
+});
+
+test("prune removes nothing when it cannot tell which releases are in use", (t) => {
+  const { prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  assert.equal(run().status, 0);
+  const retired = fs.realpathSync(path.join(root, "current"));
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0);
+  const refused = run({ MOCK_PROBE_FAIL: "1" }, ["--prune", "--yes"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(
+    refused.stderr,
+    /Cannot tell which releases running processes use[^]*nothing was removed/,
+  );
+  assert.ok(fs.existsSync(retired), "an unproven release is kept");
+  assert.equal(run({}, ["--prune", "--yes"]).status, 0);
+  assert.equal(fs.existsSync(retired), false, "with a working probe it is removed");
+});
+
+test("the retention cap does not count a release a running process uses, nor ask to stop it", async (t) => {
+  const { root: home, prefix, run } = fixture(t);
+  const root = path.join(prefix, "share/tmux-ide");
+  assert.equal(run().status, 0);
+  const releases = [];
+  for (let i = 0; i < 7; i++) {
+    const retired = path.join(root, "releases", `install-OLD00${i}`);
+    fs.mkdirSync(retired);
+    fs.writeFileSync(path.join(retired, ".installer-release-v1"), "1\n");
+    releases.push(retired);
+  }
+  const holder = await runFromRelease(t, home, releases[0]);
+  const installed = run();
+  assert.equal(installed.status, 0, installed.stderr);
+  // With the process gone, eight releases are retained again and none is in use.
+  await holder.stop();
+  const refused = run();
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /Eight retained releases/);
+  assert.doesNotMatch(refused.stderr, /Stop tmux-ide processes|stop/i);
+  assert.match(refused.stderr, /--prune --yes/);
 });
 
 test("pre-staging failure preserves every retained runtime", (t) => {
