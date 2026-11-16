@@ -325,6 +325,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The tagged tree's bin/cli.js is what a git install and ./bin/cli.js
+      # run; npm's tarball is rebuilt by prepack. v2.9.25 was tagged with a
+      # copy regenerated before a merged change, so refuse a stale one here,
+      # before anything is published.
+      - name: Committed bin/cli.js is the build of this commit
+        run: pnpm run check:cli-bundle
+
       - name: Resolve release version
         id: release
         shell: bash

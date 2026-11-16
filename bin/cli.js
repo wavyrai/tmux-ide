@@ -7940,7 +7940,7 @@ var init_terminal_graphics = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z52 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8033,6 +8033,8 @@ var init_pane_stream = __esm({
     PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION = /* @__PURE__ */ (() => 106)();
     PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = /* @__PURE__ */ (() => 117)();
     PANE_STREAM_READER_CAPABILITY_VERSION = /* @__PURE__ */ (() => 118)();
+    PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION = /* @__PURE__ */ (() => 119)();
+    PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION = /* @__PURE__ */ (() => 120)();
     PaneStreamInputLifetimeSchemaZ = /* @__PURE__ */ (() => z52.object({
       generation: z52.string().min(1).max(256),
       incarnation: z52.string().min(1).max(256)
@@ -8182,6 +8184,8 @@ var init_pane_stream = __esm({
       type: z52.literal("ready"),
       inputLifetime: z52.literal(true).optional(),
       inputBytes: z52.literal(true).optional(),
+      /** Only to a client that offered capability 119: `topology` frames may follow. */
+      topologyInPlace: z52.literal(true).optional(),
       protocolVersion: z52.literal(PANE_STREAM_PROTOCOL_VERSION),
       daemonInstanceId: BoundedIdentitySchemaZ,
       requestId: z52.uuid(),
@@ -8346,6 +8350,22 @@ var init_pane_stream = __esm({
       state: z52.enum(["paused", "resumed"]),
       reason: z52.enum(["backpressure", "requested"])
     }).strict())();
+    PaneStreamTopologyFrameSchemaZ = /* @__PURE__ */ (() => z52.object({
+      type: z52.literal("topology"),
+      topologyEpoch: z52.number().int().nonnegative(),
+      panes: PaneSetSchemaZ,
+      removed: z52.array(PaneStreamSemanticPaneIdSchemaZ).max(PANE_STREAM_MAX_PANES),
+      added: z52.array(PaneStreamSemanticPaneIdSchemaZ).max(PANE_STREAM_MAX_PANES)
+    }).strict().superRefine((frame, context) => {
+      const panes = new Set(frame.panes);
+      const removed = new Set(frame.removed);
+      const added = new Set(frame.added);
+      if (removed.size !== frame.removed.length || added.size !== frame.added.length || frame.added.some((pane) => !panes.has(pane) || removed.has(pane)) || frame.removed.some((pane) => panes.has(pane)))
+        context.addIssue({
+          code: z52.ZodIssueCode.custom,
+          message: "added panes must be in the set, removed panes must not, and neither may repeat"
+        });
+    }))();
     PaneStreamClosedFrameSchemaZ = /* @__PURE__ */ (() => z52.object({
       type: z52.literal("closed"),
       pane: PaneStreamSemanticPaneIdSchemaZ,
@@ -8491,6 +8511,7 @@ var init_pane_stream = __esm({
       PaneStreamCursorFrameSchemaZ,
       PaneStreamLayoutFrameSchemaZ,
       PaneStreamLayoutSnapshotFrameSchemaZ,
+      PaneStreamTopologyFrameSchemaZ,
       PaneStreamFlowFrameSchemaZ,
       PaneStreamClosedFrameSchemaZ,
       PaneStreamInputAckFrameSchemaZ,
@@ -15394,6 +15415,7 @@ var require_package = __commonJS({
         "test:tmux-boundary": "node scripts/test-tmux-boundary.mjs",
         build: "pnpm build:cli",
         "build:cli": "node scripts/build-cli.mjs",
+        "check:cli-bundle": "node scripts/check-cli-bundle.mjs",
         "build:macos-notifier": "node scripts/build-macos-notifier.mjs",
         "build:tui": "bun scripts/build-tui.mjs",
         prepack: "pnpm build:cli",
@@ -69808,6 +69830,40 @@ var init_transport_binding = __esm({
           );
         this.#binder.registry.assertExecutionHandle(this.#baseHandle, semanticPaneId3);
       }
+      /**
+       * The session's pane set changed under this live transport (#723). The
+       * caller is the daemon's own stream boundary, and the panes come from its
+       * trusted inventory of this binding's session: a client can never name a
+       * pane here. The grant stays exact: added panes join it, removed panes leave
+       * it, and every execution handle is rebuilt from the amended set.
+       * All-or-nothing: an invalid pane id changes nothing.
+       */
+      amendPaneGrant(change) {
+        this.#assertOpen();
+        const added = change.added.map(
+          (paneId) => TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId)
+        );
+        const removed = change.removed.map(
+          (paneId) => TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId)
+        );
+        for (const paneId of removed) {
+          if (!this.#allowedSourcePaneIds.delete(paneId)) continue;
+          if (!this.#contributedSourcePaneIds.delete(paneId)) continue;
+          const next = (this.#shared.grantRefs.get(paneId) ?? 0) - 1;
+          if (next > 0) this.#shared.grantRefs.set(paneId, next);
+          else this.#shared.grantRefs.delete(paneId);
+        }
+        for (const paneId of added) {
+          if (this.#allowedSourcePaneIds.has(paneId)) continue;
+          this.#allowedSourcePaneIds.add(paneId);
+          if (!this.#interactive) continue;
+          this.#contributedSourcePaneIds.add(paneId);
+          this.#shared.grantRefs.set(paneId, (this.#shared.grantRefs.get(paneId) ?? 0) + 1);
+        }
+        this.#baseHandle = null;
+        this.#baseHandleLease = null;
+        this.#intentHandles.clear();
+      }
       openTerminalDelivery(semanticPaneId3, offer, onMessage, deliveryWorkspaceName) {
         const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName ?? this.session);
         this.#assertOpen();
@@ -76410,6 +76466,26 @@ function rawGraphicsState(state) {
     placements: state.placements.filter((placement) => kept.has(placement.digest))
   };
 }
+function newPaneChannel(pane) {
+  return {
+    semanticPaneId: pane,
+    sub: null,
+    delivery: null,
+    deliveryAddress: null,
+    serverSeq: 0,
+    sentPaneFrames: 0,
+    consumedSeq: 0,
+    nextInputSeq: 1,
+    frozenByWire: false,
+    closed: false,
+    batch: null,
+    graphicsAnnounced: false,
+    graphicsQueue: [],
+    graphicsSending: false,
+    graphicsServed: /* @__PURE__ */ new Map(),
+    graphicsState: null
+  };
+}
 function concatBytes(chunks) {
   if (chunks.length === 0) return new Uint8Array(0);
   if (chunks.length === 1) return chunks[0];
@@ -76432,7 +76508,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PANE_STREAM_OPEN_RETRY_DELAYS_MS, PANE_STREAM_OWNERSHIP_WAIT_MS, PANE_STREAM_OWNERSHIP_HELD_FRAMES, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PANE_STREAM_TOPOLOGY_SETTLE_MS, PANE_STREAM_OPEN_RETRY_DELAYS_MS, PANE_STREAM_OWNERSHIP_WAIT_MS, PANE_STREAM_OWNERSHIP_HELD_FRAMES, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -77039,6 +77115,7 @@ var init_pane_stream_websocket = __esm({
         socket.off("error", this.#onClose);
       }
     };
+    PANE_STREAM_TOPOLOGY_SETTLE_MS = 500;
     PANE_STREAM_OPEN_RETRY_DELAYS_MS = [150, 400];
     PANE_STREAM_OWNERSHIP_WAIT_MS = 2e3;
     PANE_STREAM_OWNERSHIP_HELD_FRAMES = 256;
@@ -77081,6 +77158,13 @@ var init_pane_stream_websocket = __esm({
       #panes = /* @__PURE__ */ new Map();
       #semanticLayouts = /* @__PURE__ */ new Map();
       #semanticExpectedPaneIds = null;
+      /** Capability 119 (#723): a changed pane set is announced, not a reason to close. */
+      #topologyInPlace;
+      /** The stream was issued for every pane of its session: new panes join it. */
+      #leasesWholeSession = false;
+      #topologyReconciling = false;
+      #topologyPending = null;
+      #topologyWaiter = null;
       #semanticRuntimeSessionId = null;
       #semanticWindowLinks = null;
       #semanticTopologyEpoch = -1;
@@ -77185,26 +77269,10 @@ var init_pane_stream_websocket = __esm({
         this.#diagnosticSharedRawMicros = this.#diagnosticCapabilities.includes("clock-bounds-v1") ? options.diagnosticSharedNowMicros ?? sharedMonotonicMicros : void 0;
         this.#diagnosticAfterFrameParse = options.diagnosticAfterFrameParse;
         this.#onRetire = options.onRetire;
-        for (const pane of options.descriptor.panes) {
-          this.#panes.set(pane, {
-            semanticPaneId: pane,
-            sub: null,
-            delivery: null,
-            deliveryAddress: null,
-            serverSeq: 0,
-            sentPaneFrames: 0,
-            consumedSeq: 0,
-            nextInputSeq: 1,
-            frozenByWire: false,
-            closed: false,
-            batch: null,
-            graphicsAnnounced: false,
-            graphicsQueue: [],
-            graphicsSending: false,
-            graphicsServed: /* @__PURE__ */ new Map(),
-            graphicsState: null
-          });
-        }
+        this.#topologyInPlace = options.descriptor.terminalDelivery?.protocolVersions.some(
+          (version) => version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION || version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION
+        ) === true;
+        for (const pane of options.descriptor.panes) this.#panes.set(pane, newPaneChannel(pane));
       }
       get clientId() {
         return this.#clientId;
@@ -77226,6 +77294,7 @@ var init_pane_stream_websocket = __esm({
             ...this.#sessionRuntimeBinding && this.#descriptor.terminalDelivery?.protocolVersions.includes(
               PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION
             ) ? { inputBytes: true } : {},
+            ...this.#topologyInPlace ? { topologyInPlace: true } : {},
             protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
             daemonInstanceId: this.#binding.daemonInstanceId,
             requestId: this.#binding.requestId,
@@ -77488,35 +77557,7 @@ var init_pane_stream_websocket = __esm({
         channels.sort(
           (left, right) => Number(visibleAtOpen.has(right.semanticPaneId)) - Number(visibleAtOpen.has(left.semanticPaneId))
         );
-        const openings = channels.map(async (channel) => {
-          const pending = [];
-          let ready = false;
-          let negotiated = false;
-          const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
-            pending.length = 0;
-            return binding.openTerminalDelivery(
-              channel.semanticPaneId,
-              offer,
-              (message) => {
-                if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
-                  pending.push(message);
-                else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-              },
-              this.#descriptor.workspaceName
-            );
-          });
-          return {
-            channel,
-            delivery,
-            pending,
-            markNegotiated: () => {
-              negotiated = true;
-            },
-            markReady: () => {
-              ready = true;
-            }
-          };
-        });
+        const openings = channels.map((channel) => this.#openPaneDelivery(binding, offer, channel));
         const settled = await Promise.allSettled(openings);
         const opened = settled.flatMap(
           (result2) => result2.status === "fulfilled" ? [result2.value] : []
@@ -77534,21 +77575,7 @@ var init_pane_stream_websocket = __esm({
           }
           return;
         }
-        const deliveryIdentityChanged = opened.some(({ channel, delivery, pending }) => {
-          if (!delivery.negotiation.accepted) return true;
-          const negotiated = delivery.negotiation.negotiated;
-          if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
-          let incarnation = null;
-          for (const message of pending) {
-            if (message.type !== "terminal.delivery" && message.type !== "terminal.projection")
-              continue;
-            if (message.workspaceName !== this.#descriptor.workspaceName || message.semanticPaneId !== channel.semanticPaneId || message.generation !== negotiated.generation || message.deliveryNonce !== negotiated.deliveryNonce || incarnation !== null && message.incarnation !== incarnation)
-              return true;
-            incarnation = message.incarnation;
-          }
-          return false;
-        });
-        if (deliveryIdentityChanged) {
+        if (opened.some((entry) => this.#deliveryIdentityChanged(entry))) {
           await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
           this.#failTopologyChanged();
           return;
@@ -77567,6 +77594,7 @@ var init_pane_stream_websocket = __esm({
         }
         this.#recordDiagnosticLifecycle("pane-stream-layout-validated");
         this.#semanticExpectedPaneIds = expectedPaneIds;
+        this.#leasesWholeSession = expectedPaneIds.every((pane) => this.#panes.has(pane));
         this.#semanticRuntimeSessionId = authority2.runtimeSessionId;
         this.#semanticWindowLinks = authority2.windowLinks;
         this.#semanticTopologyEpoch = authority2.topologyEpoch;
@@ -77589,6 +77617,54 @@ var init_pane_stream_websocket = __esm({
         opened.sort(
           (left, right) => Number(visibleAtDelivery.has(right.channel.semanticPaneId)) - Number(visibleAtDelivery.has(left.channel.semanticPaneId))
         );
+        await this.#publishOpenedDeliveries(opened);
+        this.#closeIfAllPanesGone();
+      }
+      /** Open one pane's delivery; its messages wait until the pane is announced. */
+      async #openPaneDelivery(binding, offer, channel) {
+        const pending = [];
+        let ready = false;
+        let negotiated = false;
+        const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
+          pending.length = 0;
+          return binding.openTerminalDelivery(
+            channel.semanticPaneId,
+            offer,
+            (message) => {
+              if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
+                pending.push(message);
+              else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+            },
+            this.#descriptor.workspaceName
+          );
+        });
+        return {
+          channel,
+          delivery,
+          pending,
+          markNegotiated: () => {
+            negotiated = true;
+          },
+          markReady: () => {
+            ready = true;
+          }
+        };
+      }
+      #deliveryIdentityChanged({ channel, delivery, pending }) {
+        if (!delivery.negotiation.accepted) return true;
+        const negotiated = delivery.negotiation.negotiated;
+        if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
+        let incarnation = null;
+        for (const message of pending) {
+          if (message.type !== "terminal.delivery" && message.type !== "terminal.projection") continue;
+          if (message.workspaceName !== this.#descriptor.workspaceName || message.semanticPaneId !== channel.semanticPaneId || message.generation !== negotiated.generation || message.deliveryNonce !== negotiated.deliveryNonce || incarnation !== null && message.incarnation !== incarnation)
+            return true;
+          incarnation = message.incarnation;
+        }
+        return false;
+      }
+      /** Announce validated deliveries, then replay what each collected meanwhile. */
+      async #publishOpenedDeliveries(opened) {
         for (const { channel, delivery, markNegotiated } of opened) {
           if (this.#closed || channel.closed) {
             await delivery.close();
@@ -77621,9 +77697,37 @@ var init_pane_stream_websocket = __esm({
           markReady();
           this.#startGraphics(channel);
         }
-        this.#closeIfAllPanesGone();
       }
+      /**
+       * A tombstone ends a pane's delivery for good: the hub drops the pane and
+       * sends nothing more. Without capability 119 the pane's removal closes the
+       * stream anyway. With it, the removal arrives as a `topology` frame within
+       * moments; if none comes, the pane is still in the session and would stay
+       * blank for ever, so the stream closes as it would without the capability
+       * and the client takes a new one.
+       */
+      #watchTombstone(pane) {
+        const channel = this.#panes.get(pane);
+        if (!this.#topologyInPlace || !channel || channel.closed) return;
+        const timer = setTimeout(() => {
+          if (this.#closed || channel.retiredInPlace || this.#panes.get(pane) !== channel) return;
+          if (this.#topologyReconciling) {
+            this.#tombstonesAfterChange.add(channel);
+            return;
+          }
+          this.#failTopologyChanged("a pane that stays lost its source");
+        }, PANE_STREAM_TOPOLOGY_SETTLE_MS);
+        timer.unref?.();
+      }
+      /**
+       * Tombstoned channels whose guard came due while a change was being applied.
+       * The channel, not the pane id: a pane that left and came back within the
+       * change has a fresh channel, which this tombstone is not about.
+       */
+      #tombstonesAfterChange = /* @__PURE__ */ new Set();
       async #sendTerminalDelivery(pane, message) {
+        if ((message.type === "terminal.delivery" || message.type === "terminal.projection") && message.frame === "tombstone")
+          this.#watchTombstone(pane);
         if (message.type === "terminal.projection") {
           const channel = this.#panes.get(pane);
           if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
@@ -77752,7 +77856,7 @@ var init_pane_stream_websocket = __esm({
         if (!graphics) return;
         this.#observeSurfaceDemand([channel.semanticPaneId]);
         const zlib = this.#descriptor.terminalDelivery?.protocolVersions.some(
-          (version) => version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION || version === PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION || version === PANE_STREAM_READER_CAPABILITY_VERSION
+          (version) => version === TERMINAL_GRAPHICS_ZLIB_CAPABILITY_VERSION || version === PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION || version === PANE_STREAM_READER_CAPABILITY_VERSION || version === PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION
         ) === true;
         channel.graphicsZlib = zlib;
         channel.graphicsLocal = !!this.#localImages && this.#descriptor.terminalDelivery?.protocolVersions.some(
@@ -78108,11 +78212,20 @@ var init_pane_stream_websocket = __esm({
       }
       #onLayoutAuthority(snapshot3) {
         if (this.#closed || !this.#semanticExpectedPaneIds || !this.#semanticRuntimeSessionId) return;
-        if (snapshot3.session !== this.#descriptor.sessionName || snapshot3.runtimeSessionId !== this.#semanticRuntimeSessionId || snapshot3.topologyEpoch <= this.#semanticTopologyEpoch || snapshot3.layouts.length > PANE_STREAM_MAX_PANES) {
+        if (this.#topologyReconciling) {
+          this.#topologyPending = snapshot3;
+          this.#topologyWaiter?.();
+          return;
+        }
+        if (!this.#layoutAuthorityAdmissible(snapshot3)) {
           this.#failTopologyChanged();
           return;
         }
         const frames = this.#validateInitialLayout(snapshot3.layouts, this.#semanticExpectedPaneIds);
+        if (!frames && this.#topologyInPlace) {
+          void this.#reconcileTopology(snapshot3);
+          return;
+        }
         if (!frames || !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
           type: "layout-snapshot",
           topologyEpoch: snapshot3.topologyEpoch,
@@ -78122,10 +78235,7 @@ var init_pane_stream_websocket = __esm({
           this.#failTopologyChanged();
           return;
         }
-        const previousLinks = this.#semanticWindowLinks;
-        if (!previousLinks || snapshot3.windowLinks.liveSessionId !== previousLinks.liveSessionId || snapshot3.windowLinks.linkRevision < previousLinks.linkRevision || snapshot3.windowLinks.linkRevision === previousLinks.linkRevision && JSON.stringify(
-          [...snapshot3.windowLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))
-        ) !== JSON.stringify([...previousLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId)))) {
+        if (!this.#windowLinksAdmissible(snapshot3)) {
           this.#failTopologyChanged();
           return;
         }
@@ -78141,6 +78251,196 @@ var init_pane_stream_websocket = __esm({
           windowLinks: snapshot3.windowLinks
         });
       }
+      /** The same session and runtime, a newer epoch, a layout a stream can carry. */
+      #layoutAuthorityAdmissible(snapshot3) {
+        return snapshot3.session === this.#descriptor.sessionName && snapshot3.runtimeSessionId === this.#semanticRuntimeSessionId && snapshot3.topologyEpoch > this.#semanticTopologyEpoch && snapshot3.layouts.length <= PANE_STREAM_MAX_PANES;
+      }
+      #windowLinksAdmissible(snapshot3) {
+        const previousLinks = this.#semanticWindowLinks;
+        return !(!previousLinks || snapshot3.windowLinks.liveSessionId !== previousLinks.liveSessionId || snapshot3.windowLinks.linkRevision < previousLinks.linkRevision || snapshot3.windowLinks.linkRevision === previousLinks.linkRevision && JSON.stringify(
+          [...snapshot3.windowLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))
+        ) !== JSON.stringify([...previousLinks.links].sort((a, b) => a.linkId.localeCompare(b.linkId))));
+      }
+      /**
+       * Capability 119 (#723). Follow a changed pane set without closing: one
+       * change at a time, newest state only. Every doubt ends where a stream
+       * without the capability ends, in `#failTopologyChanged()`.
+       */
+      async #reconcileTopology(first) {
+        this.#topologyReconciling = true;
+        let snapshot3 = first;
+        try {
+          for (; ; ) {
+            this.#topologyPending = null;
+            const outcome = await this.#applyTopology(snapshot3);
+            if (this.#closed) return;
+            if (outcome === "failed") return this.#failTopologyChanged(this.#topologyFailure);
+            let next = this.#topologyPending;
+            if (outcome === "stale" && !next) {
+              next = await this.#nextTopologySnapshot();
+              if (this.#closed) return;
+              if (!next) return this.#failTopologyChanged();
+            }
+            if (!next) return;
+            if (!this.#layoutAuthorityAdmissible(next)) return this.#failTopologyChanged();
+            snapshot3 = next;
+          }
+        } finally {
+          this.#topologyReconciling = false;
+          this.#topologyPending = null;
+          const tombstoned = [...this.#tombstonesAfterChange];
+          this.#tombstonesAfterChange.clear();
+          for (const channel of tombstoned)
+            if (this.#panes.get(channel.semanticPaneId) === channel)
+              this.#watchTombstone(channel.semanticPaneId);
+        }
+      }
+      #nextTopologySnapshot() {
+        if (this.#topologyPending) return Promise.resolve(this.#topologyPending);
+        return new Promise((resolve47) => {
+          const finish = () => {
+            clearTimeout(timer);
+            this.#topologyWaiter = null;
+            resolve47(this.#topologyPending);
+          };
+          const timer = setTimeout(finish, PANE_STREAM_TOPOLOGY_SETTLE_MS);
+          timer.unref?.();
+          this.#topologyWaiter = finish;
+        });
+      }
+      /**
+       * "applied": the client was told and the stream goes on. "stale": this
+       * layout does not fit the session's inventory as read now; a newer layout
+       * decides. "failed": close.
+       */
+      async #applyTopology(snapshot3) {
+        const binding = this.#sessionRuntimeBinding;
+        const offer = this.#descriptor.terminalDelivery;
+        if (!binding || !offer || !this.#semanticExpectedPaneIds || !this.#windowLinksAdmissible(snapshot3))
+          return this.#topologyFailed("not a semantic stream, or its window links changed");
+        let described;
+        let inventoryIsThisSession = false;
+        try {
+          if (this.#mirror.describeSessionAuthority) {
+            const authority2 = await this.#mirror.describeSessionAuthority(this.#descriptor.sessionName);
+            if (authority2.runtimeSessionId !== this.#semanticRuntimeSessionId)
+              return this.#topologyFailed("inventory is of another runtime session");
+            described = authority2.description;
+            inventoryIsThisSession = true;
+          } else {
+            described = await this.#mirror.describeSession(this.#descriptor.sessionName);
+          }
+        } catch (error) {
+          return this.#topologyFailed("session inventory unavailable", error);
+        }
+        if (this.#closed) return this.#topologyFailed("closed");
+        const next = [...new Set(described.panes.map((pane) => pane.semanticPaneId))].sort();
+        if (next.length === 0) return this.#topologyFailed("session has no panes");
+        const frames = this.#validateInitialLayout(snapshot3.layouts, next);
+        if (!frames) return "stale";
+        if (!PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+          type: "layout-snapshot",
+          topologyEpoch: snapshot3.topologyEpoch,
+          layouts: frames,
+          windowLinks: snapshot3.windowLinks
+        }).success)
+          return this.#topologyFailed("layout snapshot invalid");
+        const live = [...this.#panes.values()].filter((channel) => !channel.closed);
+        const removed = live.filter((channel) => !next.includes(channel.semanticPaneId));
+        const liveIds = new Set(live.map((channel) => channel.semanticPaneId));
+        const added = this.#leasesWholeSession ? next.filter((pane) => !liveIds.has(pane)) : [];
+        if (added.length > 0 && !inventoryIsThisSession)
+          return this.#topologyFailed("inventory cannot prove the runtime session");
+        const remaining = live.length - removed.length + added.length;
+        if (remaining === 0 || remaining > PANE_STREAM_MAX_PANES)
+          return this.#topologyFailed("pane count outside the stream limit");
+        if (added.length > 0) {
+          try {
+            if (!binding.amendPaneGrant)
+              return this.#topologyFailed("transport cannot amend its grant");
+            binding.amendPaneGrant({ added, removed: [] });
+          } catch (error) {
+            return this.#topologyFailed("pane grant refused", error);
+          }
+        }
+        const channels = added.map(newPaneChannel);
+        const settled = await Promise.allSettled(
+          channels.map((channel) => this.#openPaneDelivery(binding, offer, channel))
+        );
+        const opened = settled.flatMap(
+          (result2) => result2.status === "fulfilled" ? [result2.value] : []
+        );
+        if (this.#closed || opened.length !== channels.length || opened.some((entry) => this.#deliveryIdentityChanged(entry))) {
+          await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
+          if (added.length > 0) {
+            try {
+              binding.amendPaneGrant?.({ added: [], removed: added });
+            } catch {
+            }
+          }
+          const rejected = settled.find((result2) => result2.status === "rejected");
+          return this.#topologyFailed(
+            this.#closed ? "closed while opening" : rejected ? "delivery open rejected" : opened.some((entry) => !entry.delivery.negotiation.accepted) ? "delivery negotiation refused" : "delivery identity changed",
+            rejected?.status === "rejected" ? rejected.reason : void 0
+          );
+        }
+        if (removed.length > 0) {
+          try {
+            binding.amendPaneGrant?.({
+              added: [],
+              removed: removed.map((channel) => channel.semanticPaneId)
+            });
+          } catch {
+          }
+        }
+        for (const channel of removed) this.#retirePaneInPlace(channel);
+        for (const channel of channels) this.#panes.set(channel.semanticPaneId, channel);
+        this.#semanticExpectedPaneIds = next;
+        this.#semanticWindowLinks = snapshot3.windowLinks;
+        this.#semanticTopologyEpoch = snapshot3.topologyEpoch;
+        this.#semanticLayouts.clear();
+        for (const event of snapshot3.layouts)
+          this.#semanticLayouts.set(event.semanticWindowId, event);
+        this.#sendFrame(null, {
+          type: "topology",
+          topologyEpoch: snapshot3.topologyEpoch,
+          panes: [...this.#panes.values()].filter((channel) => !channel.closed).map((channel) => channel.semanticPaneId),
+          removed: removed.map((channel) => channel.semanticPaneId),
+          added
+        });
+        this.#sendFrame(null, {
+          type: "layout-snapshot",
+          topologyEpoch: snapshot3.topologyEpoch,
+          layouts: frames,
+          windowLinks: snapshot3.windowLinks
+        });
+        await this.#publishOpenedDeliveries(opened);
+        return "applied";
+      }
+      #topologyFailure = "";
+      #topologyFailed(why, error) {
+        this.#topologyFailure = error === void 0 ? why : `${why}: ${String(error).slice(0, 200)}`;
+        return "failed";
+      }
+      /** A pane that left the session: its delivery ends, the stream does not. */
+      #retirePaneInPlace(channel) {
+        const sub = channel.sub;
+        const delivery = channel.delivery;
+        channel.sub = null;
+        channel.delivery = null;
+        channel.closed = true;
+        channel.retiredInPlace = true;
+        channel.deliveryAddress = null;
+        channel.batch = null;
+        channel.graphicsQueue = [];
+        channel.graphicsServed = /* @__PURE__ */ new Map();
+        channel.graphicsState = null;
+        this.#surfaceDemands.get(channel.semanticPaneId)?.close();
+        this.#surfaceDemands.delete(channel.semanticPaneId);
+        if (sub) void sub.close().catch(() => void 0);
+        if (delivery) void delivery.close().catch(() => void 0);
+        this.#ledger.forgetPane(this.#clientId, channel.semanticPaneId);
+      }
       #onLayout(event) {
         if (this.#closed) return;
         const frame = this.#layoutFrame(event);
@@ -78151,7 +78451,9 @@ var init_pane_stream_websocket = __esm({
         this.#sendFrame(null, frame);
       }
       #offers(version) {
-        return this.#descriptor.terminalDelivery?.protocolVersions.includes(version) === true;
+        const offered = this.#descriptor.terminalDelivery?.protocolVersions;
+        if (!offered) return false;
+        return offered.includes(version) || (version === PANE_STREAM_READER_CAPABILITY_VERSION || version === PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION) && offered.includes(PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION);
       }
       #layoutFrame(event) {
         const frame = {
@@ -78204,8 +78506,10 @@ var init_pane_stream_websocket = __esm({
           return null;
         return frames;
       }
-      #failTopologyChanged() {
+      /** `inPlaceFailure`: why a capability-119 stream could not follow the change. */
+      #failTopologyChanged(inPlaceFailure) {
         if (this.#closed) return;
+        if (inPlaceFailure) this.#closeCause = { cause: `topology-in-place: ${inPlaceFailure}` };
         this.#sendFrame(null, {
           type: "error",
           protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
@@ -78711,6 +79015,7 @@ var init_pane_stream_websocket = __esm({
       }
       #deliveryChannel(address) {
         const channel = this.#panes.get(address.semanticPaneId);
+        if (channel?.retiredInPlace) return null;
         const expected = channel?.deliveryAddress;
         if (!channel?.delivery || !expected || expected.workspaceName !== address.workspaceName || expected.generation !== address.generation || expected.deliveryNonce !== address.deliveryNonce || expected.incarnation === null) {
           this.#failProtocol("protocol-error");
@@ -78766,6 +79071,7 @@ var init_pane_stream_websocket = __esm({
       }
       #acceptConsumed(pane, seq) {
         const channel = this.#panes.get(pane);
+        if (channel?.retiredInPlace) return;
         if (!this.#deliveryAcks || !channel || seq <= channel.consumedSeq || seq > channel.sentPaneFrames) {
           this.#failProtocol("protocol-error");
           return;
@@ -78793,6 +79099,7 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         const channel = this.#panes.get(pane);
+        if (channel?.retiredInPlace) return;
         const semanticDelivery = this.#descriptor.terminalDelivery !== null;
         if (!channel || channel.closed || (semanticDelivery ? !channel.delivery : !channel.sub) || seq !== channel.nextInputSeq) {
           this.#failProtocol("input-rejected");
@@ -78856,6 +79163,7 @@ var init_pane_stream_websocket = __esm({
         this.#inputWindowBytes += frameBytes;
         channel.nextInputSeq += 1;
         const deliver = () => {
+          if (channel.retiredInPlace) return;
           try {
             this.#sessionRuntimeBinding.assertController(pane);
             if (semanticDelivery)
