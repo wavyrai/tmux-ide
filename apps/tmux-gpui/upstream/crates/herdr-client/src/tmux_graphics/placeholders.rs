@@ -61,6 +61,11 @@ fn decode(grapheme: &str, foreground: &Color, left: Option<Cell>) -> Option<Cell
     {
         image = left.image;
     }
+    // Image 0 (the default colour, no high byte) is no image: kitty ids start
+    // at 1. Such a cell is the character as text, never a placeholder.
+    if image == 0 {
+        return None;
+    }
     Some(Cell { image, row, column })
 }
 fn runs(row: &Row, y: usize) -> Result<Vec<Rect>, Error> {

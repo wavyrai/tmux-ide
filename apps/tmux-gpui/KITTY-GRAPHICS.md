@@ -106,9 +106,11 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   decision, 16 Nov 2026). They survive window reattach but not a daemon restart,
   after which placeholder cells paint blank. The window then notices placeholder
   cells that name an image the daemon does not hold, and after a second its status
-  line says "Images from before the restart are gone; redraw to see them." The
-  notice goes as soon as the program redraws and the image arrives again. Only the
-  native window shows it; the development bridge does not.
+  line says "Some images are no longer available; redraw to see them." The same
+  happens when the memory budget evicts an image, or the program deletes one, while
+  its placeholders stay on screen. The notice goes as soon as the program redraws and
+  the image arrives again. U+10EEEE in the default colour names no image and is text.
+  Only the native window shows the notice; the development bridge does not.
 - When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet
   know the window's real cell size.
 - Not modelled: animation frames other than root-frame edits, relative

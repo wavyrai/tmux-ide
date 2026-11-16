@@ -4,7 +4,9 @@
 //! until the program redraws and the image arrives again.
 use std::time::{Duration, Instant};
 
-pub(super) const NOTICE: &str = "Images from before the restart are gone; redraw to see them.";
+/// True for every way the daemon loses an image while its placeholders stay:
+/// a restart, the memory budget's eviction, or the program deleting it.
+pub(super) const NOTICE: &str = "Some images are no longer available; redraw to see them.";
 
 /// Placeholders of an image that is still on its way are not a notice: when a
 /// pane opens, its cells can arrive a moment before its images.
