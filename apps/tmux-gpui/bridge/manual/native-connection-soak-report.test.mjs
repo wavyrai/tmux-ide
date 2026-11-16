@@ -55,3 +55,37 @@ test("a typed line lost without a notice is a silent loss, with or without a dro
   assert.equal(report.totals.silentKeyLoss, 2);
   assert.match(table(report), /\| idle \| 0 \| 0 \| 0 \|/u);
 });
+
+test("a pane change the stream followed in place is not a disconnect", () => {
+  const layout = "Updating the terminal layout…";
+  const report = run(
+    [
+      { event: "down", fault: "pane-split#1" },
+      { event: "up", fault: "pane-split#1", ms: 40, msAfterFault: 0, manual: [], trail: [layout] },
+      { event: "down", fault: "pane-split#1" },
+      { event: "up", fault: "pane-split#1", ms: 64, msAfterFault: 64, manual: [], trail: [layout] },
+      // The stream was replaced: a disconnect as any other.
+      { event: "down", fault: "pane-split#2" },
+      {
+        event: "up",
+        fault: "pane-split#2",
+        ms: 300,
+        msAfterFault: 300,
+        manual: [],
+        trail: [layout, "Reconnecting… attempt 1", "Connected"],
+      },
+    ],
+    [
+      { tag: "pane-split#1", name: "pane-split", expectedEnd: false },
+      { tag: "pane-split#2", name: "pane-split", expectedEnd: false },
+    ],
+  );
+  const [row] = report.faults;
+  assert.equal(row.disconnects, 1);
+  assert.equal(row.recovered, 1);
+  assert.equal(row.max, 300);
+  assert.equal(row.inPlace, 2);
+  assert.equal(row.inPlaceMax, 64);
+  assert.equal(report.totals.inPlace, 2);
+  assert.match(table(report), /\| 2 \(64 ms\) \|$/m);
+});

@@ -93,6 +93,11 @@ pub(in crate::tmux_snapshot) enum Command {
         generation: String,
         presence_revision: u64,
         layouts: Vec<herdr_client::tmux_topology::Layout>,
+        /// In-process only. The stream's whole pane set, when the stream
+        /// follows pane changes in place (capability 119); `None` when its
+        /// set is the lease's.
+        #[serde(skip)]
+        issued: Option<Vec<String>>,
     },
     #[serde(rename = "native-terminal-refresh")]
     NativeTerminalRefresh {

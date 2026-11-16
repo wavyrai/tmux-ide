@@ -13,6 +13,12 @@ pub(super) struct PendingSelection {
     source: Target,
     target: Target,
 }
+impl PendingSelection {
+    /// Whether the selection leaves or enters a pane for which `gone` holds.
+    pub(super) fn names(&self, gone: &impl Fn(&str) -> bool) -> bool {
+        gone(&self.source.pane) || gone(&self.target.pane)
+    }
+}
 #[derive(Debug)]
 pub struct SelectionCompletion {
     pub operation_id: String,

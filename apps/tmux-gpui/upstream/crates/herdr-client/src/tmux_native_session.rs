@@ -417,6 +417,21 @@ impl NativeSession {
             mailbox.unavailable = unavailable.iter().map(|p| (*p).to_owned()).collect();
         }
     }
+    /// Test seam: a pane's commit as the worker would publish it.
+    #[cfg(test)]
+    pub(crate) fn push_commit(&self, pane: &str, committed: Arc<CommittedPane>) {
+        if let Ok(mut mailbox) = self.shared.lock() {
+            mailbox.commit(pane.to_owned(), committed, Vec::new());
+        }
+    }
+    /// Test seam: a control frame as the worker would queue it.
+    #[cfg(test)]
+    pub(crate) fn push_control(&self, control: serde_json::Value) {
+        if let Ok(mut mailbox) = self.shared.lock() {
+            let raw = serde_json::value::to_raw_value(&control).unwrap_or_default();
+            mailbox.controls.push(raw);
+        }
+    }
     pub fn drain(&self) -> Result<Updates, Error> {
         let mut mailbox = self.shared.lock().map_err(|_| Error::Mailbox)?;
         let panes = std::mem::take(&mut mailbox.pending)
@@ -638,6 +653,15 @@ fn run(
                     Outcome::Ready(_) => {
                         if let Some(surfaces) = &mut surfaces { surfaces.start(stream)?; }
                     }
+                    Outcome::Topology { change, .. } => {
+                        // The worker's own per-pane state follows before the
+                        // mailbox does (in `publish`), so nothing keeps a pane
+                        // that left the stream.
+                        for pane in &change.removed { committed.remove(pane); }
+                        if let Some(graphics) = graphics.as_mut() {
+                            graphics.follow(&change.removed, &change.added)?;
+                        }
+                    }
                     Outcome::Control(raw) => {
                         #[derive(serde::Deserialize)]
                         struct Kind<'a> { #[serde(rename="type")] kind: &'a str }
@@ -722,6 +746,19 @@ fn publish_locked(mailbox: &mut Mailbox, outcome: Outcome) -> Result<(), Error> 
         Outcome::Unavailable(pane) => {
             mailbox.reseeding.remove(&pane);
             mailbox.unavailable.insert(pane);
+        }
+        Outcome::Topology { change, raw } => {
+            for pane in &change.removed {
+                mailbox.materializing.remove(pane);
+                mailbox.reseeding.remove(pane);
+                mailbox.unavailable.remove(pane);
+                mailbox.current.remove(pane);
+                mailbox.pending.remove(pane);
+                mailbox.graphics_placements.remove(pane);
+                mailbox.received.remove(pane);
+            }
+            // In order with the layout snapshot that follows it.
+            return publish_locked(mailbox, Outcome::Control(raw));
         }
 
         Outcome::Ready(ready) => mailbox.status = Status::Ready(Arc::new(ready)),

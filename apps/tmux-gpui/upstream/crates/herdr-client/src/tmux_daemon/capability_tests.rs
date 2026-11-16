@@ -97,3 +97,137 @@ fn refusal_preserves_code_without_peer_text() {
     ));
     assert!(!format!("{error:?}").contains("private-material"));
 }
+
+/// #723. The daemon's schema allows nine numbers; one more and no stream can
+/// be issued at all, by any daemon. 119 is offered wherever it fits. The one
+/// offer that is already full (graphics, native surfaces and input) offers
+/// 120 in place of 118, to a daemon that knows 120, and stays as it was for
+/// any other: a daemon that predates 120 would give neither 118 nor 119.
+#[test]
+fn topology_in_place_is_offered_within_the_nine_number_bound() {
+    for graphics in [false, true] {
+        for local_images in [false, true] {
+            for native_surfaces in [false, true] {
+                for interactive in [false, true] {
+                    for bundle in [false, true] {
+                        let offer = offered_versions(
+                            graphics,
+                            local_images,
+                            native_surfaces,
+                            interactive,
+                            bundle,
+                        );
+                        let case = (graphics, local_images, native_surfaces, interactive, bundle);
+                        assert!(offer.len() <= 9, "{case:?}: {offer:?}");
+                        let unique: std::collections::BTreeSet<_> = offer.iter().collect();
+                        assert_eq!(unique.len(), offer.len(), "{case:?}");
+                        let full = graphics && native_surfaces && interactive;
+                        assert_eq!(offer.contains(&119), !full, "{case:?}: {offer:?}");
+                        assert_eq!(offer.contains(&120), full && bundle, "{case:?}: {offer:?}");
+                        assert_eq!(
+                            offer.contains(&118),
+                            graphics && !(full && bundle),
+                            "{case:?}: {offer:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        offered_versions(true, false, false, true, true),
+        [1, 101, 113, 118, 103, 104, 105, 106, 119]
+    );
+    assert_eq!(
+        offered_versions(true, true, true, true, false),
+        [1, 101, 114, 118, 103, 104, 116, 105, 106]
+    );
+    assert_eq!(
+        offered_versions(true, true, true, true, true),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106]
+    );
+}
+
+#[test]
+fn only_a_daemon_release_that_knows_the_bundle_is_offered_it() {
+    let [major, minor, patch] = TOPOLOGY_BUNDLE_SINCE;
+    let version = |major: u64, minor: u64, patch: u64| format!("{major}.{minor}.{patch}");
+    assert!(knows_topology_bundle(Some(&version(major, minor, patch))));
+    assert!(knows_topology_bundle(Some(&version(
+        major,
+        minor,
+        patch + 1
+    ))));
+    assert!(knows_topology_bundle(Some(&version(major, minor + 1, 0))));
+    assert!(knows_topology_bundle(Some(&version(major + 1, 0, 0))));
+    assert!(patch > 0, "the cases below need an earlier patch release");
+    assert!(!knows_topology_bundle(Some(&version(
+        major,
+        minor,
+        patch - 1
+    ))));
+    assert!(!knows_topology_bundle(Some(&version(
+        major,
+        minor - 1,
+        patch + 5
+    ))));
+    assert!(!knows_topology_bundle(Some(&version(
+        major - 1,
+        minor + 5,
+        patch + 5
+    ))));
+    // A build of the release that is not the release, an SSH daemon whose
+    // version this side does not hold, and anything that is no version.
+    let pre = format!("{}-rc.1", version(major, minor, patch));
+    for unknown in [
+        Some(pre.as_str()),
+        None,
+        Some(""),
+        Some("2.9"),
+        Some("2.9.x"),
+        Some("v2.9.99"),
+        Some("2.9.99.1"),
+    ] {
+        assert!(!knows_topology_bundle(unknown), "{unknown:?}");
+    }
+}
+
+/// Review of 799ce7fc: the gate pinned in released versions, not only
+/// relative to its own constant. 120 ships with daemon 2.9.25 (the owner holds
+/// 2.9.25 for #723). A released daemon offered 120 would give neither 118 nor
+/// 119, and a full interactive stream would silently lose zlib graphics,
+/// browser icons and reader badges.
+#[test]
+fn released_daemons_before_2_9_25_keep_118_and_2_9_25_gets_120() {
+    for released in ["2.9.22", "2.9.23", "2.9.24"] {
+        assert!(!knows_topology_bundle(Some(released)), "{released}");
+        let offer = offered_versions(
+            true,
+            true,
+            true,
+            true,
+            knows_topology_bundle(Some(released)),
+        );
+        assert!(offer.contains(&118), "{released}: {offer:?}");
+        assert!(
+            !offer.contains(&119) && !offer.contains(&120),
+            "{released}: {offer:?}"
+        );
+    }
+    for knowing in ["2.9.25", "2.9.26", "2.10.0", "3.0.0"] {
+        assert!(knows_topology_bundle(Some(knowing)), "{knowing}");
+        let offer = offered_versions(true, true, true, true, knows_topology_bundle(Some(knowing)));
+        assert!(
+            offer.contains(&120) && !offer.contains(&118),
+            "{knowing}: {offer:?}"
+        );
+    }
+    for unknown in ["2.9.25-rc.1", "2.9.25+build", "not a version", "2.9"] {
+        assert!(!knows_topology_bundle(Some(unknown)), "{unknown}");
+        let offer = offered_versions(true, true, true, true, knows_topology_bundle(Some(unknown)));
+        assert!(
+            offer.contains(&118) && !offer.contains(&120),
+            "{unknown}: {offer:?}"
+        );
+    }
+}

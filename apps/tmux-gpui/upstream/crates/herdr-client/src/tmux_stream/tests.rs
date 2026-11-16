@@ -4,6 +4,7 @@ mod boundary;
 mod idle;
 mod liveness;
 mod pane_bytes;
+mod topology;
 mod transport;
 
 mod remote;

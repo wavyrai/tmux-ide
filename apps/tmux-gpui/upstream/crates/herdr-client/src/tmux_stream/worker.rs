@@ -347,6 +347,7 @@ fn run(
     }
     socket.send(Message::Text(redeem.into()))?;
     let mut verified = false;
+    let mut live = wire::Live::new(&options);
     // Whether the socket may have bytes, or tungstenite a whole frame read
     // ahead: true until a read finds nothing.
     let mut readable = true;
@@ -364,7 +365,7 @@ fn run(
         };
         match read {
             Ok(Message::Text(text)) => {
-                let event = wire::parse(&text, &options, verified)?;
+                let event = wire::parse_live(&text, &options, &mut live, verified)?;
                 verified = true;
                 deliver(&events, event, cancel)?;
             }
@@ -372,7 +373,7 @@ fn run(
                 if !verified || bytes.len() > 8 + 4096 + 512 * 1024 {
                     return Err(Error::FrameBound);
                 }
-                deliver(&events, wire::parse_binary(&bytes, &options)?, cancel)?;
+                deliver(&events, wire::parse_binary_live(&bytes, &live)?, cancel)?;
             }
             Ok(Message::Ping(_) | Message::Pong(_)) => continue,
             Ok(Message::Close(frame)) => {

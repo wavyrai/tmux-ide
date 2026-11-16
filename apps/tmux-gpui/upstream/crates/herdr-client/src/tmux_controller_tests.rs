@@ -61,7 +61,7 @@ fn populate(controller: &mut Controller) {
         .unwrap();
     controller.actionable = true;
 }
-fn fixture() -> (
+pub(super) fn fixture() -> (
     Controller,
     mpsc::Receiver<Value>,
     mpsc::Sender<Value>,

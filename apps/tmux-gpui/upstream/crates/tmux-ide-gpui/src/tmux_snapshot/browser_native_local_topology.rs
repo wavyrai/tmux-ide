@@ -14,6 +14,7 @@ impl Local {
             generation,
             presence_revision,
             layouts,
+            issued: stream_panes,
         } = command
         else {
             return Ok(());
@@ -24,7 +25,6 @@ impl Local {
             || request != self.state.request
             || presence_revision != self.presence_revision
             || self.state.selected_session.as_ref() != Some(&live_session_id)
-            || self.state.selected_pane.as_ref() != Some(&pane)
             || !self.active.as_ref().is_some_and(|route| {
                 route.id == id
                     && route.request == request
@@ -33,6 +33,16 @@ impl Local {
             })
             || layouts.len() > 256
         {
+            return Ok(());
+        }
+        // A stream that follows pane changes in place names its own pane set:
+        // this side's list (the next lease, the pane choices) follows it.
+        if let Some(stream_panes) = &stream_panes
+            && !self.follow_stream_panes(stream_panes, &pane)
+        {
+            return Ok(());
+        }
+        if self.state.selected_pane.as_ref() != Some(&pane) {
             return Ok(());
         }
         // The terminal controller already validated topology and revisions. The
@@ -105,6 +115,47 @@ impl Local {
         self.state.panes = choices;
         self.state.session_catalog_complete = true;
         self.publish()
+    }
+}
+
+impl Local {
+    /// Takes the pane set of a stream that followed a pane change in place
+    /// (capability 119). Panes that stayed keep their entry and order; added
+    /// ones are appended until the layout names them. The selected pane moves
+    /// to `selected` only when the one this side holds left the stream: a
+    /// selection the user made travels by its own acknowledgement. `false`
+    /// when the set is not one a stream can have.
+    fn follow_stream_panes(&mut self, stream_panes: &[String], selected: &str) -> bool {
+        let unique: BTreeSet<&str> = stream_panes.iter().map(String::as_str).collect();
+        if stream_panes.is_empty()
+            || stream_panes.len() > 24
+            || unique.len() != stream_panes.len()
+            || !unique.contains(selected)
+        {
+            return false;
+        }
+        if (self.state.selected_pane.as_deref()).is_none_or(|held| !unique.contains(held)) {
+            self.state.selected_pane = Some(selected.to_owned());
+        }
+        let mut panes: Vec<Choice> = std::mem::take(&mut self.state.panes)
+            .into_iter()
+            .filter(|choice| unique.contains(choice.id.as_str()))
+            .collect();
+        for id in stream_panes {
+            if !panes.iter().any(|choice| &choice.id == id) {
+                panes.push(Choice {
+                    id: id.clone(),
+                    label: id.clone(),
+                    pane_count: None,
+                    window_id: None,
+                    browser_icon: None,
+                    display_name_source: None,
+                    window_label: None,
+                });
+            }
+        }
+        self.state.panes = panes;
+        true
     }
 }
 
