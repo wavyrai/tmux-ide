@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createDaemonCrashSnapshot,
+  daemonCrashSnapshotStart,
   DAEMON_CRASH_SNAPSHOT_INTERVAL_MS,
   startDaemonCrashSnapshot,
 } from "./daemon-crash-snapshot.ts";
@@ -246,6 +247,23 @@ describe("the crash snapshot timer", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("receives the source the daemon's owner injected, in every generation", () => {
+    const run = async () => "";
+    const retired = () => false;
+    const start = daemonCrashSnapshotStart(
+      { launcher: "headless", crashSnapshotSource: fleetCrashSnapshotSource },
+      run,
+      retired,
+    );
+    expect(start.source).toBe(fleetCrashSnapshotSource);
+    expect(start).toMatchObject({ launcher: "headless", run, retired });
+    // A host that embeds the daemon and injects nothing: embedded, no source.
+    expect(daemonCrashSnapshotStart({}, run, retired)).toMatchObject({
+      launcher: "embedded",
+      source: undefined,
+    });
   });
 
   it("is given the chrome adapter's own formats, file and fingerprint", () => {

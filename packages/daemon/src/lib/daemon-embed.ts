@@ -1,6 +1,10 @@
 import { createPaneReaderResolver } from "./tmux-pane-reader.ts";
 import { createNativeBrowserResolver } from "./tmux-native-browser.ts";
-import { startDaemonCrashSnapshot, type CrashSnapshotSource } from "./daemon-crash-snapshot.ts";
+import {
+  daemonCrashSnapshotStart,
+  startDaemonCrashSnapshot,
+  type CrashSnapshotSource,
+} from "./daemon-crash-snapshot.ts";
 import { createNativeSurfaceContextResolver } from "./native-surface-context.ts";
 import { NativeSurfaceProviderRegistry } from "../terminal/graphics/native-surface-provider.ts";
 import { TmuxServerVersionSchemaZ } from "@tmux-ide/contracts";
@@ -1851,12 +1855,13 @@ async function startEmbeddedDaemonGeneration(
       // when no chrome updater does (#783). An app-embedded daemon does not: it
       // lives only as long as its window. The timer ends with this generation.
       const snapshotInventory = terminalInventoryRuntime;
-      startDaemonCrashSnapshot({
-        launcher: opts.launcher ?? "embedded",
-        source: opts.crashSnapshotSource,
-        run: (args) => fleetFactsTmuxRunner(args),
-        retired: () => ["disposed", "failed"].includes(snapshotInventory.lifecycleState()),
-      });
+      startDaemonCrashSnapshot(
+        daemonCrashSnapshotStart(
+          opts,
+          (args) => fleetFactsTmuxRunner(args),
+          () => ["disposed", "failed"].includes(snapshotInventory.lifecycleState()),
+        ),
+      );
       const getTerminalAttachmentRuntime = (): NativeTerminalAttachmentRuntime => {
         if (terminalAttachmentRuntime) return terminalAttachmentRuntime;
         terminalAttachmentRuntime = createNativeTerminalAttachmentRuntime({

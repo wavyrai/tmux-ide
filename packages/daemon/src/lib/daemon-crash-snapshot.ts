@@ -119,6 +119,27 @@ export function createDaemonCrashSnapshot<S extends CrashSnapshotSummary>(
 }
 
 /**
+ * What a daemon generation passes to {@link startDaemonCrashSnapshot}: its
+ * launcher and the source its owner injected. A pure function so a test can pin
+ * that the source reaches the writer without starting a daemon.
+ */
+export function daemonCrashSnapshotStart(
+  opts: {
+    readonly launcher?: "headless" | "embedded";
+    readonly crashSnapshotSource?: CrashSnapshotSource;
+  },
+  run: (args: readonly string[]) => Promise<string>,
+  retired: () => boolean,
+): Parameters<typeof startDaemonCrashSnapshot<CrashSnapshotSummary>>[0] {
+  return {
+    launcher: opts.launcher ?? "embedded",
+    source: opts.crashSnapshotSource,
+    run,
+    retired,
+  };
+}
+
+/**
  * Pulse on a timer until `retired` says the daemon generation is gone; the
  * timer then clears itself, so no stop step has to know about it. Returns a
  * stop function for callers that have one. Only the background service
