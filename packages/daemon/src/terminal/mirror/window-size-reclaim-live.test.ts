@@ -86,22 +86,33 @@ describe.skipIf(!available)("the app wins the window back from another client (#
     service.fitViewport("proof", 97, 30);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // What runs now sees the app's width.
-    run("send-keys", "-t", "proof", "c=$(tput cols); printf '%*s|\\n' $(( c - 1 )) ''", "Enter");
-    const bars = () =>
-      run("capture-pane", "-p", "-t", "proof")
+    // What runs now lays its output out for the width it sees, as ls does: one
+    // word as wide as the terminal less one column, and nothing else on the row.
+    run(
+      "send-keys",
+      "-t",
+      "proof",
+      "clear; c=$(tput cols); printf '%0.sx' $(seq 1 $(( c - 1 ))); echo",
+      "Enter",
+    );
+    const words = () =>
+      run("capture-pane", "-p", "-S", "-", "-t", "proof")
         .split("\n")
-        .filter((row) => /^ +\|$/u.test(row));
-    await vi.waitFor(() => expect(bars()).toHaveLength(1));
+        .filter((row) => /^x+$/u.test(row));
+    await vi.waitFor(() => expect(words()).toHaveLength(1));
     other.stdin!.end("detach-client\n");
     await vi.waitFor(() =>
       expect(run("list-clients", "-F", "#{client_width}").split("\n")).toEqual(["97"]),
     );
-    const rows = run("capture-pane", "-p", "-t", "proof").split("\n").filter(Boolean);
-    const joined = run("capture-pane", "-p", "-J", "-t", "proof").split("\n").filter(Boolean);
-    // Rows tmux re-wrapped when the window narrowed back to the app's size.
-    expect(rows.length - joined.length).toBe(0);
-    expect(bars().map((row) => row.length)).toEqual([97]);
+    // tmux re-wraps rows wider than the window when it narrows: the word would
+    // then be cut in two, as `ls` names were in the 31 Oct capture. History
+    // included: the first half scrolls off the screen.
+    const rows = run("capture-pane", "-p", "-S", "-", "-t", "proof").split("\n").filter(Boolean);
+    const joined = run("capture-pane", "-p", "-J", "-S", "-", "-t", "proof")
+      .split("\n")
+      .filter(Boolean);
+    expect(rows).toEqual(joined);
+    expect(words().map((row) => row.length)).toEqual([96]);
   });
 
   it("does not fight: the app wins the window only when it fits, never on its own", async () => {

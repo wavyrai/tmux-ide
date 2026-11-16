@@ -755,7 +755,7 @@ impl SnapshotView {
                             } else {
                                 view.fit_settle.clear();
                             }
-                            view.observe_window_size(&frame);
+                            view.observe_window_size(&frame, cx.background_executor().now());
                         });
                         if let Some(preview) = &resize_preview
                             && cards.is_none()
