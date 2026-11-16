@@ -619,6 +619,7 @@ mod tests {
     #[derive(serde::Deserialize)]
     struct Preset {
         id: String,
+        name: String,
         mode: String,
         dark: crate::tmux_snapshot::appearance::Colors,
         light: crate::tmux_snapshot::appearance::Colors,
@@ -659,6 +660,48 @@ mod tests {
             }
         }
         themes
+    }
+
+    /// The native-alpha notes name the themes whose sidebar stays opaque. The
+    /// names are the picker's, and the list is the one `frost` gives: a theme
+    /// is opaque when every variant it shows has no frost.
+    #[test]
+    fn the_docs_name_the_opaque_themes_as_the_picker_does() {
+        let docs = include_str!("../../../../../../../docs/content/docs/native-alpha.mdx");
+        let presets: Vec<Preset> =
+            serde_json::from_str(include_str!("appearance/catalog.json")).unwrap();
+        let mut opaque: Vec<String> = Vec::new();
+        for (preset, themes) in presets.iter().zip(catalog().chunks(2)) {
+            let shown: Vec<&Theme> = themes
+                .iter()
+                .filter(|(_, mode, _)| preset.mode == "system" || *mode == preset.mode)
+                .map(|(_, _, theme)| theme)
+                .collect();
+            if shown.iter().all(|theme| super::frost(theme).is_none()) {
+                opaque.push(preset.name.clone());
+            }
+        }
+        let listed = docs
+            .split("density chosen per theme; ")
+            .nth(1)
+            .and_then(|rest| rest.split(" stay opaque").next())
+            .expect("the notes list the opaque themes");
+        let mut listed: Vec<String> = listed
+            .replace('\n', " ")
+            .split(", ")
+            .flat_map(|part| part.split(" and "))
+            .map(|name| name.trim().to_owned())
+            .collect();
+        listed.sort();
+        opaque.sort();
+        assert_eq!(listed, opaque);
+        // The default, and the two themes it shows, by the picker's names.
+        let system = &presets[0];
+        assert_eq!(system.mode, "system");
+        for name in [system.name.as_str(), "Linen", "Linen Dark"] {
+            assert!(presets.iter().any(|p| p.name == name), "{name} is not a preset");
+            assert!(docs.contains(name), "the notes do not name {name}");
+        }
     }
 
     #[test]
