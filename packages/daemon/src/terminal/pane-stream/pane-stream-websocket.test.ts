@@ -2631,6 +2631,33 @@ describe("PaneStreamAdmissionCoordinator", () => {
 
     // Found with a real 119 client on a live daemon: its ack for the removed
     // pane's last delivery was already on the wire and closed the stream 1008.
+    it("closes as before when the change also comes with other window links (review of #723)", async () => {
+      // The window-links check is the only one that keeps a session replaced
+      // under the same live layout (another live session id) out of a change
+      // followed in place, and with it out of the pane grant.
+      const { h, opened } = topologyHarness(["pane.one", "pane.two"]);
+      const socket = await open(h, ["pane.one", "pane.two"]);
+      const before = opened.length;
+      const layouts = [authoritativeLayout(["pane.one", "pane.two", "pane.three"])];
+      h.mirror.panes = ["pane.one", "pane.two", "pane.three"];
+      h.mirror.authorityHandlers[0]?.({
+        session: SESSION,
+        runtimeSessionId: "$1",
+        topologyEpoch: 100,
+        layouts,
+        windowLinks: {
+          ...fixtureWindowLinks(layouts, 101),
+          liveSessionId: `live-session.${"b".repeat(20)}`,
+        },
+      });
+      await vi.waitFor(() =>
+        expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+      );
+      expect(socket.framesOfType("topology")).toEqual([]);
+      expect(h.grantAmendments).toEqual([]);
+      expect(opened.length).toBe(before);
+    });
+
     it("drops a key held for an ownership read whose pane left in place meanwhile (review of #723)", async () => {
       const { h } = topologyHarness(["pane.one", "pane.two"]);
       const { socket } = await connect(h, {
