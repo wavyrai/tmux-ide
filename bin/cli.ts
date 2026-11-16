@@ -2426,15 +2426,27 @@ try {
         const current = inspectCanonicalDaemonInfo();
         if (current.status !== "valid")
           throw new IdeError("Daemon upgrade did not publish a current owner");
+        const cliVersion = (await import("../package.json")).version;
+        const outcome = (
+          await import("../packages/daemon/src/lib/update-daemon-outcome.ts")
+        ).daemonUpdateOutcome(
+          {
+            productVersion: current.info.productVersion,
+            pid: current.info.pid,
+            supervised: Boolean(current.info.supervisionId),
+          },
+          cliVersion,
+        );
         console.log(
           json
             ? JSON.stringify({
                 ok: true,
-                status: "ready",
+                status: outcome.status,
                 productVersion: current.info.productVersion,
                 instanceId: current.info.instanceId,
+                ...(outcome.status === "kept-newer" ? { cliVersion } : {}),
               })
-            : `Daemon ready: ${current.info.productVersion}`,
+            : outcome.message,
         );
         break;
       }
