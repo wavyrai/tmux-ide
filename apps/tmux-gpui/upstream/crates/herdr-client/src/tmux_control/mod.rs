@@ -102,7 +102,7 @@ impl Policy {
             || !identity(&workspace, 512)
             || !identity(&client, 4096)
             || panes.is_empty()
-            || panes.len() > 24
+            || panes.len() > crate::tmux_stream::MAX_PANES
             || panes.iter().any(|p| !pane(p))
             || panes
                 .iter()

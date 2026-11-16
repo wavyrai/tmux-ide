@@ -114,9 +114,6 @@ pub(super) fn faint_muted() -> serde_json::Value {
 
 #[gpui::test]
 fn home_text_reads_where_bezels_muted_does_not(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| {
         let mut view = make_view(window, cx, sender);

@@ -20,7 +20,16 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { runTmux } from "@tmux-ide/tmux-bridge";
-import { readProcessTable, resolveAgentCommand, type ProcEntry } from "../detect/process-tree.ts";
+import {
+  readProcessTable,
+  readProcessTableAsync,
+  resolveAgentCommand,
+  type ProcEntry,
+} from "../detect/process-tree.ts";
+import {
+  snapshotIsRestorePoint,
+  type CrashSnapshotSource,
+} from "../../lib/daemon-crash-snapshot.ts";
 import { isListableSession } from "../team/sessions.ts";
 
 // ---------------------------------------------------------------------------
@@ -384,12 +393,29 @@ export function snapshotEvery(): number {
   return Number.isInteger(n) && n > 0 ? n : SNAPSHOT_EVERY;
 }
 
+export { snapshotIsRestorePoint };
+
+/**
+ * The file and builder the daemon's own writer uses (#783). The process that
+ * owns a headless daemon passes this in; the engine may not import it.
+ */
+export const fleetCrashSnapshotSource: CrashSnapshotSource<FleetSnapshot> = {
+  sessionFormat: SNAPSHOT_SESSION_FORMAT,
+  paneFormat: SNAPSHOT_PANE_FORMAT,
+  build: async (panes, sessions) => buildSnapshot(panes, sessions, await readProcessTableAsync()),
+  read: () => readSnapshot(),
+  write: writeSnapshot,
+  fingerprint: snapshotFingerprint,
+};
+
 /** Deps for {@link createSnapshotter} — injectable so the throttle is unit-tested. */
 export interface SnapshotterDeps {
   collect: () => FleetSnapshot;
   read: () => FleetSnapshot | null;
   write: (snapshot: FleetSnapshot) => void;
   every: number;
+  /** When the running tmux server started. With it, a restore point is not replaced. */
+  serverStartMs?: () => number;
 }
 
 /**
@@ -406,6 +432,7 @@ export function createSnapshotter(deps: SnapshotterDeps): Snapshotter {
   let ticks = 0;
   let seeded = false;
   let lastFingerprint: string | null = null;
+  let held = false;
   return {
     onTick(): void {
       ticks++;
@@ -416,6 +443,25 @@ export function createSnapshotter(deps: SnapshotterDeps): Snapshotter {
         seeded = true;
       }
       const snapshot = deps.collect();
+      if (deps.serverStartMs) {
+        const existing = deps.read();
+        let serverStartMs = Number.NaN;
+        try {
+          serverStartMs = deps.serverStartMs();
+        } catch {
+          // Unknown start time: not a restore point.
+        }
+        const sessions = snapshot.sessions.map((session) => session.name);
+        if (snapshotIsRestorePoint(existing, { serverStartMs, sessions })) {
+          held = true;
+          return;
+        }
+        if (held) {
+          // Released: the file changed hands or is gone. Compare with it afresh.
+          held = false;
+          lastFingerprint = existing ? snapshotFingerprint(existing) : null;
+        }
+      }
       const fingerprint = snapshotFingerprint(snapshot);
       if (fingerprint === lastFingerprint) return;
       lastFingerprint = fingerprint;

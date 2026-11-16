@@ -765,3 +765,20 @@ fn a_divider_drag_rules_out_a_pane_drag(cx: &mut TestAppContext) {
         assert!(view.pointer.moving.gesture.is_none());
     });
 }
+
+/// An owner mid-gesture, for tests outside the divider (#714's tick).
+pub(in crate::tmux_snapshot) fn busy_owner() -> Owner {
+    let mut s = state(Axis::Cols);
+    s.resize_gesture_supported = true;
+    let drag = Drag::begin(
+        &s,
+        bounds(),
+        10.,
+        crate::terminal::CELL_HEIGHT,
+        point_at(5.5, 2.),
+    )
+    .unwrap();
+    let mut owner = Owner::default();
+    owner.begin(&drag);
+    owner
+}

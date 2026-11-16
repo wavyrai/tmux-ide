@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  refusalDetail,
   fixturePath,
   decodeMacProcessWitness,
   createMacProcessIdentity,
@@ -522,10 +523,34 @@ test("an effective-configuration refusal names the check, not its value", () => 
   assert.equal(check(good.replace("PATH=", "XPATH=")), "setenv:form");
   assert.equal(check(good.replace(`PATH=${root}/bin`, `PATH=${root}/empty`)), "setenv:PATH");
   assert.equal(check(good.replace('"/usr/local/bin/node"', "/usr/local/bin/node")), "forcecommand");
+  // #750: two ForceCommand lines whose parts join into the expected command are not one command.
+  assert.equal(
+    check(
+      good.replace(
+        `forcecommand "/usr/local/bin/node" "${root}/dispatch.mjs"`,
+        `forcecommand "/usr/local/bin/node"\nforcecommand "${root}/dispatch.mjs"`,
+      ),
+    ),
+    "forcecommand:repeated",
+  );
+  assert.equal(check(good.replace(/\nforcecommand .*/u, "")), "forcecommand:missing");
   assert.doesNotMatch(
     String(check(good.replace("allowusers runner", "allowusers other"))),
     /other/u,
   );
+});
+
+// #750: the diagnostic may leave the machine; no part of a path may be in it.
+test("a refused command's first stderr line keeps no part of a path", () => {
+  const detail = (stderr) => refusalDetail({ code: 1, stderr }).stderr;
+  assert.equal(
+    detail("sshd: /Users/someone/Library/Application Support/y/sshd_config: bad\nsecond /line"),
+    "sshd: <path>",
+  );
+  assert.equal(detail('cannot open "/private/var/x y/z" for reading'), 'cannot open "<path>');
+  assert.equal(detail("no path here"), "no path here");
+  assert.doesNotMatch(detail(`x ${"/a".repeat(200)}`), /\/a/u);
+  assert.deepEqual(refusalDetail({ check: "usepam" }), { check: "usepam" });
 });
 
 test("effective policy reads OpenSSH 10.5's documented keyword case, values still exact", () => {

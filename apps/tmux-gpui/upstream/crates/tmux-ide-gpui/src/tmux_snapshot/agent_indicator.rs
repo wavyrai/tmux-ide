@@ -238,7 +238,7 @@ impl SnapshotView {
             .flat_map(|g| g.sessions.iter())
             .find(|s| s.active && s.session_id.as_deref() == Some(session))
     }
-    fn agent_motion(&self) -> bool {
+    pub(in crate::tmux_snapshot) fn agent_motion(&self) -> bool {
         self.presence.active()
             && self.picker.is_none()
             && self.new_session.is_none()

@@ -64,6 +64,21 @@ pub(super) struct Pending {
     bytes: usize,
 }
 impl Pending {
+    /// A hold on history input, for tests outside this module.
+    #[cfg(test)]
+    pub(super) fn held_for_test(request: u64) -> Self {
+        Self {
+            kind: Kind::History { offset: 0 },
+            request,
+            id: "pane-a".into(),
+            token: "token".into(),
+            session: "session-a".into(),
+            presence: 0,
+            started: Instant::now(),
+            inputs: Vec::new(),
+            bytes: 0,
+        }
+    }
     pub(super) fn capture(view: &SnapshotView, request: u64, id: &str) -> Option<Self> {
         if !view.terminal_input_ready()
             || view.input_interrupted

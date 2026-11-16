@@ -77,15 +77,26 @@ export const DEFAULT_HOOK_HEALTHCHECK_SCHEDULE: HookHealthcheckSchedule = Object
 
 export type HookHealthcheckOutcome = "healthy" | "repaired" | "failed";
 
-/** Pure cadence rule: healthy checks double the wait up to the cap; anything else resets it. */
+/**
+ * Pure cadence rule: healthy checks double the wait up to the cap; a repair or
+ * failure resets it to the base. A check that is unhealthy again right after
+ * one that was (`consecutiveUnhealthy` of 2 or more) backs off as well: on a
+ * tmux server that is shutting down but cannot exit, every repair "succeeds"
+ * and is gone at the next check, and the base cadence then cost about 400 tmux
+ * calls a minute for as long as the server lingered.
+ */
 export function nextHookHealthcheckDelay(
   previousMs: number,
   outcome: HookHealthcheckOutcome,
   schedule: HookHealthcheckSchedule = DEFAULT_HOOK_HEALTHCHECK_SCHEDULE,
+  consecutiveUnhealthy = 1,
 ): number {
   const base = Math.max(1, Math.floor(schedule.baseMs));
   const max = Math.max(base, Math.floor(schedule.maxMs));
-  if (outcome !== "healthy") return base;
+  if (outcome !== "healthy") {
+    const streak = Math.max(1, Math.min(32, Math.floor(consecutiveUnhealthy) || 1));
+    return Math.min(base * 2 ** (streak - 1), max);
+  }
   const previous = Number.isFinite(previousMs) ? Math.max(base, Math.floor(previousMs)) : base;
   return Math.min(previous * 2, max);
 }
@@ -371,6 +382,8 @@ export class TmuxExternalInteractionObserver {
   readonly #healthcheckSchedule: HookHealthcheckSchedule;
   #healthcheckDelayMs: number;
   #lastHealthcheckOutcome: HookHealthcheckOutcome = "failed";
+  /** Scheduled checks in a row that did not find the hooks intact. */
+  #unhealthyChecks = 0;
   readonly #onAvailability: ((available: boolean) => void) | undefined;
   readonly #onGap: ((gap: ExternalTmuxInteractionGap) => void) | undefined;
   #tmuxWork: Promise<unknown> = Promise.resolve();
@@ -520,12 +533,14 @@ export class TmuxExternalInteractionObserver {
       if (!this.#abort.signal.aborted) this.#reportGap("hook-repair-failed");
       outcome = "failed";
     }
+    this.#unhealthyChecks = outcome === "healthy" ? 0 : this.#unhealthyChecks + 1;
     // A signal-path reset that landed during this check wins over the outcome.
     if (this.#healthcheckDelayMs === delayBefore) {
       this.#healthcheckDelayMs = nextHookHealthcheckDelay(
         delayBefore,
         outcome,
         this.#healthcheckSchedule,
+        this.#unhealthyChecks,
       );
     }
     if (this.#hookHealthcheck === null) this.#scheduleHealthcheck();
@@ -647,9 +662,18 @@ export class TmuxExternalInteractionObserver {
     const work = this.#serializeTmux(async () => {
       const finish = this.#beginDiagnostic("healthcheck");
       try {
-        if (await this.#ownedHooksPresent(this.#abort.signal)) {
+        const hooks = await this.#ownedHooksPresent(this.#abort.signal);
+        if (hooks === "present") {
           this.#lastHealthcheckOutcome = "healthy";
           finish(true);
+          return;
+        }
+        if (hooks === "unknown") {
+          // The check could not be made (tmux timed out or could not be
+          // started). That says nothing about the hooks: leave them, report
+          // no gap, and ask again at the base cadence.
+          this.#lastHealthcheckOutcome = "failed";
+          finish(false);
           return;
         }
         // Hooks that were installed and are now gone dropped every interaction
@@ -917,7 +941,7 @@ export class TmuxExternalInteractionObserver {
     this.#setInstalled(false);
   }
 
-  async #ownedHooksPresent(signal?: AbortSignal): Promise<boolean> {
+  async #ownedHooksPresent(signal?: AbortSignal): Promise<"present" | "missing" | "unknown"> {
     // One client verifies both hook arrays: tmux runs the `;`-separated list in
     // a single command queue and prints each array's lines in order.
     let output: string;
@@ -927,12 +951,12 @@ export class TmuxExternalInteractionObserver {
         signal,
       );
     } catch {
-      return false;
+      return "unknown";
     }
-    return (
-      ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
+    return ownedHookInstalled(output, "after-send-keys", this.#bufferName) &&
       ownedHookInstalled(output, "after-capture-pane", this.#bufferName)
-    );
+      ? "present"
+      : "missing";
   }
 
   get available(): boolean {

@@ -11,7 +11,9 @@ pub(super) struct Capture {
     anchor: (u16, u16),
     head: (u16, u16),
     pub dragging: bool,
-    pub highlights: Vec<Highlight>,
+    /// Shared with each frame's paint, so a frame takes a reference, not a
+    /// copy.
+    pub highlights: std::rc::Rc<[Highlight]>,
 }
 impl Capture {
     pub fn begin(state: &browser::State, x: f32, y: f32) -> Option<Self> {
@@ -39,7 +41,7 @@ impl Capture {
             anchor,
             head: anchor,
             dragging: true,
-            highlights: Vec::new(),
+            highlights: std::rc::Rc::new([]),
         })
     }
     pub fn update(&mut self, x: f32, y: f32) -> Result<(), Error> {

@@ -175,7 +175,12 @@ export interface StockSplitOptions extends StockSplitSizes {
 }
 export function parseStockSplitOptions(line: string | undefined): StockSplitOptions | null {
   const [borderStatus, scrollbars, style] = (line ?? "").split("\t");
-  if (!/^(off|top|bottom)$/u.test(borderStatus ?? "") || !/^[a-z]+$/u.test(scrollbars ?? ""))
+  // The raw value stays: the guarded command compares it with the option. A
+  // floating value leaves tiled panes without a status line, like "off".
+  if (
+    !/^(off|top|bottom|top-floating|bottom-floating)$/u.test(borderStatus ?? "") ||
+    !/^[a-z]+$/u.test(scrollbars ?? "")
+  )
     return null;
   const field = (name: string) =>
     Number(new RegExp(`\\b${name}=(\\d+)`, "u").exec(style ?? "")?.[1] ?? 0);

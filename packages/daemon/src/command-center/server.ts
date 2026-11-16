@@ -16,7 +16,8 @@ import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
-  discoverLiveSessionSummaries,
+  readSessions,
+  readLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
   type FleetSessionFacts,
@@ -220,12 +221,17 @@ export interface CreateAppOptions {
       operation: "terminal-resource-handler-admitted" | "terminal-resource-response-projection",
     ): void;
   } | null;
-  /** Injectable live tmux projection for catalog tests and alternate hosts. */
-  catalogLiveSessions?: () => readonly {
-    readonly liveSessionId: `live-session.${string}`;
-    readonly sessionName: string;
-    readonly paneCount: number;
-  }[];
+  /**
+   * Injectable live tmux projection for catalog tests and alternate hosts.
+   * Null when tmux could not be asked; an empty list only for no sessions.
+   */
+  catalogLiveSessions?: () =>
+    | readonly {
+        readonly liveSessionId: `live-session.${string}`;
+        readonly sessionName: string;
+        readonly paneCount: number;
+      }[]
+    | null;
   /** Injectable daemon-generation-pinned adopted fleet projection. */
   catalogFleet?: () => FleetSessionFacts[] | null | Promise<FleetSessionFacts[] | null>;
   fleetPreviewCapture?: (
@@ -825,7 +831,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
 
   app.get("/api/sessions", (c) => {
-    const sessions = discoverSessions();
+    const sessions = readSessions();
+    // An empty list would tell the TUI the sessions are gone while they run (#753).
+    if (sessions === null)
+      return c.json(
+        { error: "Tmux session discovery is unavailable", code: "tmux-unavailable" },
+        503,
+      );
     const overviews = buildOverviews(sessions);
     return c.json({ sessions: overviews } satisfies DaemonSessionsResponse);
   });
@@ -881,7 +893,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
               },
             ],
       );
-      const observedSessions = options.catalogLiveSessions?.() ?? discoverLiveSessionSummaries();
+      const observedSessions = options.catalogLiveSessions
+        ? options.catalogLiveSessions()
+        : readLiveSessionSummaries();
+      // As for the fleet catalog: an unreachable tmux must not replace the
+      // client's last known sessions with a successful empty list (#753).
+      if (observedSessions === null)
+        return c.json(
+          { error: "Tmux session discovery is unavailable", code: "tmux-unavailable" },
+          503,
+        );
       const liveSessions = observedSessions.map(({ sessionName, paneCount }) => ({
         sessionName,
         fleetSessionId: fleetSessionIdForName(sessionName),
@@ -1647,7 +1668,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       let prevOverviews: SessionOverview[] = [];
 
       const poll = () => {
-        const sessions = discoverSessions();
+        const sessions = readSessions();
+        // tmux could not be asked: the sessions may well still run. Diffing an
+        // empty list would announce every one as removed, then added (#753).
+        // Keep the last answer and wait for the next poll.
+        if (sessions === null) return;
         const overviews = buildOverviews(sessions);
 
         const prevNames = new Set(prevOverviews.map((s) => s.name));

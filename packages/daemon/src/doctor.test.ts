@@ -325,16 +325,18 @@ describe("tmux features row", () => {
   const none = () => fail("no server running on /tmp/s\n");
   it("names stock tmux and bundled tmux from the running server", () => {
     expect(tmuxFeaturesRow(stock, bundled).detail).toBe(
-      "stock tmux: reduced features; run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
+      "stock tmux: reduced features (tab positions in saved output are reconstructed); run `tmux-ide servers upgrade` to move it to tmux-ide's own tmux",
     );
     expect(tmuxFeaturesRow(bundled, stock).detail).toBe("bundled tmux: full features");
     expect(tmuxFeaturesRow(stock, bundled)).toMatchObject({ pass: true, optional: true });
   });
   it("asks the binary only when no server is running", () => {
-    expect(tmuxFeaturesRow(none, stock).detail).toBe("stock tmux: reduced features");
+    expect(tmuxFeaturesRow(none, stock).detail).toBe(
+      "stock tmux: reduced features (tab positions in saved output are reconstructed)",
+    );
     expect(tmuxFeaturesRow(none, bundled).detail).toBe("bundled tmux: full features");
     expect(tmuxFeaturesRow(() => fail("error connecting to /tmp/s\n"), stock).detail).toBe(
-      "stock tmux: reduced features",
+      "stock tmux: reduced features (tab positions in saved output are reconstructed)",
     );
   });
   it("names an older tmux-ide tmux that lacks only the split command", () => {
@@ -397,7 +399,31 @@ describe("crash snapshot row", () => {
     const row = snapshotRow(saved("2026-11-02T14:16:05Z", "api"), ["api", "web", "docs"], NOW);
     expect(row.pass).toBe(false);
     expect(row.detail).toMatch(/^7 days old; misses 2 running sessions \(web, docs\)/);
-    expect(row.detail).toMatch(/tmux-ide adopt --all/);
+    expect(row.detail).toMatch(
+      /The background service writes it within a minute while it runs; without the service, `tmux-ide adopt --all` starts a writer$/,
+    );
+  });
+  it("says a restore point is kept, what it holds and how to release it", () => {
+    const serverStart = Date.parse("2026-11-10T08:00:00Z");
+    const row = snapshotRow(
+      saved("2026-11-09T09:00:00Z", "api", "web", "docs"),
+      ["web", "scratch"],
+      NOW,
+      serverStart,
+    );
+    expect(row.pass).toBe(false);
+    expect(row.detail).toBe(
+      "restore point kept: saved 1 days old, before this tmux server started; 2 of its sessions are not running (api, docs). `tmux-ide restore` brings them back; delete snapshot.json to let a new snapshot replace it",
+    );
+    // The same snapshot on the server that saved it is an ordinary stale snapshot.
+    expect(
+      snapshotRow(
+        saved("2026-11-09T09:00:00Z", "api"),
+        ["web"],
+        NOW,
+        Date.parse("2026-11-01T00:00:00Z"),
+      ).detail,
+    ).toMatch(/^1 days old; misses 1 running session \(web\)/);
   });
   it("passes when it covers every running session", () => {
     const row = snapshotRow(saved("2026-11-10T08:58:00Z", "api", "web"), ["web", "api"], NOW);

@@ -214,6 +214,28 @@ export class MirrorService {
       wasPending: this.registeredWindows?.pending() ?? null,
     });
     this.registeredWindows?.invalidate();
+    this.scheduleOwnershipVerify();
+  }
+
+  /**
+   * Until a read proves ownership again, every retained session refuses input
+   * and geometry. A workspace added or removed (another session created or
+   * killed) invalidates without any channel resyncing, and nothing else read
+   * again until the next stream was issued: the next keystroke closed the
+   * stream. Read again at once (coalesced) while a channel is retained; a
+   * failed read takes the #764 retry path.
+   */
+  private ownershipVerifyScheduled = false;
+  private scheduleOwnershipVerify(): void {
+    if (this.ownershipVerifyScheduled || this.disposed) return;
+    this.ownershipVerifyScheduled = true;
+    const timer = setTimeout(() => {
+      this.ownershipVerifyScheduled = false;
+      if (this.disposed || this.channelSessions.size === 0 || !this.registeredWindows?.pending())
+        return;
+      void this.verifyRegisteredWindows().catch(() => {});
+    }, 0);
+    timer.unref?.();
   }
 
   /**
@@ -631,6 +653,11 @@ export class MirrorService {
   private assertWindowOwnership(session: string): void {
     const message = this.windowOwnershipMessage(session);
     if (message) throw new Error(message);
+  }
+
+  /** Registered-window ownership is being read again; input waits for it. */
+  windowOwnershipPending(): boolean {
+    return this.registeredWindows?.pending() ?? false;
   }
 
   windowOwnershipMessage(session: string): string | null {

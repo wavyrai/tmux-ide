@@ -37,7 +37,19 @@
     "src/packed_surface_tests.rs",
     "src/surface_owner.rs",
     "src/surface_port.rs",
-    "src/surface_inbox.rs"
+    "src/surface_inbox.rs",
+    "src/surface_delivery_tests.rs",
+    "src/surface_endpoint_tests.rs",
+    "src/surface_fixture_sender.rs",
+    "src/surface_frames.rs",
+    "src/surface_frames_budget_tests.rs",
+    "src/surface_frames_tests.rs",
+    "src/surface_receiver.rs",
+    "src/surface_receiver_tests.rs",
+    "src/surface_rendezvous.rs",
+    "src/surface_rendezvous_tests.rs",
+    "src/surface_sender.rs",
+    "src/surface_sender_tests.rs"
   ],
   "testLockfile": "bezel-gpui-apple/Cargo.lock pins standalone renderer tests only; the application uses upstream/Cargo.lock."
 }

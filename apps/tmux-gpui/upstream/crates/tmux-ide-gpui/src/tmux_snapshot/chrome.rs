@@ -32,6 +32,9 @@ pub(super) struct Chrome {
     allowed: bool,
     #[cfg(target_os = "macos")]
     watcher: Option<macos::Watcher>,
+    /// Wakes the window's idle UI task when the settings change (#714).
+    #[cfg(target_os = "macos")]
+    wake: macos::Wake,
     /// Tests stand in for the accessibility settings here.
     #[cfg(test)]
     forced: Option<bool>,
@@ -42,6 +45,22 @@ pub(super) struct Chrome {
     forced_motion: Option<bool>,
 }
 impl Chrome {
+    /// Calls `wake` when the accessibility settings change.
+    pub(super) fn on_change(&self, wake: impl Fn() + Send + Sync + 'static) {
+        #[cfg(target_os = "macos")]
+        let _ = self.wake.set(Box::new(wake));
+        #[cfg(not(target_os = "macos"))]
+        let _ = wake;
+    }
+
+    /// What the accessibility watcher does when macOS reports a change.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn simulate_settings_change(&self) {
+        if let Some(wake) = self.wake.get() {
+            wake();
+        }
+    }
+
     /// Whether accessibility settings allow translucent chrome, as of the last
     /// [`Self::sync`]. Every caller of `design::prepare` in one frame passes
     /// this, so they agree on the palette.
@@ -60,7 +79,7 @@ impl Chrome {
         #[cfg(target_os = "macos")]
         {
             if self.watcher.is_none() {
-                self.watcher = macos::Watcher::new();
+                self.watcher = macos::Watcher::new(self.wake.clone());
             }
             self.allowed = macos::translucency_allowed();
         }

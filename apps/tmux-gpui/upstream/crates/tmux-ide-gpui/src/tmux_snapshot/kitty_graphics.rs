@@ -219,7 +219,10 @@ struct Inner {
 
 /// Shared between the publication reader thread and the window.
 #[derive(Clone, Default)]
-pub(super) struct Store(Arc<Mutex<Inner>>, Arc<Inflater>);
+pub(super) struct Store(Arc<Mutex<Inner>>, Arc<Inflater>, Wake);
+
+/// Wakes the window's idle UI task when images arrive off the UI thread (#714).
+type Wake = Arc<std::sync::OnceLock<Box<dyn Fn() + Send + Sync>>>;
 
 /// Deflated images inflate on one worker thread, so the publication reader
 /// keeps draining its pipe. A newer frame of the same program image replaces
@@ -231,6 +234,10 @@ struct Inflater {
     busy: Arc<std::sync::atomic::AtomicBool>,
     stopped: Arc<std::sync::atomic::AtomicBool>,
     started: std::sync::OnceLock<()>,
+    /// Test seam: the worker takes this before each decode, so a test that
+    /// holds it keeps a decode in flight for as long as it needs.
+    #[cfg(test)]
+    gate: Arc<Mutex<()>>,
 }
 
 impl Drop for Inflater {
@@ -303,6 +310,7 @@ impl Store {
             },
             chunk.bytes,
         )
+        .inspect(|()| self.wake())
     }
     pub(super) fn invalidate_native(&self, digests: &[String]) {
         let mut inner = self.lock();
@@ -327,6 +335,7 @@ impl Store {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|(digest, _)| !digests.contains(digest));
+        self.wake();
     }
     pub(super) fn retire_native(&self) {
         let mut inner = self.lock();
@@ -338,6 +347,7 @@ impl Store {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
+        self.wake();
     }
     fn accept_chunk(&self, chunk: Chunk, data: Vec<u8>) -> Result<(), Error> {
         if !valid_digest(&chunk.digest)
@@ -480,10 +490,13 @@ impl Store {
         inflater.wake.notify_one();
         inflater.started.get_or_init(|| {
             let inner = Arc::downgrade(&self.0);
+            let changed = self.2.clone();
             let queue = inflater.queue.clone();
             let wake = inflater.wake.clone();
             let busy = inflater.busy.clone();
             let stopped = inflater.stopped.clone();
+            #[cfg(test)]
+            let gate = inflater.gate.clone();
             std::thread::spawn(move || {
                 loop {
                     let next = {
@@ -499,15 +512,26 @@ impl Store {
                             queue = wake.wait(queue).unwrap_or_else(PoisonError::into_inner);
                         }
                     };
+                    #[cfg(test)]
+                    drop(gate.lock().unwrap_or_else(PoisonError::into_inner));
                     let image = next.1.image.clone();
                     let ready = Ready::from(next.1);
                     if let (Some(inner), Some(ready)) = (inner.upgrade(), ready) {
                         Self::insert_ready(&inner, next.0, image, ready);
                     }
                     busy.store(false, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(wake) = changed.get() {
+                        wake();
+                    }
                 }
             });
         });
+    }
+
+    /// Test seam: no queued image finishes decoding while the guard lives.
+    #[cfg(test)]
+    pub(super) fn hold_decodes(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.1.gate.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Test seam: wait until queued images are inflated.
@@ -579,6 +603,43 @@ impl Store {
         paint(&self.lock().images)
     }
 
+    /// Calls `wake` whenever images change off the UI thread.
+    pub(super) fn on_change(&self, wake: impl Fn() + Send + Sync + 'static) {
+        let _ = self.2.set(Box::new(wake));
+    }
+    fn wake(&self) {
+        if let Some(wake) = self.2.get() {
+            wake();
+        }
+    }
+    /// A change to repaint, or images inflating: the next tick picks them up.
+    pub(super) fn changed_or_inflating(&self) -> bool {
+        let changed = self.lock().changed;
+        changed
+            || self.1.busy.load(std::sync::atomic::Ordering::SeqCst)
+            || !self
+                .1
+                .queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
+    }
+    /// Images still arriving, or referenced and not yet reported missing:
+    /// the tick reports them after seconds, so a slow poll suffices.
+    pub(super) fn waiting(&self) -> bool {
+        let inner = self.lock();
+        !inner.partials.is_empty() || !inner.referenced.is_empty()
+    }
+    /// Placements that refer to `digest`, which has not arrived, as a
+    /// publication's would; `None` drops them. For tests outside this module.
+    #[cfg(test)]
+    pub(super) fn refer_for_test(&self, digest: Option<&str>) {
+        let mut inner = self.lock();
+        inner.referenced.clear();
+        if let Some(digest) = digest {
+            inner.referenced.insert(digest.into(), Instant::now());
+        }
+    }
     /// True once after any image completed or was evicted.
     pub(super) fn take_changed(&self) -> bool {
         std::mem::take(&mut self.lock().changed)

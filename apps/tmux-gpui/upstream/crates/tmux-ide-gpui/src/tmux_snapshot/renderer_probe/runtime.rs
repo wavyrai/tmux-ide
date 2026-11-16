@@ -27,6 +27,10 @@ struct Runtime {
 thread_local! { static RUNTIME: RefCell<Option<Runtime>> = RefCell::new(Runtime::load()); }
 static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 pub(crate) fn enabled() -> bool {
+    #[cfg(test)]
+    if FORCED.with(std::cell::Cell::get) {
+        return true;
+    }
     *std::sync::OnceLock::get_or_init(&ENABLED, || {
         std::env::var_os("TMUX_IDE_RENDERER_FIXTURE").is_some_and(|s| s == "1")
     })

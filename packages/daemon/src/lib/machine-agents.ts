@@ -5,7 +5,11 @@ import {
   type MachineConnectionManager,
 } from "./machine-connection-manager.ts";
 import type { MachineCatalogSnapshot } from "./machine-catalog.ts";
-import { createHomeAgentObserver, type HomeAgentObserver } from "./home-agent-observer.ts";
+import {
+  createHomeAgentObserver,
+  waitForRosterTarget,
+  type HomeAgentObserver,
+} from "./home-agent-observer.ts";
 import { createHomeAgentTransport } from "./home-agent-transport.ts";
 import type { HomeAgentRow, HomeAgentSnapshot } from "@tmux-ide/presentation/home-agent-roster";
 
@@ -184,6 +188,26 @@ export function createMachineAgents(options: {
         entry.binding === bindingFor(entry.handle) &&
         !!entry.observer?.isCurrentTarget(row)
       );
+    },
+    /** The machine's roster is re-reading a session right now. */
+    isRefreshing(machineId: string): boolean {
+      const observed = entries.get(machineId)?.observer?.getSnapshot();
+      return (
+        !!observed && (observed.refreshingSessionKeys.length > 0 || observed.loadingSessions > 0)
+      );
+    },
+    /**
+     * `isCurrentTarget` once the machine's roster has finished re-reading:
+     * a row is not current during the read, and a click should wait for it.
+     */
+    whenCurrentTarget(machineId: string, row: HomeAgentRow, signal: AbortSignal): Promise<boolean> {
+      return waitForRosterTarget({
+        isCurrent: () => this.isCurrentTarget(machineId, row),
+        refreshing: () => this.isRefreshing(machineId),
+        subscribe: (listener) =>
+          entries.get(machineId)?.observer?.subscribe(() => listener()) ?? (() => undefined),
+        signal,
+      });
     },
     retry() {
       for (const entry of entries.values()) entry.observer?.retry();

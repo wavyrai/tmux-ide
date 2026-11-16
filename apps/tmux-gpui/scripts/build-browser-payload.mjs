@@ -2,7 +2,7 @@
 // Development assembly. Signing, complete notices and live qualification remain release gates.
 import { createRequire } from "node:module";
 import { bridgeNotices } from "./bridge-notices.mjs";
-import { TERMINAL_BROWSER_LAUNCHER } from "./browser-payload.mjs";
+import { TERMINAL_BROWSER_LAUNCHER, sameIntegrationPatch } from "./browser-payload.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, copyFile, writeFile, readFile, readdir, lstat, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -59,7 +59,7 @@ for (const path of untracked) {
     throw Error(`Cannot verify browser source: ${path}`);
   actualPatch += diff.stdout;
 }
-if (actualPatch !== expectedPatch)
+if (!sameIntegrationPatch(expectedPatch, actualPatch))
   throw Error("Prepared browser source does not match the pinned integration patch");
 async function copyTree(from, to) {
   const info = await lstat(from);

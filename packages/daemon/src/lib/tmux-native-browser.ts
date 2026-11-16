@@ -64,8 +64,9 @@ export function createNativeBrowserResolver(options: {
       );
       if (matches.length !== 1) throw new NativeBrowserUnavailable();
       const pane = { ...matches[0]! };
-      if (!pane.nativePaneBirthId || !/^%[0-9]+$/u.test(pane.runtimePaneId))
-        throw new NativeBrowserUnavailable();
+      // A stock tmux server has no pane birth id; it reads empty there, both times.
+      const paneBirth = pane.nativePaneBirthId ?? "";
+      if (!/^%[0-9]+$/u.test(pane.runtimePaneId)) throw new NativeBrowserUnavailable();
       const observe = async () => {
         const raw = await options.run(
           [
@@ -80,7 +81,7 @@ export function createNativeBrowserResolver(options: {
         assertCurrent();
         if (raw.length > 8192) throw new NativeBrowserUnavailable();
         const [semantic, birth, endpoint] = raw.trimEnd().split("\t").map(decodeTmuxArgument);
-        if (semantic !== target.semanticPaneId || birth !== pane.nativePaneBirthId)
+        if (semantic !== target.semanticPaneId || birth !== paneBirth)
           throw new NativeBrowserUnavailable();
         const parsed = NativeBrowserEndpointSchema.parse(JSON.parse(endpoint ?? "null"));
         if (parsed.pane !== pane.runtimePaneId) throw new NativeBrowserUnavailable();

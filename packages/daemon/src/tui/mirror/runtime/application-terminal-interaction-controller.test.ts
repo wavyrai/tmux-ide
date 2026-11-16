@@ -40,7 +40,7 @@ function splitLayout(): OpenTuiWorkspaceLayoutSnapshot {
 }
 
 /** #764: a Home agent selection whose admission settles after the click. */
-function admissionRig() {
+function admissionRig(refusals: { remaining: number; code: string } = { remaining: 0, code: "" }) {
   const peerActive = (): OpenTuiWorkspaceLayoutSnapshot => {
     const current = {
       ...splitLayout().current!,
@@ -54,6 +54,11 @@ function admissionRig() {
   // The daemon publishes the new active pane, then the receipt.
   const dispatch = vi.fn(async (command: { operationId?: string; intent?: unknown }) => {
     const intent = command.intent as { verb?: string; semanticPaneId?: string } | undefined;
+    if (intent?.verb === "workspace.pane.select" && refusals.remaining > 0) {
+      refusals.remaining -= 1;
+      // As the daemon's rejected ACK surfaces from the client.
+      throw Object.assign(new Error("workspace unavailable"), { code: refusals.code });
+    }
     if (intent?.verb === "workspace.pane.select" && intent.semanticPaneId === "pane.peer")
       controller.adoptLayout(peerActive());
     return receipt(command);
@@ -93,6 +98,7 @@ function admissionRig() {
     diagnosticsEnabled: false,
     diagnose: () => undefined,
     causalCellFixtureEnabled: () => false,
+    selectionRetryDelaysMs: [1, 1, 1],
   });
   controller.adoptGeneration(generation as never);
   controller.adoptLayout(splitLayout());
@@ -469,6 +475,73 @@ describe("application terminal interaction controller", () => {
       await rig.controller.sendInput({ kind: "text", data: "next" });
       expect(rig.delivered().filter(([pane]) => pane === "pane.peer")).toEqual([]);
       expect(rig.delivered().at(-1)).toEqual(["pane.main", "next"]);
+    });
+  });
+
+  // Journey soak, card #764: the daemon refuses a selection, before any effect,
+  // while its pane inventory has not caught up with a pane that was just
+  // created. The selection was dropped without a trace; a second click worked.
+  describe("a selection the daemon is not ready for (#764)", () => {
+    it("is sent again until the daemon knows the pane, and reports that it was selected", async () => {
+      const refusals = { remaining: 2, code: "pane_inventory_not_ready" };
+      const rig = admissionRig(refusals);
+      const admission = rig.admission();
+      const outcome = rig.controller.selectPane("pane.peer", admission.promise);
+      const typed = rig.controller.sendInput({ kind: "text", data: "a" });
+      admission.settle(true);
+      await expect(outcome).resolves.toBe("selected");
+      await typed;
+      expect(rig.selections()).toEqual(["pane.peer", "pane.peer", "pane.peer"]);
+      expect(rig.delivered()).toEqual([["pane.peer", "a"]]);
+    });
+
+    it("gives up after the bound and says so", async () => {
+      const rig = admissionRig({ remaining: 99, code: "pane_inventory_not_ready" });
+      const admission = rig.admission();
+      const outcome = rig.controller.selectPane("pane.peer", admission.promise);
+      admission.settle(true);
+      await expect(outcome).resolves.toBe("failed");
+      // One try and one per delay: 4 in all.
+      expect(rig.selections()).toHaveLength(4);
+      expect(rig.focused.at(-1)).toBe("pane.main");
+    });
+
+    it("does not repeat a selection refused for another reason", async () => {
+      const rig = admissionRig({ remaining: 99, code: "mutation_unverified" });
+      const admission = rig.admission();
+      const outcome = rig.controller.selectPane("pane.peer", admission.promise);
+      admission.settle(true);
+      await expect(outcome).resolves.toBe("failed");
+      expect(rig.selections()).toHaveLength(1);
+    });
+
+    it("stops repeating once another pane is selected, and reports it as superseded", async () => {
+      const refusals = { remaining: 1, code: "pane_inventory_not_ready" };
+      const rig = admissionRig(refusals);
+      const admission = rig.admission();
+      const outcome = rig.controller.selectPane("pane.peer", admission.promise);
+      admission.settle(true);
+      await rig.flush();
+      rig.controller.selectPane("pane.main");
+      await expect(outcome).resolves.toBe("superseded");
+      expect(rig.selections().filter((pane) => pane === "pane.peer")).toHaveLength(1);
+    });
+
+    it("reports a refused admission as not admitted", async () => {
+      const rig = admissionRig();
+      const admission = rig.admission();
+      const outcome = rig.controller.selectPane("pane.peer", admission.promise);
+      admission.settle(false);
+      await expect(outcome).resolves.toBe("not-admitted");
+      expect(rig.selections()).toEqual([]);
+    });
+
+    it("repeats an ordinary selection too", async () => {
+      const rig = admissionRig({ remaining: 1, code: "pane_inventory_not_ready" });
+      rig.controller.selectPane("pane.peer");
+      await rig.controller.sendInput({ kind: "text", data: "a" });
+      expect(rig.selections()).toEqual(["pane.peer", "pane.peer"]);
+      expect(rig.delivered()).toEqual([["pane.peer", "a"]]);
     });
   });
 

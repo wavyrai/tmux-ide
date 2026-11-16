@@ -203,4 +203,6 @@ fn equivalent_json_integer_spelling_keeps_canonical_identity() {
 
 mod binary;
 
+mod hash_row;
+
 mod projection;

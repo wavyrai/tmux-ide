@@ -8,7 +8,7 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.16, build 2026111101.** The app is Developer ID
+**Public alpha — version 0.1.17, build 2026111301.** The app is Developer ID
 signed and Apple notarized, and its packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
 
@@ -31,13 +31,38 @@ discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
 
+In 0.1.17, terminals reconnect by themselves. A window reconnects whether or not it is the
+active one, and tries at once when you activate it. When the background service closes a
+stream and stays up, the app reconnects at once. A session is called ended only after a
+bounded wait, with its own message. When the tmux server does not answer, Home says "The tmux
+server is not answering. Tmux IDE keeps trying." and keeps trying. Up to 32 keys typed in the
+first 3 s of a drop wait and go to the same pane, in order, when its stream is back; later
+keys are refused with a message, and no key is sent twice. Pair it with CLI/daemon 2.9.23
+or later on the machine that runs tmux: from 2.9.23 the daemon no longer closes the streams
+of a healthy tmux server.
+
+0.1.17 also does less work. In our bench, a frame of a terminal under heavy output costs
+about 0.43 times the CPU it did before this work, and a Home update with 30 sessions about
+0.11 times. The sidebar and Home's session list are reused between frames, and an idle
+window no longer wakes every 16 ms. A divider you dragged keeps its place when one layout read
+is lost, and a browser pane's address, title and history stay current while typing is held.
+
+In 0.1.17, a Mac that isn't set up yet opens on a welcome instead of Home. It shows what
+is ready and sets Tmux IDE up with one button, Set up Tmux IDE. If setup fails, it says what
+happened and offers Try again and Copy details. Someone already set up never sees it; open it
+again from Commands → Welcome to Tmux IDE…. Setup, Home and connection problems now say what
+happened in plain words. After each update, a short What's new card shows once on Home, and
+Commands → What's new lists every version's notes. The app menu's first item, About Tmux IDE,
+shows the app's version and build, the versions of the background service and tmux it is
+connected to, and Copy diagnostics.
+
 In 0.1.16, the window follows the reviewed design more closely. The sidebar is 252 pt wide
 and lists the open project first, then favourites, then the rest by name. The focused pane
 is painted in the terminal's background colour and the other panes one small step toward the
 text colour, so focus shows by fill rather than by an outline. A new terminal uses 12 pt type
 on a 15 pt line; a font size you saved still wins. The sidebar is frosted glass in light and
-dark mode, with a density chosen per theme; Blue, Pink, Purple, Red, Solarized and Solarized
-Light stay opaque, and Reduce transparency or Increase contrast turns the glass off. Its
+dark mode, with a density chosen per theme; Blue Phosphor, Hot Pink, Purple Phosphor, Red
+Phosphor, Solarized Dark and Solarized Light stay opaque, and Reduce transparency or Increase contrast turns the glass off. Its
 footer holds Switch session and Switch machine on the left, and Choose theme and Settings and
 commands (F5) on the right. With the sidebar shown, the traffic lights, the sidebar toggle,
 search and New session head the sidebar, and the pane cards start just under the window's top
@@ -161,18 +186,14 @@ Upgrade, repeat installation and rollback from public alpha 0.1.9 passed in an i
 One foreground-return anomaly occurred during signed-app testing and did not
 reproduce in two follow-up runs; it remains under investigation.
 
-The app automatically reconnects an already-open terminal after a transient
-connection loss when the same machine, tmux server, session and pane can be
-verified again. Input entered while disconnected is discarded, and leaving for
-Home cancels recovery. The original cause of reported Spark connection drops
-remains under investigation.
+The original cause of reported Spark connection drops remains under investigation.
 
 ## Requirements
 
 - **Apple Silicon and macOS 26 or later** for the complete one-Mac setup below,
   including the CLI/daemon. The native app itself declares macOS 14.2 as its
   minimum; that alone does not establish full setup support on older macOS.
-- **tmux-ide CLI/daemon 2.9.22** for the current managed installation.
+- **tmux-ide CLI/daemon 2.9.23** for the current managed installation.
   A separate fresh-machine compatibility check remains outstanding. The app itself
   bundles no Node.js. The installer requires the managed Node 24 supplied by the
   [universal CLI installer](/docs/getting-started#install).
@@ -183,13 +204,13 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026111101)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111101/tmux-ide-gpui-0.1.16-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026111301)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111301/tmux-ide-gpui-0.1.17-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
-Install the native alpha with one command. This also installs CLI 2.9.22 at
+Install the native alpha with one command. This also installs CLI 2.9.23 at
 `~/.local` when the managed CLI is missing, or upgrades an older stable version.
-An existing 2.9.22 installation is preserved. Newer or unrecognized CLI versions
+An existing 2.9.23 installation is preserved. Newer or unrecognized CLI versions
 are left untouched and require explicit review before native installation:
 
 ```bash

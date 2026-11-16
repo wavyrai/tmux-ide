@@ -331,6 +331,32 @@ describe("runHeadlessDaemon", () => {
     await running;
   });
 
+  // #783: the crash snapshot's source comes from the CLI; without it the
+  // background service writes no snapshot, silently.
+  it("passes the crash snapshot source it was given to the daemon it starts", async () => {
+    const source = {
+      sessionFormat: "s",
+      paneFormat: "p",
+      build: async () => ({ savedAt: "", sessions: [] }),
+      read: () => null,
+      write: () => undefined,
+      fingerprint: () => "",
+    };
+    const harness = createHarness();
+    const running = runHeadlessDaemon({ json: true, crashSnapshotSource: source }, harness.deps);
+    await vi.waitFor(() => expect(harness.startOptions).toHaveLength(1));
+    expect(harness.startOptions[0]!.crashSnapshotSource).toBe(source);
+    await harness.stop();
+    await running;
+
+    const without = createHarness();
+    const plain = runHeadlessDaemon({ json: true }, without.deps);
+    await vi.waitFor(() => expect(without.startOptions).toHaveLength(1));
+    expect(without.startOptions[0]).not.toHaveProperty("crashSnapshotSource");
+    await without.stop();
+    await plain;
+  });
+
   it("reuses a compatible live canonical daemon without takeover", async () => {
     const harness = createHarness({ state: validState(daemonInfo()), alive: true });
 
@@ -1309,5 +1335,122 @@ describe("supervised foreground generation handoff", () => {
       });
       expect(h.startOptions).toHaveLength(0);
     }
+  });
+});
+
+describe("a generation that cannot prove its own tmux server (soak o3)", () => {
+  // No real tmux: the client-side proof is injected and the daemon is the harness's fake.
+  const intent = { source: "explicit", selector: { kind: "name", name: "zz-proof-test" } } as const;
+  const proof = { version: 1 as const, kind: "live" as const, digest: "a".repeat(64) };
+
+  function proofHarness(options: {
+    daemonProof: (generation: number, read: number) => boolean;
+    clientProof?: (call: number) => boolean;
+    replacedAfterReady?: (generation: number) => boolean;
+    attachabilityTimeoutMs: number;
+  }) {
+    const harness = createHarness();
+    const start = harness.deps.startEmbeddedDaemon;
+    const inspect = harness.deps.inspectCanonicalDaemonInfo;
+    const identity = harness.deps.probeCanonicalDaemonIdentity;
+    let generation = 0;
+    let reads = 0;
+    let clientCalls = 0;
+    const events: string[] = [];
+    const delays: number[] = [];
+    const deps: HeadlessDaemonDependencies = {
+      ...harness.deps,
+      inspectCanonicalDaemonInfo: () => {
+        const state = inspect();
+        return state.status === "valid"
+          ? { ...state, info: { ...state.info, tmuxServerProofVersion: 1 } }
+          : state;
+      },
+      probeCanonicalDaemonIdentity: async (candidate, signal, withProof) => {
+        const base = await identity(candidate, signal, withProof);
+        if (!base || !withProof) return base;
+        reads += 1;
+        return {
+          ...base,
+          tmuxServerProof: options.daemonProof(generation, reads) ? proof : null,
+        };
+      },
+      serverProof: () => {
+        clientCalls += 1;
+        return (options.clientProof?.(clientCalls) ?? true) ? proof : null;
+      },
+      attachabilityTimeoutMs: options.attachabilityTimeoutMs,
+      delay: async (ms) => {
+        delays.push(ms);
+      },
+      startEmbeddedDaemon: async (startOptions) => {
+        const current = ++generation;
+        reads = 0;
+        events.push(`start-${current}`);
+        const handle = await start(startOptions);
+        return {
+          ...handle,
+          tmuxAuthorityReplaced: async () => options.replacedAfterReady?.(current) ?? false,
+          stop: async () => {
+            events.push(`stop-${current}`);
+          },
+        };
+      },
+    };
+    return { harness, deps, events, delays, starts: () => generation };
+  }
+
+  it("starts it again four times with a growing pause, stopping each, then ends with the error", async () => {
+    const h = proofHarness({ daemonProof: () => false, attachabilityTimeoutMs: 0 });
+    await expect(
+      runHeadlessDaemon({ tmuxServerIntent: intent as never }, h.deps),
+    ).rejects.toMatchObject({ reason: "tmux-server-unproven" });
+    expect(h.starts()).toBe(5);
+    expect(h.events.filter((event) => event.startsWith("stop-"))).toHaveLength(5);
+    expect(h.delays).toEqual([250, 500, 750, 1000]);
+    expect(h.harness.lines).toHaveLength(0);
+  });
+
+  it("counts again from zero after a generation became ready", async () => {
+    // 1 fails, 2 is ready and is then retired for a replaced server, 3..7 fail.
+    const h = proofHarness({
+      daemonProof: (generation) => generation === 2,
+      replacedAfterReady: (generation) => generation === 2,
+      attachabilityTimeoutMs: 0,
+    });
+    await expect(
+      runHeadlessDaemon({ tmuxServerIntent: intent as never }, h.deps),
+    ).rejects.toMatchObject({ reason: "tmux-server-unproven" });
+    expect(h.starts()).toBe(7);
+    expect(h.delays).toEqual([250, 250, 500, 750, 1000]);
+  });
+
+  it("reads the daemon's identity again while proving, so a proof that appears is seen", async () => {
+    // First read without the proof, the next with it; no time for another handshake.
+    const h = proofHarness({
+      daemonProof: (_generation, read) => read > 1,
+      attachabilityTimeoutMs: 0,
+    });
+    const running = runHeadlessDaemon({ tmuxServerIntent: intent as never }, h.deps);
+    await vi.waitFor(() => expect(h.harness.lines).toHaveLength(1));
+    expect(h.starts()).toBe(1);
+    expect(h.delays).toEqual([]);
+    h.harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
+  });
+
+  it("waits within the handshake for a proof that is only late", async () => {
+    // This side has no proof for its first three reads (the bounded retries), then has it.
+    const h = proofHarness({
+      daemonProof: () => true,
+      clientProof: (call) => call > 3,
+      attachabilityTimeoutMs: 2_000,
+    });
+    const running = runHeadlessDaemon({ tmuxServerIntent: intent as never }, h.deps);
+    await vi.waitFor(() => expect(h.harness.lines).toHaveLength(1), { timeout: 2_000 });
+    expect(h.starts()).toBe(1);
+    expect(h.delays).toEqual([]);
+    h.harness.signals.get("SIGTERM")?.();
+    await expect(running).resolves.toBe("stopped");
   });
 });

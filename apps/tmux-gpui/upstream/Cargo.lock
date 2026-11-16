@@ -545,8 +545,6 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 [[package]]
 name = "bezel-gpui"
 version = "0.3.21+zed.f16f96"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd079fd84f9960ad2f9e22e1f420100630ec6f778bda662aedc722604bc643ef"
 dependencies = [
  "accesskit",
  "anyhow",

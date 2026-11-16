@@ -452,8 +452,13 @@ fn older_queued_image_cannot_replace_newer_raw_image() -> anyhow::Result<()> {
     line["kittyImageChunk"]["image"] = "%1#1".into();
     line["kittyImageChunk"]["width"] = 2048.into();
     line["kittyImageChunk"]["height"] = 2048.into();
+    // Without this the older image is only "still queued" for as long as its
+    // decode outlasts the next line; on a loaded machine it finished first,
+    // was cached as the newest image it then was, and the test failed (#733).
+    let decoding = store.hold_decodes();
     store.accept_line(&serde_json::to_vec(&line)?)?;
     store.accept_line(&keyed_chunk(new, "%1#1", &[9; 16]))?;
+    drop(decoding);
     store.settle();
     let inner = store.lock();
     assert_eq!(
@@ -516,8 +521,11 @@ fn cached_revisit_retires_an_older_inflight_redraw() -> anyhow::Result<()> {
     line["kittyImageChunk"]["image"] = "%1#1".into();
     line["kittyImageChunk"]["width"] = 2048.into();
     line["kittyImageChunk"]["height"] = 2048.into();
+    // Keep the redraw in flight until the revisit has arrived.
+    let decoding = store.hold_decodes();
     store.accept_line(&serde_json::to_vec(&line)?)?;
     store.accept_line(&keyed_chunk(a, "%1#1", &[1; 16]))?;
+    drop(decoding);
     store.settle();
     assert_eq!(
         store.lock().latest.get("%1#1").map(String::as_str),
@@ -525,4 +533,48 @@ fn cached_revisit_retires_an_older_inflight_redraw() -> anyhow::Result<()> {
         "cached revisit must retire older in-flight images too"
     );
     Ok(())
+}
+
+/// Counts the store's wakes of the window's idle UI task (#714).
+fn counted(store: &Store) -> Arc<std::sync::atomic::AtomicUsize> {
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = wakes.clone();
+    store.on_change(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    wakes
+}
+
+/// An image the inflater thread finishes wakes the idle UI task, so it
+/// repaints without waiting for input.
+#[test]
+fn an_inflated_image_wakes_the_idle_ui_task() -> anyhow::Result<()> {
+    let store = Store::default();
+    let wakes = counted(&store);
+    let compressed = deflate(&[9u8; 16])?;
+    // The test-only line path does not wake by itself: only the inflater does.
+    store.accept_line(&chunk_as(
+        DIGEST,
+        "rgba-zlib",
+        compressed.len(),
+        0,
+        &compressed,
+    ))?;
+    store.settle();
+    assert!(wakes.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    assert!(
+        store.changed_or_inflating(),
+        "the repaint is still owed to the tick"
+    );
+    assert!(store.take_changed());
+    Ok(())
+}
+
+/// While a referenced image has not arrived, the tick stays armed to report it.
+#[test]
+fn a_missing_image_keeps_the_tick_armed() {
+    let store = Store::default();
+    assert!(!store.waiting());
+    store.scene(&[placement(0, 0)]);
+    assert!(store.waiting());
 }

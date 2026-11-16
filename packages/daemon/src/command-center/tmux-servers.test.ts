@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TmuxServerOwners } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
+import { logger } from "../lib/log.ts";
 
 const base = "/api/v1/tmux-servers";
 const token = "private-owner-token";
@@ -482,4 +483,45 @@ it("native browser operations require owner auth and current scope before dispat
   const failed = await f.request(path, "POST", body);
   expect(failed.status).toBe(503);
   expect(await failed.text()).not.toContain("private credential");
+});
+
+// A client that gets 503 retries blindly; the cause existed only in the thrown
+// error and was dropped. The daemon's own log now names the route and the error.
+it("logs why a scoped route answered server-unavailable, and nothing for an expected refusal", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+  try {
+    const f = await fixture();
+    const body = {
+      target: {
+        generation: f.a.generation,
+        workspaceName: "same",
+        liveSessionId: `live-session.${"a".repeat(20)}`,
+        semanticPaneId: "pane.same",
+      },
+      command: null,
+    };
+    // 409 for a retired scope: the client is told the cause, no log line.
+    expect(
+      (await f.request(`/${f.a.serverId}/${randomUUID()}/native-browser`, "POST", body)).status,
+    ).toBe(409);
+    expect(warn).not.toHaveBeenCalled();
+    const cause = Object.assign(new RangeError(`inventory stale ${"x".repeat(400)}`), {
+      code: "inventory-stale",
+    });
+    f.ownersCreated[0]!.nativeBrowser.mockRejectedValue(cause);
+    expect((await f.request(f.scope(f.a) + "/native-browser", "POST", body)).status).toBe(503);
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "tmux-server-routes",
+      "request failed as server-unavailable",
+      {
+        method: "POST",
+        route: expect.stringMatching(/\/:serverId\/:generation\/native-browser$/u),
+        errorName: "RangeError",
+        errorCode: "inventory-stale",
+        error: expect.stringMatching(/^inventory stale x{180,286}$/u),
+      },
+    );
+  } finally {
+    warn.mockRestore();
+  }
 });

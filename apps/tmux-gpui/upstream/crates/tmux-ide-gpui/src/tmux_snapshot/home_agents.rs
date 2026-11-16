@@ -8,7 +8,7 @@ pub(in crate::tmux_snapshot) enum Phase {
     Partial,
     Unavailable,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Hash)]
 #[serde(rename_all = "UPPERCASE")]
 pub(in crate::tmux_snapshot) enum Status {
     Working,

@@ -86,4 +86,5 @@ strip           = "debuginfo"
 
 # Repository-owned Apple surface support; pinned source and modifications live in ../vendor.
 [patch.crates-io]
+bezel-gpui = { path = "../vendor/bezel-gpui" }
 bezel-gpui-apple = { path = "../vendor/bezel-gpui-apple" }

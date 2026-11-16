@@ -182,3 +182,50 @@ fn narrow_home_counts_refresh_without_changing_duplicate_label_identity(cx: &mut
 
 #[path = "agents.rs"]
 mod agents;
+
+/// The palettes are built once per theme, and follow a theme change at once
+/// (perf plan, finding 2).
+#[test]
+fn palettes_follow_the_theme_they_were_built_for() {
+    use crate::tmux_snapshot::design;
+    let dark = crate::config::Theme::default();
+    let mut light = dark.clone();
+    light.background = 0xfafafa;
+    light.foreground = 0x202020;
+    let first = design::palette(&dark);
+    assert_eq!(design::palette(&dark).bg, first.bg);
+    assert_ne!(design::palette(&light).bg, first.bg);
+    assert_eq!(
+        design::palette(&dark).text,
+        first.text,
+        "switching back finds it again"
+    );
+    let home = palette(&dark, 0x101010);
+    assert_ne!(palette(&light, 0xfafafa).text, home.text);
+    assert_eq!(palette(&dark, 0x101010).text, home.text);
+}
+
+/// Home's palette follows a theme change on the same canvas too: Increase
+/// Contrast or new colours over an unchanged window (review of step 1).
+#[test]
+fn home_palette_follows_a_theme_change_on_the_same_canvas() {
+    let canvas = 0x101010;
+    let base = crate::config::Theme::default();
+    let inked = palette(&base, canvas);
+    let mut recoloured = base.clone();
+    recoloured.foreground = 0xd0a0a0;
+    recoloured.muted = 0x9090c0;
+    let changed = palette(&recoloured, canvas);
+    assert_ne!(changed.text, inked.text);
+    assert_eq!(changed.text_muted, ink_home(&recoloured, canvas).text_muted);
+    let mut high = base.clone();
+    high.contrast = crate::contrast::Contrast::High;
+    let contrasted = palette(&high, canvas);
+    let fresh = ink_home(&high, canvas);
+    assert_eq!(
+        (contrasted.text, contrasted.text_muted, contrasted.border),
+        (fresh.text, fresh.text_muted, fresh.border),
+        "Increase Contrast gets its own inks, not the last theme's"
+    );
+    assert_eq!(palette(&base, canvas).text, inked.text);
+}

@@ -7,6 +7,11 @@ mod glyphs;
 mod graphics;
 mod grid;
 mod images;
+mod rows;
+#[cfg(feature = "visual-capture")]
+pub(crate) use self::rows::ROW_HITS;
+mod sprites;
+mod text;
 
 use self::area::whole;
 pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
@@ -15,6 +20,8 @@ use self::graphics::{CellSeparator, Graphic};
 use self::grid::{background_extent, grid_corners, grid_rect, last_row_has_separator};
 pub(crate) use self::images::{CellPixels, ImageTarget, PlacedImages};
 use self::images::{ImageCache, ImageGeometry, below_text};
+use self::rows::Rows;
+use self::sprites::Sprites;
 use crate::config::Theme;
 use crate::terminal::*;
 use gpui::*;
@@ -152,7 +159,27 @@ pub(crate) struct TerminalPainter {
     /// Painting into a card that has its own fill: cells on the theme's
     /// default background leave it unpainted, so the card shows through.
     card_backed: bool,
+    /// Per-frame buffers, reused so a frame allocates none of its own: the
+    /// panes' scrollbar rectangles and the images placed this frame.
+    bars: Vec<SurfaceRect>,
+    placed: Vec<(i32, ImageGeometry, Arc<RenderImage>)>,
+    sprites: Sprites,
+    rows: Rows,
+    /// Dev-only: paint glyph by glyph through `Window::paint_glyph`, for
+    /// the parity captures.
+    #[cfg(feature = "visual-capture")]
+    pub(crate) legacy_glyphs: bool,
 }
+
+/// Dev-only: every painter paints glyph by glyph, for the bench's
+/// interleaved A/B frames.
+#[cfg(feature = "visual-capture")]
+pub(crate) static LEGACY_GLYPHS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+/// Dev-only: whether painters retain glyph rows, for the bench's A/B frames.
+#[cfg(feature = "visual-capture")]
+pub(crate) static RETAIN_ROWS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
 
 impl Default for TerminalPainter {
     fn default() -> Self {
@@ -173,6 +200,12 @@ impl Default for TerminalPainter {
             #[cfg(feature = "integration-test")]
             uncached: false,
             card_backed: false,
+            bars: Vec::new(),
+            placed: Vec::new(),
+            sprites: Sprites::default(),
+            rows: Rows::default(),
+            #[cfg(feature = "visual-capture")]
+            legacy_glyphs: false,
         }
     }
 }
@@ -192,7 +225,7 @@ fn paint_glyphs(
     line: &ShapedLine,
     origin: Point<Pixels>,
     line_height: Pixels,
-    color: Rgba,
+    color: Hsla,
     window: &mut Window,
 ) -> Result<()> {
     let baseline = origin
@@ -206,17 +239,28 @@ fn paint_glyphs(
             if glyph.is_emoji {
                 window.paint_emoji(position, run.font_id, glyph.id, line.font_size)?;
             } else {
-                window.paint_glyph(
-                    position,
-                    run.font_id,
-                    glyph.id,
-                    line.font_size,
-                    color.into(),
-                )?;
+                window.paint_glyph(position, run.font_id, glyph.id, line.font_size, color)?;
             }
         }
     }
     Ok(())
+}
+
+/// The last foreground converted for a glyph. Neighbouring cells mostly share
+/// one, so a run of text converts its colour once rather than once per glyph.
+#[derive(Default)]
+struct GlyphColor(Option<(u32, Hsla)>);
+impl GlyphColor {
+    fn get(&mut self, color: u32) -> Hsla {
+        match self.0 {
+            Some((last, hsla)) if last == color => hsla,
+            _ => {
+                let hsla = Hsla::from(rgb(color));
+                self.0 = Some((color, hsla));
+                hsla
+            }
+        }
+    }
 }
 
 /// Whether a cell background is painted: on a card with its own fill, the
@@ -309,6 +353,7 @@ impl TerminalPainter {
             self.overlay = Overlay::new(&theme);
             self.theme = theme;
             self.glyphs.clear();
+            self.rows.clear();
             self.cell_width = None;
         }
     }
@@ -342,6 +387,7 @@ impl TerminalPainter {
     fn configure(&mut self, font: &Font) {
         if self.config.as_ref() != Some(font) {
             self.glyphs.clear();
+            self.rows.clear();
             self.cell_width = None;
             self.config = Some(font.clone());
         }
@@ -440,24 +486,30 @@ impl TerminalPainter {
         };
         let draws = |layer| part.is_none_or(|part| part.layer == layer);
         // The daemon's cell scrollbar is replaced by the pixel thumb painted below.
-        let bars: Vec<SurfaceRect> = panes.iter().filter_map(|p| p.scrollbar_rect).collect();
+        let mut bars = std::mem::take(&mut self.bars);
+        bars.clear();
+        bars.extend(panes.iter().filter_map(|p| p.scrollbar_rect));
         let in_bar = |index: usize| {
             let width = usize::from(frame.width());
             bars.iter()
                 .any(|r| in_rect(*r, (index % width) as u16, (index / width) as u16))
         };
-        let placed = images.map_or_else(Vec::new, |images| {
+        let mut placed = std::mem::take(&mut self.placed);
+        placed.clear();
+        if let Some(images) = images {
             self.images.prepare(
                 images,
                 origin,
                 (cell_width, self.cell_height),
                 grid,
+                &mut placed,
                 window,
                 cx,
-            )
-        });
-        let (below, above): (Vec<_>, Vec<_>) =
-            placed.into_iter().partition(|(z, ..)| below_text(*z));
+            );
+        }
+        // Placements come sorted by z, so those below the text are a prefix.
+        let split = placed.partition_point(|(z, ..)| below_text(*z));
+        let (below, above) = placed.split_at(split);
         // Text shares the backgrounds' layer unless something must come
         // between them: images below the text, or another region's cells.
         let text_with_backgrounds = part.is_none() && below.is_empty();
@@ -563,7 +615,7 @@ impl TerminalPainter {
             });
         }
         if !text_with_backgrounds && draws(Layer::Text) {
-            paint_errors += self.paint_images(&below, window);
+            paint_errors += self.paint_images(below, window);
             window.paint_layer(grid, |window| {
                 paint_errors += self.paint_text(
                     frame,
@@ -692,7 +744,7 @@ impl TerminalPainter {
         }
         // Kitty draws `z >= 0` over the text, decorations and cursor included.
         if draws(Layer::Decorations) {
-            paint_errors += self.paint_images(&above, window);
+            paint_errors += self.paint_images(above, window);
         }
         #[cfg(feature = "integration-test")]
         {
@@ -732,6 +784,8 @@ impl TerminalPainter {
         if let Some(count) = self.diagnostics.take_errors(now, paint_errors) {
             tracing::warn!(category = "glyph_paint", count, "Terminal paint failed");
         }
+        self.bars = bars;
+        self.placed = placed;
         paint_errors == 0
     }
 
@@ -756,106 +810,6 @@ impl TerminalPainter {
             self.painted_images.push((*_z, geometry.visible));
         }
         failed
-    }
-
-    /// Shapes and paints every visible glyph `area` covers, returning failures.
-    #[allow(clippy::too_many_arguments)]
-    fn paint_text(
-        &mut self,
-        frame: FrameView<'_>,
-        area: &[Span],
-        origin: Point<Pixels>,
-        cell_width: f32,
-        font: &Font,
-        cached: bool,
-        in_bar: &impl Fn(usize) -> bool,
-        window: &mut Window,
-        #[cfg(feature = "integration-test")] counts: &mut crate::performance::Counts,
-    ) -> u64 {
-        let mut paint_errors = 0;
-        for index in cell_ranges(frame, area).flatten() {
-            let Some(cell) = frame.cell_at(index) else {
-                continue;
-            };
-            if cell.skip
-                || cell.symbol.is_empty()
-                || cell.symbol == " "
-                || in_bar(index)
-                || Graphic::from_symbol(&cell.symbol).is_some()
-            {
-                continue;
-            }
-            if let Some(separator) = CellSeparator::from_symbol(&cell.symbol) {
-                let (column, row) = (
-                    index % usize::from(frame.width()),
-                    index / usize::from(frame.width()),
-                );
-                // A separator the daemon measures as wide spans its continuation cell,
-                // as the font glyph would.
-                let wide = column + 1 < usize::from(frame.width())
-                    && frame.cell_at(index + 1).is_some_and(|next| next.skip);
-                let cells = if wide { 2 } else { 1 };
-                let (near, far) = grid_corners(
-                    window,
-                    origin,
-                    point(
-                        px(column as f32 * cell_width),
-                        px(row as f32 * self.cell_height),
-                    ),
-                    point(
-                        px((column + cells) as f32 * cell_width),
-                        px((row + 1) as f32 * self.cell_height),
-                    ),
-                );
-                // A degenerate cell whose path cannot tessellate keeps the font glyph.
-                if let Ok(path) = separator.path(near, far) {
-                    let color = rgb(cell_colors(cell, &self.theme).0);
-                    #[cfg(test)]
-                    self.painted_separators.push((path.bounds, color));
-                    window.paint_path(path, color);
-                    #[cfg(feature = "integration-test")]
-                    {
-                        counts.paths += 1;
-                    }
-                    continue;
-                }
-            }
-            let style = glyphs::style(cell.modifier);
-            let newly_shaped;
-            let shaped = match cached
-                .then(|| self.glyphs.get(style, &cell.symbol))
-                .flatten()
-            {
-                Some(line) => line,
-                None => {
-                    #[cfg(feature = "integration-test")]
-                    {
-                        counts.shapes += 1;
-                    }
-                    let line = self.shape(font, style, &cell.symbol, window);
-                    if cached && self.glyphs.has_room() {
-                        self.glyphs.insert(style, &cell.symbol, line)
-                    } else {
-                        newly_shaped = line;
-                        &newly_shaped
-                    }
-                }
-            };
-            let position = origin
-                + point(
-                    px((index % usize::from(frame.width())) as f32 * cell_width),
-                    px((index / usize::from(frame.width())) as f32 * self.cell_height),
-                );
-            let color = rgb(cell_colors(cell, &self.theme).0);
-            let result = paint_glyphs(shaped, position, px(self.cell_height), color, window);
-            paint_errors += u64::from(result.is_err());
-            #[cfg(feature = "integration-test")]
-            {
-                counts.glyphs += shaped.runs.iter().map(|r| r.glyphs.len()).sum::<usize>();
-                counts.paint_errors += usize::from(result.is_err());
-            }
-        }
-        paint_errors
     }
 
     /// Paints an uncommitted IME composition over the cells at the input
@@ -895,7 +849,9 @@ impl TerminalPainter {
                         ),
                         color,
                     ));
-                    if paint_glyphs(&line, origin, px(self.cell_height), color, window).is_err() {
+                    if paint_glyphs(&line, origin, px(self.cell_height), color.into(), window)
+                        .is_err()
+                    {
                         tracing::warn!(category = "glyph_paint", "IME composition paint failed");
                     }
                 });

@@ -51,7 +51,8 @@ fn offsets_cursor_and_blank_gaps_share_canvas_coordinates() {
         ProjectionWork {
             converted_rows: 2,
             converted_cells: 4,
-            copied_cells: 4
+            copied_cells: 4,
+            moved_rows: 0
         }
     );
 }
@@ -105,10 +106,12 @@ fn unchanged_rows_skip_conversion_and_identical_publication_reuses_frame() {
     assert_eq!(next.changed_rows, vec![1]);
     assert_eq!(
         next.work,
+        // Row 1 now holds row 0's content: its cells are reused, not converted.
         ProjectionWork {
-            converted_rows: 1,
-            converted_cells: 2,
-            copied_cells: 0
+            converted_rows: 0,
+            converted_cells: 0,
+            copied_cells: 0,
+            moved_rows: 1
         }
     );
     assert_eq!(next.frame.rows[1][0].symbol, "a");
@@ -148,7 +151,8 @@ fn cursor_only_change_converts_no_rows_and_copies_no_cells() {
         ProjectionWork {
             converted_rows: 0,
             converted_cells: 0,
-            copied_cells: 0
+            copied_cells: 0,
+            moved_rows: 0
         }
     );
     assert_eq!(next.frame.cursor.as_ref().unwrap().x, 0);
@@ -301,10 +305,12 @@ fn changed_pane_row_only_recomposes_its_canvas_row() {
     assert_eq!(next.changed_rows, vec![1]);
     assert_eq!(
         next.work,
+        // The left pane's row 0 now holds its prior row 1: reused, not converted.
         ProjectionWork {
-            converted_rows: 1,
-            converted_cells: 2,
-            copied_cells: 4
+            converted_rows: 0,
+            converted_cells: 0,
+            copied_cells: 4,
+            moved_rows: 1
         }
     );
     for y in [0, 2, 3] {
@@ -400,4 +406,54 @@ fn selecting_another_pane_retains_every_canvas_row() {
         assert!(Arc::ptr_eq(&first.frame.rows[y], &next.frame.rows[y]));
     }
     assert_eq!(next.frame.cursor.as_ref().unwrap().x, 3);
+}
+
+/// A 2×3 seed whose rows read `lines`, each row freshly decoded.
+fn rows_snapshot(lines: [&str; 3]) -> Snapshot {
+    let rows: Vec<String> = lines
+        .iter()
+        .map(|text| format!(r#"[0,[[2,"{text}",1,0,0,0]]]"#))
+        .collect();
+    let bytes = format!(
+        r#"{{"v":1,"k":"terminal-semantic-compact","f":"s","r":0,"s":[2,3,[{}],[],[0,0,0,"bar",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]}}"#,
+        rows.join(",")
+    );
+    match decode_compact(bytes.as_bytes()).unwrap() {
+        Update::Seed { snapshot, .. } => snapshot,
+        _ => panic!("expected seed"),
+    }
+}
+
+#[test]
+fn a_scrolled_row_keeps_its_converted_cells() {
+    let region = Region {
+        id: "pane".into(),
+        left: 0,
+        top: 0,
+        width: 2,
+        height: 3,
+    };
+    let mut projection = DirectProjection::default();
+    let mut project = |source: &Snapshot| {
+        projection
+            .project(
+                2,
+                3,
+                &[PaneSurface {
+                    region: &region,
+                    snapshot: source,
+                }],
+                "pane",
+            )
+            .unwrap()
+    };
+    let first = project(&rows_snapshot(["a", "b", "c"]));
+    // Every row arrives as a new Arc, as a decoded patch's rows do.
+    let scrolled = project(&rows_snapshot(["b", "c", "d"]));
+    assert_eq!(scrolled.work.converted_rows, 1);
+    assert_eq!(scrolled.work.moved_rows, 2);
+    assert_eq!(scrolled.changed_rows, [0, 1, 2]);
+    assert!(Arc::ptr_eq(&scrolled.frame.rows[0], &first.frame.rows[1]));
+    assert!(Arc::ptr_eq(&scrolled.frame.rows[1], &first.frame.rows[2]));
+    assert_eq!(scrolled.frame.rows[2][0].symbol, "d");
 }

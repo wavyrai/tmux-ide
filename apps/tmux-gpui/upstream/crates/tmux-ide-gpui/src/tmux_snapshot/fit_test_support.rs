@@ -39,7 +39,7 @@ pub(super) fn settle(
                     fit,
                     view.last_resize,
                     false,
-                    std::time::Instant::now() + std::time::Duration::from_millis(151),
+                    geometry::fit_now() + std::time::Duration::from_millis(151),
                 ),
                 "renderer must already have scheduled this exact pending fit"
             );
@@ -48,9 +48,9 @@ pub(super) fn settle(
                 fit,
                 view.last_resize,
                 false,
-                std::time::Instant::now() - std::time::Duration::from_millis(151)
+                geometry::fit_now() - std::time::Duration::from_millis(151)
             ));
-            assert!(view.fit_settle.due(std::time::Instant::now()));
+            assert!(view.fit_settle.due(geometry::fit_now()));
         }
         ((cols, rows), pixels, request, pane, already_fitted)
     });
@@ -136,6 +136,9 @@ pub(super) fn fixture_view(
         new_session: None,
         new_session_queued: None,
         agent_animation: Default::default(),
+        idle_tick: Default::default(),
+        sidebar_view: Default::default(),
+        home_fleet: Default::default(),
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),

@@ -1,4 +1,35 @@
-# Apple GPUI renderer patch
+# Vendored GPUI crates
+
+## Core GPUI (`bezel-gpui`)
+
+`bezel-gpui` is the crates.io package `0.3.21+zed.f16f96`, the version
+`upstream/Cargo.lock` pins, extracted unchanged from its `.crate` file (sha256
+`cd079fd84f9960ad2f9e22e1f420100630ec6f778bda662aedc722604bc643ef`, the
+lockfile's checksum). Every file is kept, the Apache license included.
+`upstream/Cargo.toml` patches the package to this copy.
+[Provenance](bezel-gpui-provenance.json) records the crate checksum, the hash
+of every original file, and the files our commits change or add.
+
+Check the copy against the published crate (it uses Cargo's registry cache, or
+downloads the crate):
+
+```sh
+node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-provenance.json
+```
+
+It fails on any file that differs from the package and is not listed in
+`modifiedFiles`, and on any file that is neither in the package nor in
+`addedSourceFiles`.
+
+To update: delete `bezel-gpui/`, extract the new version's `.crate` into it
+(`tar -xzf bezel-gpui-<version>.crate --strip-components=1 -C bezel-gpui`),
+regenerate `originalFilesSha256`, `originalCrateSha256` and `version`, commit
+that alone, then re-apply our changes as their own commit and list the files
+they touch. The copy is outside the upstream workspace, so neither the
+source-size gate nor `cargo clippy --workspace` covers it; `cargo fmt --all`
+does not format it either.
+
+## Apple GPUI renderer patch
 
 `bezel-gpui-apple` is copied from the crates.io package
 `0.3.21+zed.f16f96`, retaining its Apache license and original package metadata.
@@ -6,6 +37,15 @@
 original file hashes and changed files. `upstream/Cargo.toml` patches this one
 package to the repository copy; the application uses `upstream/Cargo.lock`.
 The registry cache is unchanged.
+
+The same check covers this copy, and CI runs both:
+
+```sh
+node apps/tmux-gpui/scripts/verify-vendored-crate.mjs apps/tmux-gpui/vendor/bezel-gpui-apple-provenance.json
+```
+
+The copy's own `Cargo.lock` is not in the package; the provenance's
+`testLockfile` note is what allows it.
 
 The patch adds straight-alpha BGRA CoreVideo surfaces to the existing NV12 path.
 It selects the appropriate Metal pipeline per surface and retains every submitted

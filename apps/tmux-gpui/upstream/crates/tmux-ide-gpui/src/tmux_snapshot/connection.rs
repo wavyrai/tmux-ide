@@ -40,7 +40,7 @@ pub(super) enum Kind {
 }
 
 /// What the slot shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Stage {
     Quiet,
     Spinner,
@@ -93,7 +93,7 @@ pub(super) enum Act {
     SshIdentity,
 }
 /// The one card Home shows for it, and the slot's short label.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Card {
     pub slot: &'static str,
     pub title: String,

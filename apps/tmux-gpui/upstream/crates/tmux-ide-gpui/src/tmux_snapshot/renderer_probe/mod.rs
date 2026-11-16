@@ -21,6 +21,12 @@ pub(crate) use logging::*;
 
 #[cfg(feature = "qualification")]
 pub(crate) mod runtime;
+#[cfg(test)]
+thread_local! {
+    /// Tests stand in for `TMUX_IDE_RENDERER_FIXTURE=1`, which is read once
+    /// per process.
+    pub(crate) static FORCED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 #[cfg(not(feature = "qualification"))]
 mod off;

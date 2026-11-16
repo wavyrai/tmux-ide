@@ -54,7 +54,11 @@ pub(in crate::tmux_snapshot) struct Owner {
     pending_close: Option<(u64, u64, u16)>,
 }
 impl Owner {
-    pub(super) fn queue_cancel(&mut self, request: u64, scope: u64) {
+    /// A close is waiting for room in the command queue.
+    pub(in crate::tmux_snapshot) fn closing(&self) -> bool {
+        self.pending_close.is_some()
+    }
+    pub(in crate::tmux_snapshot) fn queue_cancel(&mut self, request: u64, scope: u64) {
         self.pending_close = Some((request, scope, 0));
     }
 }

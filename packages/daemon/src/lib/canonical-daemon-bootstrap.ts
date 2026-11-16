@@ -3,6 +3,7 @@ import {
   captureUnboundTmuxSelectorProof,
   type TmuxServerProof,
 } from "./tmux-server-proof.ts";
+import { invocationDirectory } from "./invocation-directory.ts";
 import {
   createPinnedWorkspaceTmuxRunner,
   resolveWorkspacePaneTmuxAuthority,
@@ -282,6 +283,22 @@ async function replaceOlderCanonicalDaemon(
   );
 }
 
+const DAEMON_PROOF_PENDING = Symbol("daemon-server-proof-pending");
+
+/**
+ * The daemon supports server proofs, but its identity or this side's own probe
+ * has no proof yet: a generation that just started on a replaced tmux server,
+ * or a slow tmux answer. Waiting can resolve it; an unsupported proof or a
+ * positive mismatch cannot.
+ */
+export function daemonServerProofPending(error: unknown): boolean {
+  return (
+    error instanceof DaemonBootstrapError &&
+    (error as DaemonBootstrapError & { [DAEMON_PROOF_PENDING]?: boolean })[DAEMON_PROOF_PENDING] ===
+      true
+  );
+}
+
 async function assertServerIntent(
   deps: CanonicalDaemonBootstrapDependencies,
   info: CanonicalDaemonInfo,
@@ -320,10 +337,17 @@ async function assertServerIntent(
     }
   }
   if (info.tmuxServerProofVersion !== 1 || !identity.tmuxServerProof || !proof)
-    throw new DaemonBootstrapError(
-      "incompatible",
-      `Cannot prove the requested tmux server for this daemon. Its server identity is unavailable or unsupported; the existing daemon was left running. Proof availability: capability=${info.tmuxServerProofVersion === 1}, daemon=${Boolean(identity.tmuxServerProof)}, client=${Boolean(proof)}.`,
-      { reason: "tmux-server-unproven" },
+    throw Object.assign(
+      new DaemonBootstrapError<CanonicalDaemonBootstrapFailure>(
+        "incompatible",
+        `Cannot prove the requested tmux server for this daemon. Its server identity is unavailable or unsupported; the existing daemon was left running. Proof availability: capability=${info.tmuxServerProofVersion === 1}, daemon=${Boolean(identity.tmuxServerProof)}, client=${Boolean(proof)}.`,
+        { reason: "tmux-server-unproven" },
+      ),
+      {
+        // Either side's proof can be late (a slow tmux answer); only a daemon
+        // without the capability can never prove it.
+        [DAEMON_PROOF_PENDING]: info.tmuxServerProofVersion === 1,
+      },
     );
   if (
     identity.tmuxServerProof.kind !== proof.kind ||
@@ -460,7 +484,9 @@ export function createCanonicalDaemonBootstrapCoordinator(
           ? resolveTmuxServerIntent()
           : options.tmuxServerIntent,
       ),
-    spawn: () => deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? process.cwd())),
+    // A deleted current directory starts the daemon from home (#585).
+    spawn: () =>
+      deps.spawnOwner(resolve(options.entryPath), resolve(options.cwd ?? invocationDirectory())),
     timeoutMs: options.timeoutMs,
     onPhaseChanged: options.onPhaseChanged,
     now: deps.now,

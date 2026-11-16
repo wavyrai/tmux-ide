@@ -372,7 +372,8 @@ fn the_home_row_counts_agents_that_need_input(cx: &mut TestAppContext) {
                 if request == 7 { expected } else { 0 }
             );
             let mut node = Node::new(A11y::Button);
-            view.sidebar_home_row(cx).write_a11y_info(&mut node);
+            view.sidebar_home_row(bezel_motion::Painter::of(cx), cx)
+                .write_a11y_info(&mut node);
             assert_eq!(
                 node.label(),
                 Some(spoken),

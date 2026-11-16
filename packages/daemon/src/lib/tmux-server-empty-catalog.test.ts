@@ -40,3 +40,43 @@ it("errors, unwitnessed empty and malformed output preserve membership", async (
     expect(registry.has("retained")).toBe(true);
   }
 });
+// Soak, 12 Nov: a tmux server that cannot exit answers with no sessions or not
+// at all. The owner's watch is told of both, and never changes the result.
+it("tells the watch of a server without sessions and of one that does not answer", async () => {
+  const dir = mkdtempSync("/tmp/tmux-empty-catalog-");
+  roots.push(dir);
+  const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
+  const told: string[] = [];
+  const watch = (kind: string) => {
+    told.push(kind);
+    // A watcher that fails, either way, never reaches the caller.
+    if (told.length === 1) throw new Error("watch failed");
+    return Promise.reject(new Error("watch failed later"));
+  };
+  const empty = createNativeTmuxServerCatalog(
+    registry,
+    async () => "tmux-ide-empty-catalog-v1\n",
+    undefined,
+    watch,
+  );
+  expect(await empty()).toEqual([]);
+  const silent = createNativeTmuxServerCatalog(
+    registry,
+    async () => {
+      throw new Error("no server running");
+    },
+    undefined,
+    watch,
+  );
+  await expect(silent()).rejects.toThrow("no server running");
+  expect(told).toEqual(["no-sessions", "unanswered"]);
+  // Output that is merely malformed is not a server in trouble.
+  const malformed = createNativeTmuxServerCatalog(
+    registry,
+    async () => "invalid",
+    undefined,
+    watch,
+  );
+  await expect(malformed()).rejects.toThrow();
+  expect(told).toHaveLength(2);
+});

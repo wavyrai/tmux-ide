@@ -40,7 +40,9 @@ let _tmuxRunner: TmuxRunner = (args) =>
   execFileSync("tmux", ["-u", ...runtimeTmuxArgs(args)], {
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "ignore"],
+    // Keep stderr on the error: it is how a caller tells "no server running"
+    // from a server it could not reach. Nothing is printed either way.
+    stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 
 export function _setTmuxRunner(fn: TmuxRunner): () => void {
@@ -75,8 +77,20 @@ function semanticPaneIds(session: string): ReadonlyMap<string, string> {
 }
 
 export function listTmuxSessions(): string[] {
-  const raw = tmuxSilent(["list-sessions", "-F", "#{session_name}"]);
-  if (!raw) return [];
+  return readTmuxSessions() ?? [];
+}
+
+/**
+ * {@link listTmuxSessions}, but null when tmux could not be asked. Only a
+ * server that is not running has no sessions (#753).
+ */
+export function readTmuxSessions(): string[] | null {
+  let raw: string;
+  try {
+    raw = _tmuxRunner(["list-sessions", "-F", "#{session_name}"]);
+  } catch (error) {
+    return serverNotRunning(error) ? [] : null;
+  }
   return raw.split("\n").filter(Boolean);
 }
 
@@ -99,6 +113,39 @@ export interface LiveSessionSummary {
 export function discoverLiveSessionSummaries(
   runTmux: TmuxRunner = _tmuxRunner,
 ): LiveSessionSummary[] {
+  return readLiveSessionSummaries(runTmux) ?? [];
+}
+
+/**
+ * Whether a failed tmux client says its server is not running. tmux prints
+ * "no server running" for a refused connection and names ENOENT for a missing
+ * socket; a socket path that is gone before the client starts fails in `lstat`.
+ */
+function serverNotRunning(error: unknown): boolean {
+  type Failure = { stderr?: unknown; code?: unknown; syscall?: unknown; cause?: unknown };
+  // The tmux runners wrap the child-process failure as the `cause` of a TmuxError.
+  for (const failure of [error as Failure | null, (error as Failure | null)?.cause as Failure]) {
+    if (!failure) continue;
+    if (failure.code === "ENOENT" && failure.syscall === "lstat") return true;
+    if (
+      /^(?:no server running on |error connecting to .* \(No such file or directory\)$)/mu.test(
+        String(failure.stderr ?? ""),
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
+ * {@link discoverLiveSessionSummaries}, but null when tmux could not be asked:
+ * an unreadable socket, a timeout, a client that would not start. Only a server
+ * that is not running has no sessions. An empty list for the other failures
+ * tells the user their sessions are gone while they are still running (#753).
+ */
+export function readLiveSessionSummaries(
+  runTmux: TmuxRunner = _tmuxRunner,
+): LiveSessionSummary[] | null {
   let raw: string;
   try {
     raw = runTmux([
@@ -107,8 +154,8 @@ export function discoverLiveSessionSummaries(
       "-F",
       "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}",
     ]);
-  } catch {
-    return [];
+  } catch (error) {
+    return serverNotRunning(error) ? [] : null;
   }
   if (!raw) return [];
   const sessions = new Map<string, LiveSessionSummary>();
@@ -445,7 +492,13 @@ function assembleAdoptedFleet(
 }
 
 export function discoverSessions(): SessionInfo[] {
-  const sessionNames = listTmuxSessions();
+  return readSessions() ?? [];
+}
+
+/** {@link discoverSessions}, but null when tmux could not be asked (#753). */
+export function readSessions(): SessionInfo[] | null {
+  const sessionNames = readTmuxSessions();
+  if (sessionNames === null) return null;
   const results: SessionInfo[] = [];
 
   // Once the workspace registry is loaded (post daemon-embed startup),

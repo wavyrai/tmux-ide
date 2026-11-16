@@ -151,6 +151,11 @@ impl Gate {
     pub(super) fn refresh_requested(&self) -> bool {
         self.refresh_requested
     }
+    /// Takes the request as the next Home operation would.
+    #[cfg(test)]
+    pub(super) fn take_refresh_request(&mut self) -> bool {
+        std::mem::take(&mut self.refresh_requested)
+    }
     pub(super) fn refresh(&mut self) {
         // Wait for the Home operation's fresh local registry read before retrying
         // failed routes; never reconnect from an old saved-profile publication.

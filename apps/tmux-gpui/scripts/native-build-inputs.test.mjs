@@ -19,17 +19,19 @@ test("build uses exact installed stable compiler independent of rustup launcher"
     assert.throws(() => pinnedToolchainPaths("/owned", source, "arm64"));
   assert.throws(() => pinnedToolchainPaths("relative", 'channel = "1.96.1"', "arm64"));
 });
-test("only declared workspace and exact Apple manifests can enter receipt", () => {
+test("only declared workspace and exact vendored manifests can enter receipt", () => {
   const files = [
     "Cargo.toml",
     "crates/gui/Cargo.toml",
     "../vendor/bezel-gpui-apple/Cargo.toml",
+    "../vendor/bezel-gpui/Cargo.toml",
     "../vendor/unrelated/Cargo.toml",
     "assets/private/Cargo.toml",
   ].map((path) => ({ path }));
   assert(
     localManifestAllowed("/owned/upstream", "/owned/vendor/bezel-gpui-apple/Cargo.toml", files),
   );
+  assert(localManifestAllowed("/owned/upstream", "/owned/vendor/bezel-gpui/Cargo.toml", files));
   assert(localManifestAllowed("/owned/upstream", "/owned/upstream/crates/gui/Cargo.toml", files));
   assert(!localManifestAllowed("/owned/upstream", "/owned/vendor/unrelated/Cargo.toml", files));
   assert(

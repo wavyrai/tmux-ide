@@ -168,6 +168,20 @@ fn diagnostics_on_home_report_the_service_version(cx: &mut TestAppContext) {
                 };
             assert_eq!(report(view, window, cx)["daemonVersion"], "2.9.22");
             assert_eq!(view.about_connection(), "tmux-ide 2.9.22");
+            // What a terminal reports comes before the list's version.
+            let both = browser::State {
+                diagnostics: Some(crate::tmux_snapshot::diagnostics::Versions {
+                    tmux_version: None,
+                    daemon_version: Some("2.9.7".into()),
+                }),
+                service_version: Some("2.9.22".into()),
+                ..Default::default()
+            };
+            let text = crate::tmux_snapshot::diagnostics::build(&both, false)
+                .ok()
+                .unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["daemonVersion"], "2.9.7");
             view.browser_request += 1;
             assert!(report(view, window, cx)["daemonVersion"].is_null());
             assert_eq!(

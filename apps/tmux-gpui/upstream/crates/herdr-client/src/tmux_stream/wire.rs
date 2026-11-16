@@ -67,7 +67,7 @@ impl IssuedDescriptor {
             || uuid::Uuid::parse_str(&self.daemon_instance_id).is_err()
             || uuid::Uuid::parse_str(&self.request_id).is_err()
             || self.panes.is_empty()
-            || self.panes.len() > 24
+            || self.panes.len() > super::MAX_PANES
             || self.panes.iter().any(|pane| !valid_pane(pane))
             || self
                 .panes

@@ -14,14 +14,37 @@ impl Fnv {
     fn text(&mut self, s: &str) {
         self.bytes(s.as_bytes());
     }
+    /// `n` in decimal from a stack buffer: rows are hashed cell by cell, and
+    /// a heap string per number cost more than the hashing itself.
+    fn decimal(&mut self, n: u64) {
+        let mut digits = [0u8; 20];
+        let mut start = digits.len();
+        let mut rest = n;
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (rest % 10) as u8;
+            rest /= 10;
+            if rest == 0 {
+                break;
+            }
+        }
+        self.bytes(&digits[start..]);
+    }
+    /// `<tag><len>:`, the length prefix of strings, arrays and objects.
+    fn prefix(&mut self, tag: &str, len: usize) {
+        self.text(tag);
+        self.decimal(len as u64);
+        self.text(":");
+    }
     fn string(&mut self, s: &str) {
-        self.text(&format!("s{}:", s.len()));
+        self.prefix("s", s.len());
         self.text(s);
         self.text(";");
     }
     fn number(&mut self, n: u64) {
-        let s = n.to_string();
-        self.text(&format!("d{}:{s};", s.len()));
+        self.prefix("d", decimal_len(n));
+        self.decimal(n);
+        self.text(";");
     }
     fn boolean(&mut self, b: bool) {
         self.text(if b { "b1;" } else { "b0;" });
@@ -32,18 +55,20 @@ impl Fnv {
             Value::Bool(b) => self.boolean(*b),
             Value::Number(n) => {
                 let s = n.to_string();
-                self.text(&format!("d{}:{s};", s.len()));
+                self.prefix("d", s.len());
+                self.text(&s);
+                self.text(";");
             }
             Value::String(s) => self.string(s),
             Value::Array(a) => {
-                self.text(&format!("a{}:", a.len()));
+                self.prefix("a", a.len());
                 for v in a {
                     self.value(v);
                 }
                 self.text(";");
             }
             Value::Object(o) => {
-                self.text(&format!("o{}:", o.len()));
+                self.prefix("o", o.len());
                 let mut keys: Vec<_> = o.keys().collect();
                 keys.sort();
                 for k in keys {
@@ -70,11 +95,15 @@ impl Fnv {
         }
     }
 }
+/// Digits in `n`'s decimal form.
+fn decimal_len(n: u64) -> usize {
+    n.checked_ilog10().map_or(1, |log| log as usize + 1)
+}
 pub(super) fn hash_row(cells: &[Cell], wrapped: bool) -> u64 {
     let mut h = Fnv::new();
     h.text("a2:");
     h.boolean(wrapped);
-    h.text(&format!("a{}:", cells.len()));
+    h.prefix("a", cells.len());
     for c in cells {
         h.text("a5:");
         h.string(&c.grapheme);

@@ -148,6 +148,9 @@ mod render;
 #[path = "tests/fleet.rs"]
 mod fleet;
 
+#[path = "tests/rows_window.rs"]
+mod rows_window;
+
 #[path = "tests/preferences.rs"]
 mod preferences;
 

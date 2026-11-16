@@ -754,6 +754,9 @@ export function runUpdaterLoop(): void {
     read: readSnapshot,
     write: writeSnapshot,
     every: config.updater.snapshotEvery,
+    // A dead server's snapshot is kept until its sessions are restored (#783).
+    serverStartMs: () =>
+      Number(runTmux(["display-message", "-p", "#{start_time}"]).toString().trim()) * 1000,
   });
   const shouldGiveUp = createUnreachableCounter();
   const tick = () => {

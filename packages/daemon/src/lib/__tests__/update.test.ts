@@ -173,7 +173,7 @@ it("resolves actual symlinked installation and emits one truthful JSON dry run w
     symlinkSync(bin, alias);
     const output = vi.fn();
     const execute = vi.fn();
-    runUpdate(
+    await runUpdate(
       { cliDir: alias, dryRun: true, json: true },
       {
         output,
@@ -192,7 +192,7 @@ it("resolves actual symlinked installation and emits one truthful JSON dry run w
       channel: "beta",
       args: ["install", "-g", "tmux-ide@beta"],
     });
-    runUpdate(
+    await runUpdate(
       { cliDir: bin, dryRun: false, json: true },
       {
         output,
@@ -206,14 +206,15 @@ it("resolves actual symlinked installation and emits one truthful JSON dry run w
       stdio: ["ignore", 2, 2],
     });
     execute.mockClear();
-    const blocked = runUpdate(
+    const status = () => ({ latest: null, updateAvailable: false });
+    const blocked = await runUpdate(
       { cliDir: bin, dryRun: false, json: true },
-      { output, execute, query: () => "/missing-other-prefix" },
+      { output, execute, status, query: () => "/missing-other-prefix" },
     );
     expect(blocked.command).toBeNull();
     expect(blocked.guidance).toContain("original manager/prefix");
     expect(execute).not.toHaveBeenCalled();
-    runUpdate({ cliDir: root, dryRun: false, json: true }, { execute, output });
+    await runUpdate({ cliDir: root, dryRun: false, json: true }, { execute, output, status });
     expect(execute).not.toHaveBeenCalled();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -229,4 +230,104 @@ it("does not infer an automatic stable update from an unknown running version", 
   expect(plan.command).toBeNull();
   expect(plan.executable).toBeUndefined();
   expect(plan.guidance).toContain("Cannot infer a safe update channel");
+});
+
+describe("the registry answer behind `tmux-ide update` (#745)", () => {
+  let home: string;
+  const previous = process.env.TMUX_IDE_HOME;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), "update-stale-"));
+    process.env.TMUX_IDE_HOME = home;
+    // What a machine that last ran the updater long ago still holds.
+    writeFileSync(
+      join(home, "update-check-latest.json"),
+      JSON.stringify({ lastCheckedAt: 1, latest: "2.9.6", notified: ["2.9.6"] }),
+    );
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.TMUX_IDE_HOME;
+    else process.env.TMUX_IDE_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  const run = async (fetchLatest: () => Promise<string | null>, json = false) => {
+    const { runUpdate } = await import("../update.ts");
+    const lines: string[] = [];
+    const asked: unknown[][] = [];
+    await runUpdate(
+      { cliDir: home, dryRun: true, json },
+      {
+        currentVersion: () => "2.9.16",
+        fetchLatest: (...args: unknown[]) => {
+          asked.push(args);
+          return fetchLatest();
+        },
+        output: (line) => lines.push(line),
+      },
+    );
+    return { text: lines.join("\n"), asked };
+  };
+
+  it("asks the registry, with a short timeout, and does not answer from a stale cache", async () => {
+    const { text, asked } = await run(async () => "2.9.18");
+    expect(asked).toEqual([[3000, "latest"]]);
+    expect(text).toContain("tmux-ide v2.9.16 → v2.9.18 available");
+    expect(text).not.toContain("up to date");
+    const { readUpdateCache } = await import("../update-check.ts");
+    expect(readUpdateCache({ currentVersion: "2.9.16" })).toMatchObject({
+      latest: "2.9.18",
+      notified: ["2.9.6"],
+    });
+  });
+
+  it("says up to date only on the registry's word", async () => {
+    const { text } = await run(async () => "2.9.16");
+    expect(text).toContain("tmux-ide v2.9.16 is up to date (registry: v2.9.16)");
+  });
+
+  it("does not claim up to date when the registry cannot be reached", async () => {
+    const { text } = await run(async () => null);
+    expect(text).not.toContain("up to date");
+    expect(text).toContain(
+      "tmux-ide v2.9.16: could not reach the npm registry (last known release: v2.9.6)",
+    );
+    const reported = JSON.parse((await run(async () => null, true)).text);
+    expect(reported).toMatchObject({ latest: "2.9.6", latestSource: "cache" });
+  });
+});
+
+describe("a failed update command (#751)", () => {
+  it("is reported as one line, not a stack trace", async () => {
+    const { runUpdate } = await import("../update.ts");
+    const { IdeError } = await import("../errors.ts");
+    const { symlinkSync } = await import("node:fs");
+    const root = mkdtempSync(join(tmpdir(), "update-fail-"));
+    try {
+      const bin = join(root, "lib/node_modules/tmux-ide/bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "../package.json"), JSON.stringify({ name: "tmux-ide" }));
+      symlinkSync(bin, join(root, "alias"));
+      const failure = Object.assign(new Error("Command failed: npm install -g tmux-ide@latest"), {
+        status: 1,
+        signal: null,
+      });
+      const attempt = runUpdate(
+        { cliDir: bin, dryRun: false, json: true },
+        {
+          output: () => {},
+          execute: (() => {
+            throw failure;
+          }) as never,
+          query: () => join(root, "lib/node_modules"),
+          currentVersion: () => "3.0.0",
+          status: () => ({ latest: "3.0.1", updateAvailable: true }),
+        },
+      );
+      await expect(attempt).rejects.toBeInstanceOf(IdeError);
+      await expect(attempt).rejects.toThrow(
+        /^The update did not finish: npm install -g tmux-ide@latest exited with status 1\. Its own message is above\. Retry with: tmux-ide update$/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

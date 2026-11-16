@@ -29,15 +29,18 @@ temp=${TMPDIR:-/tmp}
 cache=${HERDR_LINT_CACHE:-${temp%/}/herdr-lint-linux}/${name//\//-}
 mkdir -p "$cache/tree"
 rsync -a --delete --exclude target --exclude .git "$root/" "$cache/tree/"
-# tmux-ide patches the Apple backend beside this vendored workspace. Cargo still
-# resolves target-specific patch manifests on Linux, even though it never builds
-# the macOS implementation. Preserve that exact relative layout in the snapshot.
+# tmux-ide patches the Apple backend and the core GPUI crate beside this
+# vendored workspace. Cargo still resolves target-specific patch manifests on
+# Linux, even though it never builds the macOS implementation. Preserve that
+# exact relative layout in the snapshot.
 mkdir -p "$cache/vendor"
-if [[ -d "$root/../vendor/bezel-gpui-apple" ]]; then
-    mkdir -p "$cache/vendor/bezel-gpui-apple"
-    rsync -a --delete --exclude target --exclude .git \
-        "$root/../vendor/bezel-gpui-apple/" "$cache/vendor/bezel-gpui-apple/"
-fi
+for crate in bezel-gpui-apple bezel-gpui; do
+    if [[ -d "$root/../vendor/$crate" ]]; then
+        mkdir -p "$cache/vendor/$crate"
+        rsync -a --delete --exclude target --exclude .git \
+            "$root/../vendor/$crate/" "$cache/vendor/$crate/"
+    fi
+done
 
 # The tmux-ide qualification tests include these sibling data files at compile
 # time. Copy only fixture inputs, not the outer application's runtime or caches.

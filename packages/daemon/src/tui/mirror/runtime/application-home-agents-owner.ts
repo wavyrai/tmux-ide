@@ -1,3 +1,6 @@
+import { waitForRosterTarget } from "../../../lib/home-agent-observer.ts";
+import type { HomeAgentNavigationTarget } from "./application-home-agent-navigation.ts";
+import type { AdmittedPaneSelectionOutcome } from "./application-terminal-interaction-controller.ts";
 import { createApplicationNewAgentOwner } from "./application-new-agent-owner.ts";
 import type { ApplicationPaletteCommand } from "./application-palette-input.ts";
 import { createEffect, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
@@ -142,7 +145,10 @@ export function createApplicationHomeAgentsOwner(options: {
   readonly generation: () => OpenTuiGenerationHostSnapshot | null;
   readonly sessionName: () => string | null;
   readonly startGeneration: ReturnType<typeof createApplicationGenerationStarter>;
-  readonly selectPane: (paneId: string, admission?: Promise<boolean>) => void;
+  readonly selectPane: (
+    paneId: string,
+    admission?: Promise<boolean>,
+  ) => void | Promise<AdmittedPaneSelectionOutcome>;
   readonly showTerminals: (source: "keyboard" | "mouse") => void;
   readonly restoreHome?: (source: "keyboard" | "mouse") => Promise<void> | void;
   readonly setNote: (note: string | null) => void;
@@ -154,19 +160,20 @@ export function createApplicationHomeAgentsOwner(options: {
   const [selected, setSelected] = createSignal(selection.snapshot());
   const [opening, setOpening] = createSignal(false);
   let request = 0;
+  const currentTarget = (target: HomeAgentNavigationTarget): boolean => {
+    const catalog = options.catalog();
+    return (
+      catalog.phase === "live" &&
+      catalog.daemonInstanceId === target.daemonInstanceId &&
+      catalog.sessions.some(
+        (session) =>
+          session.name === target.sessionName && session.liveSessionId === target.liveSessionId,
+      ) &&
+      observer.isCurrentTarget(target)
+    );
+  };
   const navigator = createApplicationHomeAgentNavigator({
-    isCurrentTarget(target) {
-      const catalog = options.catalog();
-      return (
-        catalog.phase === "live" &&
-        catalog.daemonInstanceId === target.daemonInstanceId &&
-        catalog.sessions.some(
-          (session) =>
-            session.name === target.sessionName && session.liveSessionId === target.liveSessionId,
-        ) &&
-        observer.isCurrentTarget(target)
-      );
-    },
+    isCurrentTarget: currentTarget,
     currentGeneration() {
       const generation = options.generation();
       const generationKey = applicationGenerationNavigationKey(generation);
@@ -181,6 +188,16 @@ export function createApplicationHomeAgentsOwner(options: {
         agents: semantic.sidebar.agents,
       };
     },
+    waitForCurrentTarget: (target, signal) =>
+      waitForRosterTarget({
+        isCurrent: () => currentTarget(target),
+        refreshing: () => {
+          const observed = observer.getSnapshot();
+          return observed.refreshingSessionKeys.length > 0 || observed.loadingSessions > 0;
+        },
+        subscribe: (listener) => observer.subscribe(() => listener()),
+        signal,
+      }),
     waitForGeneration: (key, signal) => waitForHomeAgentSemantic(options.generation, key, signal),
     waitForAgent: (key, listed, signal) =>
       waitForHomeAgentListed(options.generation, key, listed, signal),

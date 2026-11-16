@@ -129,3 +129,16 @@ fn a_publication_between_the_check_and_storing_the_waker_is_not_missed() {
     // The publication finds no waker yet; the re-check after storing it must see the flag.
     assert!(poll(published.as_mut(), &count).is_ready());
 }
+
+/// A nudge while the task is busy is not lost: the task sees it pending when
+/// it next decides whether to wait (#714 review).
+#[test]
+fn a_nudge_while_busy_stays_pending_for_the_next_decision() {
+    let mailbox = MailboxSlot::default();
+    mailbox.set_idle(false);
+    mailbox.nudge();
+    mailbox.set_idle(true);
+    assert!(mailbox.has_activity());
+    assert!(mailbox.take_activity());
+    assert!(!mailbox.has_activity());
+}

@@ -30,7 +30,7 @@ impl SnapshotView {
         }
     }
 
-    fn sidebar_control_index(&self, window: &Window) -> Option<usize> {
+    pub(in crate::tmux_snapshot) fn sidebar_control_index(&self, window: &Window) -> Option<usize> {
         self.sidebar_keyboard
             .controls
             .as_ref()?

@@ -149,6 +149,12 @@ const ERROR_MESSAGES: Readonly<Record<WorkspacePromotionErrorCode, string>> = {
   operation_capacity: "The daemon has reached its bounded workspace-promote operation capacity.",
 };
 
+/**
+ * How often a promotion stamps and proves a session whose pane inventory
+ * changed between the proof's two reads, before it refuses.
+ */
+export const PROMOTION_PROOF_ATTEMPTS = 3;
+
 export class WorkspacePromotionError extends Error {
   readonly code: WorkspacePromotionErrorCode;
   readonly context: Readonly<Record<string, string>>;
@@ -594,9 +600,26 @@ export class WorkspacePromotionAuthority {
         : derivePromotionIdentity(session.sessionName);
       this.#assertConflictFreeIdentity(identity);
 
-      const canonicalRoot = await this.#stampSession(request, session, identity);
-      this.#assertActive(request.operationId);
-      await this.#verifyPromotedInventory(session.sessionId, identity);
+      // Another tmux client may split or close a pane while the session is
+      // being proved (an agent does it all day). The proof then cannot hold:
+      // stamp what is there now and prove again, a bounded number of times.
+      let canonicalRoot!: string;
+      for (let attempt = 1; ; attempt += 1) {
+        canonicalRoot = await this.#stampSession(request, session, identity);
+        this.#assertActive(request.operationId);
+        try {
+          await this.#verifyPromotedInventory(session.sessionId, identity);
+          break;
+        } catch (error) {
+          if (
+            attempt >= PROMOTION_PROOF_ATTEMPTS ||
+            !(error instanceof WorkspacePromotionError) ||
+            error.context.reason !== "inventory_changed_during_proof"
+          )
+            throw error;
+          this.#assertActive(request.operationId);
+        }
+      }
       await this.#publishFleetEnrollment(request, session, identity);
 
       // Catalog discovery can admit this session while the native stamping
