@@ -2009,7 +2009,7 @@ export class PaneStreamLiveConnection {
       // plus split: the new pane's delivery can take longer to open than the
       // settle time). Decide again once it is done, with a fresh settle time.
       if (this.#topologyReconciling) {
-        this.#tombstonesAfterChange.add(pane);
+        this.#tombstonesAfterChange.add(channel);
         return;
       }
       this.#failTopologyChanged("a pane that stays lost its source");
@@ -2017,8 +2017,12 @@ export class PaneStreamLiveConnection {
     timer.unref?.();
   }
 
-  /** Tombstoned panes whose guard came due while a change was being applied. */
-  readonly #tombstonesAfterChange = new Set<string>();
+  /**
+   * Tombstoned channels whose guard came due while a change was being applied.
+   * The channel, not the pane id: a pane that left and came back within the
+   * change has a fresh channel, which this tombstone is not about.
+   */
+  readonly #tombstonesAfterChange = new Set<PaneChannel>();
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
     if (
@@ -2688,7 +2692,9 @@ export class PaneStreamLiveConnection {
       this.#topologyPending = null;
       const tombstoned = [...this.#tombstonesAfterChange];
       this.#tombstonesAfterChange.clear();
-      for (const pane of tombstoned) this.#watchTombstone(pane);
+      for (const channel of tombstoned)
+        if (this.#panes.get(channel.semanticPaneId) === channel)
+          this.#watchTombstone(channel.semanticPaneId);
     }
   }
 
