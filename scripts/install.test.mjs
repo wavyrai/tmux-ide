@@ -801,22 +801,20 @@ test("pruning keeps an older release that a running process uses", async (t) => 
   assert.equal(run().status, 0);
   assert.equal(run().status, 0);
   const holder = await runFromRelease(t, home, used);
-  // TEMPORARY (PR #420 CI): what each reader gets from the holder's maps on Linux.
+  // TEMPORARY (PR #420 CI): replay 6edb29af's probe under the test shell, step by step.
   if (fs.existsSync(`/proc/${holder.pid}/maps`)) {
-    const maps = `/proc/${holder.pid}/maps`;
-    t.diagnostic(
-      JSON.stringify({
-        kernel: spawnSync("uname", ["-r"], { encoding: "utf8" }).stdout.trim(),
-        catPipeOut: spawnSync("/bin/sh", ["-c", `cat ${maps} | wc -c`], {
-          encoding: "utf8",
-        }).stdout.trim(),
-        sedPipeOut: spawnSync("/bin/sh", ["-c", `sed -n p ${maps} | wc -c`], {
-          encoding: "utf8",
-        }).stdout.trim(),
-        nodeBytes: fs.readFileSync(maps, "utf8").length,
-        mentionsRelease: fs.readFileSync(maps, "utf8").includes(path.basename(used)),
-      }),
+    const probe = spawnSync(
+      shell,
+      [
+        "-c",
+        `[ -r /proc/self/maps ] && echo readable=yes || echo readable=no
+command -v lsof || echo lsof=missing
+echo "old-pipeline-lines=$(for m in /proc/[0-9]*/maps; do cat "$m" 2>/dev/null; done | grep -c ${path.basename(used)})"
+echo "old-extract-lines=$(for m in /proc/[0-9]*/maps; do cat "$m" 2>/dev/null; done | sed -n 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]*  *\\(\\/.*\\)$/\\1/p' | grep -c ${path.basename(used)})"`,
+      ],
+      { encoding: "utf8", env: { PATH: `${path.join(home, "tools")}:/usr/bin:/bin` } },
     );
+    t.diagnostic(JSON.stringify({ stdout: probe.stdout, stderr: probe.stderr.slice(0, 400) }));
   }
   const pruned = run({}, ["--prune", "--yes"]);
   assert.equal(pruned.status, 0, pruned.stderr);
