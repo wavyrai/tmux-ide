@@ -111,8 +111,10 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   its placeholders stay on screen. The notice goes as soon as the program redraws and
   the image arrives again. U+10EEEE in the default colour names no image and is text.
   Only the native window shows the notice; the development bridge does not.
-- When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet
-  know the window's real cell size.
+- When `c`/`r` are omitted, the daemon sizes the placement with the cell size the
+  window last reported for the session (capability 103, with 104's thousandths when
+  sent). Until a window reports one, it assumes 10x20 px cells. A placement keeps the
+  grid it was given when the cell size changes later.
 - Not modelled: animation frames other than root-frame edits, relative
   placements, z-index, and `a=d` beyond all and by-id (with or without `p`).
 - When one image has several virtual placements, cells resolve to the most
