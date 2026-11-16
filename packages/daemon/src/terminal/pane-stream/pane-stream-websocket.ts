@@ -423,6 +423,8 @@ export interface SessionRuntimeTerminalDeliveryConnection {
   materialize?(request: TerminalProjectionMaterialize): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
+  /** The client typed into this pane: send its deliveries first. */
+  prioritize?(): void;
   close(): Promise<void>;
   readonly graphics?: TerminalDeliveryGraphics;
 }
@@ -3878,6 +3880,8 @@ export class PaneStreamLiveConnection {
         else if (kind === "text") channel.sub!.sendText(data);
         else if (kind === "key") channel.sub!.sendKey(data);
         else throw new Error("Byte input requires semantic runtime");
+        // Its echo goes ahead of the connection's other panes (remote links).
+        channel.delivery?.prioritize?.();
         let ackStartedAtMicros: number | null = null;
         let ackStartedAtSharedMicros: number | null = null;
         if (trace) {
