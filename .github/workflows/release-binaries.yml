@@ -65,6 +65,29 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "Resolved release v$version at $commit"
 
+      # The tagged tree's bin/cli.js is what a git install and ./bin/cli.js run.
+      # Refuse a stale one before a release or any asset is created (as the npm
+      # release workflow does before it publishes).
+      - name: Check out the release commit
+        run: git fetch --depth 1 origin "${{ steps.resolve.outputs.commit }}" && git checkout --detach FETCH_HEAD
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Committed bin/cli.js is the build of the release commit
+        run: pnpm run check:cli-bundle
+
       - name: Ensure GitHub release exists
         if: ${{ !inputs.qualification_only }}
         env:

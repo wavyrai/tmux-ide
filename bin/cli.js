@@ -15415,6 +15415,7 @@ var require_package = __commonJS({
         "test:tmux-boundary": "node scripts/test-tmux-boundary.mjs",
         build: "pnpm build:cli",
         "build:cli": "node scripts/build-cli.mjs",
+        "check:cli-bundle": "node scripts/check-cli-bundle.mjs",
         "build:macos-notifier": "node scripts/build-macos-notifier.mjs",
         "build:tui": "bun scripts/build-tui.mjs",
         prepack: "pnpm build:cli",
