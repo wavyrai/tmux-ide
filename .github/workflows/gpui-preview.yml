@@ -20,6 +20,8 @@ on:
       - tsconfig.json
       - .bun-version
       - .github/actions/setup-tmux/**
+      # setup-tmux runs this action before apt-get.
+      - .github/actions/apt-dns-fallback/**
       - .github/workflows/gpui-preview.yml
   push:
     branches: [main]

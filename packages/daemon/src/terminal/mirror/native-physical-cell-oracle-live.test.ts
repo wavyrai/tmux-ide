@@ -303,25 +303,6 @@ it.skipIf(!binary).each(["cells", "tab-wrap"] as const)(
           identity.sha256,
         );
       }
-      if (!native && scenario === "tab-wrap") {
-        let publications = 0;
-        await expect(
-          owner.subscribe(() => {
-            publications++;
-          }),
-        ).rejects.toThrow("exact snapshot of saved tab cells");
-        expect(publications).toBe(0);
-        expect(faults).toHaveLength(1);
-        trace.push({
-          phase: "stock-tab-unavailable",
-          published: publications,
-          rawText: run("capture-pane", "-p", "-t", "physical"),
-          rawPaintedCapture: run("capture-pane", "-p", "-e", "-J", "-t", "physical"),
-          limitation:
-            "Stock ANSI capture loses stored tab widths, so paint placement cannot be reconstructed",
-        });
-        return;
-      }
       await owner.subscribe((update) => {
         if (update.type === "terminal.seed") snapshot = update.snapshot;
         else if (update.type === "terminal.patch" && snapshot)
@@ -373,6 +354,10 @@ it.skipIf(!binary).each(["cells", "tab-wrap"] as const)(
             expect(snapshot).not.toBeNull();
             if (native) comparePhysicalFrame(readDeliveredFrame(snapshot!), deliveredExpected);
             else {
+              // A stock tmux has no physical grid to compare with. Its captured tab
+              // is reconstructed at the default stop, which this fixture uses.
+              if (scenario === "tab-wrap" && stage === "initial")
+                comparePhysicalFrame(readDeliveredFrame(snapshot!), deliveredExpected);
               const text = snapshot!.grid
                 .map((row) =>
                   row.cells

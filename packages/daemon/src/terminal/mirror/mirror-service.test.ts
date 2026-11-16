@@ -265,6 +265,31 @@ describe("MirrorService refcounting", () => {
       }
     },
   );
+  it("verifies registered ownership again by itself when a session comes or goes", async () => {
+    // A session created and killed elsewhere left every stream's input refused
+    // ("being verified") until some later issue request verified again.
+    const { service } = rig();
+    const subscription = await subscribed(service, FIXTURE.session, "pane.alpha");
+    let reads = 0;
+    try {
+      // What the native runtime does on workspace.added and workspace.removed.
+      const guard = service.setRegisteredWindowReader(async () => {
+        reads += 1;
+        return [{ session: FIXTURE.session, window: "@1" }];
+      });
+      await service.verifyRegisteredWindows();
+      const before = reads;
+      guard.invalidate();
+      expect(service.windowOwnershipPending()).toBe(true);
+      await vi.waitFor(() => expect(service.windowOwnershipPending()).toBe(false));
+      expect(reads).toBe(before + 1);
+      expect(service.windowOwnershipMessage(FIXTURE.session)).toBeNull();
+      expect(() => subscription.sendText("ok")).not.toThrow();
+    } finally {
+      await subscription.close();
+      await service.dispose();
+    }
+  });
   it("rejects retained input and geometry handles before writing when registered windows overlap", async () => {
     const { service, sims } = rig();
     const subscription = await subscribed(service, FIXTURE.session, "pane.alpha");

@@ -111,7 +111,7 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
                 fit,
                 view.last_resize,
                 false,
-                std::time::Instant::now() + std::time::Duration::from_millis(151),
+                geometry::fit_now() + std::time::Duration::from_millis(151),
             ),
             "renderer must already have scheduled this exact pending fit"
         );
@@ -120,9 +120,9 @@ fn chrome_focus_wraps_and_hiding_sidebar_retires_it(cx: &mut TestAppContext) {
             fit,
             view.last_resize,
             false,
-            std::time::Instant::now() - std::time::Duration::from_millis(151),
+            geometry::fit_now() - std::time::Duration::from_millis(151),
         ));
-        assert!(view.fit_settle.due(std::time::Instant::now()));
+        assert!(view.fit_settle.due(geometry::fit_now()));
         (cols, rows)
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
@@ -288,9 +288,6 @@ fn chrome_escape_and_home_navigation_retire_control_focus(cx: &mut TestAppContex
 
 #[gpui::test]
 fn lost_theme_readiness_returns_chrome_focus_to_rows(cx: &mut TestAppContext) {
-    // The appearance bezel paints in is process-wide: hold it, so no test
-    // running alongside changes it under this one.
-    let _appearance = bezel_theme::lock_appearance();
     let (sender, receiver) = mpsc::sync_channel(64);
     let (view, cx) = cx.add_window_view(|window, cx| make_view(window, cx, sender));
     cx.update(|window, cx| {

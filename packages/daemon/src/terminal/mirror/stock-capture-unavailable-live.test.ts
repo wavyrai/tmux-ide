@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { expect, it, vi } from "vitest";
-import { STOCK_CAPTURE_TAB_UNAVAILABLE, type TerminalReplicaSnapshot } from "@tmux-ide/contracts";
+import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
 import { applyTerminalReplicaPatch } from "@tmux-ide/core";
 import { MirrorService } from "./mirror-service.ts";
 import { MirrorControlChannel } from "./control-channel.ts";
@@ -17,8 +17,9 @@ import {
 } from "./__tests__/native-physical-cell-oracle.ts";
 
 const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY;
+// The file keeps its name from when a stock capture with a tab was refused (#737).
 it.skipIf(!binary)(
-  "keeps existing server and healthy input alive when stock tab capture is unavailable",
+  "delivers a pane with a saved tab and keeps the server and healthy input alive",
   async () => {
     expect(isAbsolute(binary!)).toBe(true);
     const expectedNative = process.env.TMUX_IDE_ORACLE_EXPECT_NATIVE;
@@ -145,7 +146,6 @@ it.skipIf(!binary)(
       await qualifyStockTabWire({
         binary: binary!,
         socket,
-        native: expectedNative === "1",
         record: (evidence) => {
           wire = evidence;
         },
@@ -203,23 +203,20 @@ it.skipIf(!binary)(
           badPublications++;
           if (u.type === "terminal.seed") badSnapshot = u.snapshot;
         });
-      if (expectedNative === "0") {
-        await expect(subscribeBad(badOwner)).rejects.toThrow(STOCK_CAPTURE_TAB_UNAVAILABLE);
-        await badOwner.dispose();
-        const reopened = make(bad.semanticPaneId);
-        await expect(subscribeBad(reopened)).rejects.toThrow(STOCK_CAPTURE_TAB_UNAVAILABLE);
-        await reopened.dispose();
-        expect(badPublications).toBe(0);
-        expect(faults).toHaveLength(2);
-      } else {
-        await subscribeBad(badOwner);
-        expect(badSnapshot).not.toBeNull();
-        comparePhysicalFrame(readDeliveredFrame(badSnapshot!), {
-          ...knownTabFrame("initial"),
-          cursor: [7, 0],
-        });
-        expect(faults).toEqual([]);
-      }
+      // Stock and tmux-ide's tmux alike: the tab's cells are blank in the row's
+      // background up to the stop, and reopening the pane gives the same frame.
+      const expectedFrame = { ...knownTabFrame("initial"), cursor: [7, 0] };
+      await subscribeBad(badOwner);
+      expect(badSnapshot).not.toBeNull();
+      comparePhysicalFrame(readDeliveredFrame(badSnapshot!), expectedFrame);
+      await badOwner.dispose();
+      badSnapshot = null;
+      const reopened = make(bad.semanticPaneId);
+      await subscribeBad(reopened);
+      expect(badSnapshot).not.toBeNull();
+      comparePhysicalFrame(readDeliveredFrame(badSnapshot!), expectedFrame);
+      expect(badPublications).toBeGreaterThanOrEqual(2);
+      expect(faults).toEqual([]);
       mirror.sendText("tabs", good.semanticPaneId, "healthy-123");
       await vi.waitFor(
         () => expect(run("capture-pane", "-p", "-t", "tabs:good")).toContain("ACK:healthy-123"),

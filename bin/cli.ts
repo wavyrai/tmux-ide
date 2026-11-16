@@ -44,6 +44,7 @@ import {
 import { IdeError } from "../packages/daemon/src/lib/errors.ts";
 import { printCommandError } from "../packages/daemon/src/lib/output.ts";
 import { stateHome } from "../packages/daemon/src/lib/state-home.ts";
+import { invocationDirectory } from "../packages/daemon/src/lib/invocation-directory.ts";
 import {
   wantsHostedApp,
   hostedEnvVars,
@@ -453,7 +454,7 @@ async function execBunWidget(
     }
   }
   const env = openTuiLaunchEnvironment(process.env, {
-    TMUX_IDE_CWD: process.cwd(),
+    TMUX_IDE_CWD: invocationDirectory(),
     TMUX_IDE_CLI: nodeCliPath,
     ...(automaticDiagnosticLog
       ? {
@@ -566,7 +567,7 @@ function launchHostedApp(scriptPath: string, appArgs: string[]): void {
       launch.bin,
       launch.argv,
       hostedEnvVars({
-        cwd: process.cwd(),
+        cwd: invocationDirectory(),
         cli: nodeCliPath,
         path: process.env.PATH,
         home: process.env.TMUX_IDE_HOME,
@@ -2480,7 +2481,7 @@ try {
       // package-manager path heuristic (see lib/update.ts).
       const { runUpdate } = await import("../packages/daemon/src/lib/update.ts");
       const dryRun = values["dry-run"] === true;
-      runUpdate({ cliDir: __dirname, dryRun, json });
+      await runUpdate({ cliDir: __dirname, dryRun, json });
       break;
     }
 
