@@ -387,7 +387,7 @@ fn a_reread_keeps_rows_and_a_change_of_state_keeps_the_key() {
         "a change of state re-keyed"
     );
     assert!(gate.resolve(&shown.rows[0].key, shown.revision).is_some());
-    assert!(!gate.moved(&shown.rows[0].key));
+    assert!(gate.moved(&shown.rows[0].key).is_none());
 
     // The same agent in another pane: a new row, and the old one is refused.
     let mut elsewhere = observation;
@@ -402,8 +402,8 @@ fn a_reread_keeps_rows_and_a_change_of_state_keeps_the_key() {
     let moved = gate.publication();
     assert_ne!(moved.rows[0].key, shown.rows[0].key);
     assert!(gate.resolve(&shown.rows[0].key, moved.revision).is_none());
-    assert!(gate.moved(&shown.rows[0].key));
-    assert!(!gate.moved("unknown"));
+    assert_eq!(gate.moved(&shown.rows[0].key), Some(AGENT_MOVED));
+    assert!(gate.moved("unknown").is_none());
 }
 
 /// #764: a click on a row whose agent moved to another pane is refused with
@@ -476,13 +476,120 @@ fn a_failed_reread_drops_the_shown_rows_and_their_keys() {
     );
 }
 
-/// #764 on a workspace: the same refusal, shown as the status line there.
+fn endpoint(lifetime: &str, semantic: &str) -> herdr_client::tmux_daemon::ObservedPaneEndpoint {
+    serde_json::from_value(serde_json::json!({
+        "kind": "pane",
+        "environmentId": "env",
+        "serverScope": {"serverId": "s", "generation": "g"},
+        "paneLifetimeId": lifetime,
+        "workspaceName": "w",
+        "semanticPaneId": semantic,
+    }))
+    .unwrap()
+}
+
+/// Review of 8f3e460f (blocking 1): an agent proven only by its interaction
+/// endpoint (the daemon sends no native identity while the native epoch
+/// changes, or before the pane has a birth id) that comes back in another
+/// pane under the same agent id must not keep its row key.
+#[test]
+fn an_agent_proven_by_its_endpoint_alone_that_moved_is_another_row() {
+    let mut gate = ready();
+    let key = gate.slots[0].context.key.clone();
+    let Observed::Ready(observation) = &gate.slots[0].observed else {
+        unreachable!()
+    };
+    let mut first = observation.clone();
+    first.agents[0].native_identity = None;
+    first.agents[0].interaction_endpoint = Some(endpoint("life-1", "pane.one"));
+    let e1 = uuid::Uuid::new_v4();
+    gate.epoch = Some(e1);
+    assert!(gate.apply(&key, e1, Ok(first.clone())));
+    let shown = gate.publication();
+    assert!(shown.rows[0].available, "endpoint-only agent is openable");
+    let mut moved = first;
+    moved.agents[0].pane_id = Some("pane.two".into());
+    moved.agents[0].interaction_endpoint = Some(endpoint("life-2", "pane.two"));
+    let e2 = uuid::Uuid::new_v4();
+    gate.epoch = Some(e2);
+    assert!(gate.apply(&key, e2, Ok(moved)));
+    let now = gate.publication();
+    let resolved = gate.resolve(&shown.rows[0].key, now.revision);
+    assert!(
+        resolved.is_none(),
+        "a click on the old row opens the new pane"
+    );
+    assert_eq!(gate.moved(&shown.rows[0].key), Some(AGENT_MOVED));
+}
+
+/// Each proof alone tells the pane apart: the same lifetime under another
+/// pane id, and the same pane id with a new lifetime (the pane was closed
+/// and a configured pane of the same id opened).
+#[test]
+fn each_proof_of_an_endpoint_only_pane_alone_makes_another_row() {
+    for (pane, lifetime) in [("pane.two", "life-1"), ("pane.one", "life-2")] {
+        let mut gate = ready();
+        let key = gate.slots[0].context.key.clone();
+        let Observed::Ready(observation) = &gate.slots[0].observed else {
+            unreachable!()
+        };
+        let mut first = observation.clone();
+        first.agents[0].native_identity = None;
+        first.agents[0].pane_id = Some("pane.one".into());
+        first.agents[0].interaction_endpoint = Some(endpoint("life-1", "pane.one"));
+        let e1 = uuid::Uuid::new_v4();
+        gate.epoch = Some(e1);
+        assert!(gate.apply(&key, e1, Ok(first.clone())));
+        let shown = gate.publication();
+        let mut next = first;
+        next.agents[0].pane_id = Some(pane.into());
+        next.agents[0].interaction_endpoint = Some(endpoint(lifetime, pane));
+        let e2 = uuid::Uuid::new_v4();
+        gate.epoch = Some(e2);
+        assert!(gate.apply(&key, e2, Ok(next)));
+        let now = gate.publication();
+        assert!(
+            gate.resolve(&shown.rows[0].key, now.revision).is_none(),
+            "{pane} {lifetime}: the old row opens the new pane"
+        );
+        assert_eq!(
+            gate.moved(&shown.rows[0].key),
+            Some(AGENT_MOVED),
+            "{pane} {lifetime}"
+        );
+    }
+}
+
+/// Review of 8f3e460f (item 3): the same pane that only lost its native
+/// identity is refused too, but not as "another pane".
+#[test]
+fn the_same_pane_without_its_proof_is_refused_as_unconfirmed() {
+    let mut gate = ready();
+    let shown = gate.publication();
+    let key = gate.slots[0].context.key.clone();
+    let Observed::Ready(observation) = &gate.slots[0].observed else {
+        unreachable!()
+    };
+    let mut unproven = observation.clone();
+    unproven.agents[0].native_identity = None;
+    unproven.agents[0].interaction_endpoint = Some(endpoint("life-1", "pane.one"));
+    let next = uuid::Uuid::new_v4();
+    gate.epoch = Some(next);
+    assert!(gate.apply(&key, next, Ok(unproven)));
+    let now = gate.publication();
+    assert!(gate.resolve(&shown.rows[0].key, now.revision).is_none());
+    assert_eq!(gate.moved(&shown.rows[0].key), Some(AGENT_UNCONFIRMED));
+}
+
+/// #764 on a workspace: the same refusal, in the status line, which the next
+/// agent that opens puts back as it was (review of 8f3e460f, item 2).
 #[test]
 fn a_click_on_a_moved_agent_in_a_workspace_says_so_in_the_status() {
     let (mut local, _events) = reconnect::tests::attached();
     local.state.surface = Surface::Workspace;
     local.foreground = true;
     local.stage = None;
+    local.state.status = "Connected".into();
     local.agents = ready();
     let shown = local.agents.publication();
     let session = local.agents.slots[0].context.live.clone();
@@ -502,19 +609,35 @@ fn a_click_on_a_moved_agent_in_a_workspace_says_so_in_the_status() {
     assert!(local.agents.apply(&key, later, Ok(elsewhere)));
     let moved = local.agents.publication();
     let from = local.state.request;
-    local
-        .open_agent(Command::OpenWorkspaceAgent {
-            request: from + 1,
-            from_request: from,
-            roster_revision: moved.revision,
-            key: shown.rows[0].key.clone(),
-            session_id: session,
-        })
-        .unwrap();
+    let click = |key: &str| Command::OpenWorkspaceAgent {
+        request: from + 1,
+        from_request: from,
+        roster_revision: moved.revision,
+        key: key.to_owned(),
+        session_id: session.clone(),
+    };
+    local.open_agent(click(&shown.rows[0].key)).unwrap();
     assert_eq!(local.state.status, AGENT_MOVED);
     assert_eq!(
         local.state.request, from,
         "a workspace click is not navigation"
     );
     assert!(local.stage.is_none(), "nothing was opened");
+    // The row as it is now opens, and the refusal leaves the status line.
+    let context = local.agents.slots[0].context.clone();
+    local.catalog_identity = Some(context.catalog_identity.clone());
+    local.targets.insert(
+        "agent-session".into(),
+        Target {
+            scope: context.scope.clone(),
+            live: context.live.clone(),
+        },
+    );
+    local.open_agent(click(&moved.rows[0].key)).unwrap();
+    assert!(
+        matches!(local.stage, Some(Stage::AgentOpen { .. })),
+        "the current row did not open"
+    );
+    assert_ne!(local.state.status, AGENT_MOVED);
+    assert!(local.agents.refused_status.is_none());
 }
