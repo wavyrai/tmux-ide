@@ -331,6 +331,32 @@ describe("runHeadlessDaemon", () => {
     await running;
   });
 
+  // #783: the crash snapshot's source comes from the CLI; without it the
+  // background service writes no snapshot, silently.
+  it("passes the crash snapshot source it was given to the daemon it starts", async () => {
+    const source = {
+      sessionFormat: "s",
+      paneFormat: "p",
+      build: async () => ({ savedAt: "", sessions: [] }),
+      read: () => null,
+      write: () => undefined,
+      fingerprint: () => "",
+    };
+    const harness = createHarness();
+    const running = runHeadlessDaemon({ json: true, crashSnapshotSource: source }, harness.deps);
+    await vi.waitFor(() => expect(harness.startOptions).toHaveLength(1));
+    expect(harness.startOptions[0]!.crashSnapshotSource).toBe(source);
+    await harness.stop();
+    await running;
+
+    const without = createHarness();
+    const plain = runHeadlessDaemon({ json: true }, without.deps);
+    await vi.waitFor(() => expect(without.startOptions).toHaveLength(1));
+    expect(without.startOptions[0]).not.toHaveProperty("crashSnapshotSource");
+    await without.stop();
+    await plain;
+  });
+
   it("reuses a compatible live canonical daemon without takeover", async () => {
     const harness = createHarness({ state: validState(daemonInfo()), alive: true });
 
