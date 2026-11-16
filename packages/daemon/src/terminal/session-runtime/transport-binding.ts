@@ -135,8 +135,8 @@ function authenticatedSurface(transport: SessionRuntimeTransport, hostClientId: 
 export class SessionRuntimeTransportBinding {
   readonly #binder: SessionRuntimeTransportBinder;
   readonly #shared: SharedClient;
-  readonly #allowedSourcePaneIds: ReadonlySet<string>;
-  readonly #contributedSourcePaneIds: ReadonlySet<string>;
+  readonly #allowedSourcePaneIds: Set<string>;
+  readonly #contributedSourcePaneIds: Set<string>;
   readonly #interactive: boolean;
   readonly #explicitAuthority: boolean;
   readonly #deliverySubscriberId: string;
@@ -313,6 +313,46 @@ export class SessionRuntimeTransportBinding {
         "The interactive transport does not own input authority.",
       );
     this.#binder.registry.assertExecutionHandle(this.#baseHandle, semanticPaneId);
+  }
+
+  /**
+   * The session's pane set changed under this live transport (#723). The
+   * caller is the daemon's own stream boundary, and the panes come from its
+   * trusted inventory of this binding's session: a client can never name a
+   * pane here. The grant stays exact: added panes join it, removed panes leave
+   * it, and every execution handle is rebuilt from the amended set.
+   * All-or-nothing: an invalid pane id changes nothing.
+   */
+  amendPaneGrant(change: {
+    readonly added: readonly string[];
+    readonly removed: readonly string[];
+  }): void {
+    this.#assertOpen();
+    const added = change.added.map((paneId) =>
+      TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId),
+    );
+    const removed = change.removed.map((paneId) =>
+      TerminalAttachmentSemanticPaneIdSchemaZ.parse(paneId),
+    );
+    for (const paneId of removed) {
+      if (!this.#allowedSourcePaneIds.delete(paneId)) continue;
+      if (!this.#contributedSourcePaneIds.delete(paneId)) continue;
+      const next = (this.#shared.grantRefs.get(paneId) ?? 0) - 1;
+      if (next > 0) this.#shared.grantRefs.set(paneId, next);
+      else this.#shared.grantRefs.delete(paneId);
+    }
+    for (const paneId of added) {
+      if (this.#allowedSourcePaneIds.has(paneId)) continue;
+      this.#allowedSourcePaneIds.add(paneId);
+      // As at bind: only an interactive transport contributes authorship.
+      if (!this.#interactive) continue;
+      this.#contributedSourcePaneIds.add(paneId);
+      this.#shared.grantRefs.set(paneId, (this.#shared.grantRefs.get(paneId) ?? 0) + 1);
+    }
+    // Handles carry a copy of the grant; the next use rebuilds them.
+    this.#baseHandle = null;
+    this.#baseHandleLease = null;
+    this.#intentHandles.clear();
   }
 
   openTerminalDelivery(
