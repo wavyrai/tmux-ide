@@ -104,8 +104,10 @@ pane edge; they avoid the multi-pixel drift from rounding every cell first.
   Placements extending beyond the visible pane are clipped.
 - Images live only in the daemon. They survive window reattach but not a
   daemon restart, after which placeholder cells paint blank.
-- When `c`/`r` are omitted, the daemon assumes 10x20 px cells. It does not yet
-  know the window's real cell size.
+- When `c`/`r` are omitted, the daemon sizes the placement with the cell size the
+  window last reported for the session (capability 103, with 104's thousandths when
+  sent). Until a window reports one, it assumes 10x20 px cells. A placement keeps the
+  grid it was given when the cell size changes later.
 - Not modelled: animation frames other than root-frame edits, relative
   placements, z-index, and `a=d` beyond all and by-id (with or without `p`).
 - When one image has several virtual placements, cells resolve to the most

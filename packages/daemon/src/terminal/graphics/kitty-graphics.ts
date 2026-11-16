@@ -367,16 +367,28 @@ export class KittyImageStore {
     null;
   #nextAnonymous = 0x7f000000;
   #bytes = 0;
-  readonly #cellWidth: number;
-  readonly #cellHeight: number;
+  /** Cell size in thousandths of a device pixel. */
+  #cellWidth: number;
+  #cellHeight: number;
   readonly #budget: KittyImageBudget;
   #revision = 0;
 
   constructor(options: KittyImageStoreOptions = {}) {
-    this.#cellWidth = options.cellWidthPx ?? 10;
-    this.#cellHeight = options.cellHeightPx ?? 20;
+    this.#cellWidth = (options.cellWidthPx ?? 10) * 1000;
+    this.#cellHeight = (options.cellHeightPx ?? 20) * 1000;
     this.#budget = options.budget ?? DEFAULT_KITTY_IMAGE_BUDGET;
     this.#budget.register(this);
+  }
+
+  /**
+   * The renderer's cell size in device pixels, with thousandths when it reports
+   * them (capability 103/104). Placements made from now on that give no `c`/`r`
+   * cover the image at this size; earlier ones keep their grid.
+   */
+  setCellPixels(width: number, height: number, precise?: { width: number; height: number }): void {
+    if (!(width > 0 && height > 0)) return;
+    this.#cellWidth = precise && precise.width > 0 ? precise.width : width * 1000;
+    this.#cellHeight = precise && precise.height > 0 ? precise.height : height * 1000;
   }
 
   /** Bumps whenever images or placements change. */
@@ -511,8 +523,12 @@ export class KittyImageStore {
     const image = this.#images.get(imageId);
     if (!image) return;
     this.#used.set(imageId, this.#budget.nextTick());
-    const columns = clampCells(int(control, "c") || Math.ceil(image.width / this.#cellWidth));
-    const rows = clampCells(int(control, "r") || Math.ceil(image.height / this.#cellHeight));
+    const columns = clampCells(
+      int(control, "c") || Math.ceil((image.width * 1000) / this.#cellWidth),
+    );
+    const rows = clampCells(
+      int(control, "r") || Math.ceil((image.height * 1000) / this.#cellHeight),
+    );
     const placementId = int(control, "p");
     if (control.get("U") === "1") {
       const placements = this.#virtual.get(imageId) ?? new Map();

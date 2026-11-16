@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { existsSync, readdirSync } from "node:fs";
 import { join, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Hono, type MiddlewareHandler } from "hono";
+import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
@@ -538,6 +538,20 @@ function sandboxResolveDir(rawDir: string): SandboxResolveOk | SandboxResolveErr
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono {
+  /**
+   * The running session a /api/project/:name route acts on. "unavailable" when
+   * tmux could not be asked: the session may well still run, so the routes
+   * answer 503 tmux-unavailable, not 404 (#753).
+   */
+  const lookupSession = (name: string): DiscoveredSession | "not-found" | "unavailable" => {
+    const sessions = readSessions();
+    if (sessions === null) return "unavailable";
+    return sessions.find((session) => session.name === name) ?? "not-found";
+  };
+  const sessionMissing = (c: Context, missing: "not-found" | "unavailable") =>
+    missing === "unavailable"
+      ? c.json({ error: "Tmux session discovery is unavailable", code: "tmux-unavailable" }, 503)
+      : c.json({ error: "Session not found" }, 404);
   const authConfig: AuthConfig = options.authConfig ?? { method: "none", token_expiry: 86400 };
   const authService = options.authService ?? new AuthService();
   const daemonIdentity = options.daemonIdentity ?? {
@@ -993,11 +1007,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/project/:name", (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const detail = buildProjectDetail(session);
     return c.json({ ...detail } satisfies DaemonProjectResponse);
   });
@@ -1128,8 +1139,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const backend = options.applicationShellInventoryBackend;
     if (!backend) {
       if (requestedVersion === String(APPLICATION_SHELL_RESOURCE_V1_VERSION)) {
-        const standaloneSession = discoverSessions().find((candidate) => candidate.name === name);
-        if (!standaloneSession) return c.json({ error: "Session not found" }, 404);
+        const standaloneSession = lookupSession(name);
+        if (typeof standaloneSession === "string") return sessionMissing(c, standaloneSession);
         markV1Compatibility();
         return c.json({
           version: APPLICATION_SHELL_RESOURCE_V1_VERSION,
@@ -1226,14 +1237,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     try {
       panes = listSessionPanes(name);
     } catch {
-      return c.json({ error: "Session not found" }, 404);
+      // A missing session, or a tmux that could not be asked (#753).
+      const session = lookupSession(name);
+      return sessionMissing(c, typeof session === "string" ? session : "not-found");
     }
     if (panes.length === 0) {
       // Verify the session actually exists before returning empty
-      const sessions = discoverSessions();
-      if (!sessions.find((s) => s.name === name)) {
-        return c.json({ error: "Session not found" }, 404);
-      }
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
     }
     return c.json({
       panes: panes.map((p) => ({
@@ -1253,9 +1264,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/project/:name/terminals", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const records = loadTerminals(session.dir);
     const terminals = records.map((t) => {
       const bridge = defaultPtyBridgeRegistry.peek(t.id) as
@@ -1292,9 +1302,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     zValidator("json", terminalCreateRequestSchema),
     async (c) => {
       const name = c.req.param("name");
-      const sessions = discoverSessions();
-      const session = sessions.find((s) => s.name === name);
-      if (!session) return c.json({ error: "Session not found" }, 404);
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
       const body = c.req.valid("json");
       // Pick the id: explicit > deterministic (when script provided) >
       // UUID. The script-derived id collapse is the load-bearing bit
@@ -1337,9 +1346,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     async (c) => {
       const name = c.req.param("name");
       const id = c.req.param("id");
-      const sessions = discoverSessions();
-      const session = sessions.find((s) => s.name === name);
-      if (!session) return c.json({ error: "Session not found" }, 404);
+      const session = lookupSession(name);
+      if (typeof session === "string") return sessionMissing(c, session);
       try {
         const record = renameTerminalRecord(session.dir, id, c.req.valid("json").name);
         if (!record) return c.json({ error: "Terminal not found" }, 404);
@@ -1354,9 +1362,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   app.delete("/api/project/:name/terminals/:id", async (c) => {
     const name = c.req.param("name");
     const id = c.req.param("id");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     const removedRecord = deleteTerminalRecord(session.dir, id);
     // Kill the live bridge too — keep store + registry consistent.
     const killed = defaultPtyBridgeRegistry.delete(id);
@@ -1373,19 +1380,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.get("/api/project/:name/events", (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     return c.json({ events: [] });
   });
 
   app.get("/api/project/:name/stream", (c) => {
     const name = c.req.param("name");
-    const session = discoverSessions().find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
 
     return streamSSE(c, async (stream) => {
       projectStreamConnections += 1;
@@ -1415,9 +1418,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         writeChanges(session);
         while (!closed) {
           await stream.sleep(250);
-          const current = discoverSessions().find((candidate) => candidate.name === name);
-          if (!current) break;
-          writeChanges(current);
+          const current = lookupSession(name);
+          if (current === "not-found") break;
+          // tmux could not be asked: the session may still run; ask again (#753).
+          if (current !== "unavailable") writeChanges(current);
           const now = Date.now();
           if (now - lastPing >= 25_000) {
             writeSse("ping", { at: new Date().toISOString() });
@@ -1433,11 +1437,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.post("/api/project/:name/inject", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
 
     let body: unknown;
     try {
@@ -1481,11 +1482,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // Send message to a pane by name/title/role/ID
   app.post("/api/project/:name/send", zValidator("json", sendCommandSchema), async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
 
     const { target, message, noEnter } = c.req.valid("json");
 
@@ -1529,9 +1527,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // the v2 Config editor to hydrate the form.
   app.get("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     try {
       const resolved = await resolveConfig(session.dir);
       if (!resolved.launchConfig || !resolved.path) {
@@ -1557,9 +1554,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // config so the client can re-hydrate without a follow-up GET.
   app.post("/api/project/:name/config", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     let body: unknown;
     try {
       body = await c.req.json();
@@ -1597,9 +1593,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // 30s timeout so the client can retry on its own.
   app.post("/api/project/:name/restart", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) return c.json({ error: "Session not found" }, 404);
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
     try {
       await execFileAsync("tmux-ide", ["restart", "--json"], {
         cwd: session.dir,
@@ -1615,11 +1610,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   app.post("/api/project/:name/launch", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
 
     // Check if already running
     const state = getSessionState(name);
@@ -1643,11 +1635,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   // Stop a tmux-ide session
   app.post("/api/project/:name/stop", async (c) => {
     const name = c.req.param("name");
-    const sessions = discoverSessions();
-    const session = sessions.find((s) => s.name === name);
-    if (!session) {
-      return c.json({ error: "Session not found" }, 404);
-    }
+    const session = lookupSession(name);
+    if (typeof session === "string") return sessionMissing(c, session);
 
     const state = getSessionState(name);
     if (!state.running) {
