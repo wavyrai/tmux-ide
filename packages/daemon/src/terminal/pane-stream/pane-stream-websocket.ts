@@ -3830,6 +3830,9 @@ export class PaneStreamLiveConnection {
     this.#inputWindowBytes += frameBytes;
     channel.nextInputSeq += 1;
     const deliver = (): void => {
+      // Held for an ownership read (#394) while the pane left the stream in
+      // place: dropped like any other late frame for it, not delivered.
+      if (channel.retiredInPlace) return;
       try {
         this.#sessionRuntimeBinding!.assertController(pane);
         if (semanticDelivery)
