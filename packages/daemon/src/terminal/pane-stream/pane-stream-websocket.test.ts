@@ -2487,6 +2487,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
       panes: string[],
       openFailsFor: string[] = [],
       withoutGrantAmendment = false,
+      openDelayMs: Record<string, number> = {},
     ) {
       const closed: string[] = [];
       const opened: string[] = [];
@@ -2495,6 +2496,8 @@ describe("PaneStreamAdmissionCoordinator", () => {
         withoutGrantAmendment,
         openTerminalDelivery: async (pane, _offer, onMessage) => {
           if (openFailsFor.includes(pane)) throw new Error("delivery unavailable");
+          const delayMs = openDelayMs[pane] ?? 0;
+          if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
           opened.push(pane);
           h.deliveryListeners.set(pane, onMessage as (message: never) => void);
           return {
@@ -2725,6 +2728,39 @@ describe("PaneStreamAdmissionCoordinator", () => {
         await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
         await new Promise((resolve) => setTimeout(resolve, PANE_STREAM_TOPOLOGY_SETTLE_MS + 50));
         expect(socket.closed).toBeNull();
+      });
+
+      it("stays open when a pane is replaced and the new pane opens slowly (review of #723)", async () => {
+        // kill-pane plus split: pane.two's tombstone arrives, then the change that
+        // removes it waits for pane.three's delivery. The guard must not close the
+        // stream while that change is being applied.
+        const { h } = topologyHarness(["pane.one", "pane.two"], [], false, {
+          "pane.three": PANE_STREAM_TOPOLOGY_SETTLE_MS + 100,
+        });
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        void h.deliveryListeners.get("pane.two")?.(tombstone("pane.two"));
+        change(h, ["pane.one", "pane.three"]);
+        await new Promise((resolve) => setTimeout(resolve, PANE_STREAM_TOPOLOGY_SETTLE_MS + 400));
+        expect(socket.framesOfType("topology")).toHaveLength(1);
+        expect(socket.closed).toBeNull();
+      });
+
+      it("still closes when the change applied meanwhile kept the tombstoned pane", async () => {
+        // A change that adds a pane but keeps pane.one: the guard decides again
+        // once that change is done, and pane.one is still there without a source.
+        const { h } = topologyHarness(["pane.one", "pane.two"], [], false, {
+          "pane.three": PANE_STREAM_TOPOLOGY_SETTLE_MS + 100,
+        });
+        const socket = await open(h, ["pane.one", "pane.two"]);
+        void h.deliveryListeners.get("pane.one")?.(tombstone("pane.one"));
+        change(h, ["pane.one", "pane.two", "pane.three"]);
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1), {
+          timeout: 2_000,
+        });
+        await vi.waitFor(
+          () => expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+          { timeout: 2_000 },
+        );
       });
 
       it("changes nothing for a stream without the capability", async () => {

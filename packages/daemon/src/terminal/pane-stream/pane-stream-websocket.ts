@@ -2005,10 +2005,20 @@ export class PaneStreamLiveConnection {
     if (!this.#topologyInPlace || !channel || channel.closed) return;
     const timer = setTimeout(() => {
       if (this.#closed || channel.retiredInPlace || this.#panes.get(pane) !== channel) return;
+      // A change being applied may be the one that removes this pane (kill-pane
+      // plus split: the new pane's delivery can take longer to open than the
+      // settle time). Decide again once it is done, with a fresh settle time.
+      if (this.#topologyReconciling) {
+        this.#tombstonesAfterChange.add(pane);
+        return;
+      }
       this.#failTopologyChanged("a pane that stays lost its source");
     }, PANE_STREAM_TOPOLOGY_SETTLE_MS);
     timer.unref?.();
   }
+
+  /** Tombstoned panes whose guard came due while a change was being applied. */
+  readonly #tombstonesAfterChange = new Set<string>();
 
   async #sendTerminalDelivery(pane: string, message: TerminalDeliveryServerMessage): Promise<void> {
     if (
@@ -2676,6 +2686,9 @@ export class PaneStreamLiveConnection {
     } finally {
       this.#topologyReconciling = false;
       this.#topologyPending = null;
+      const tombstoned = [...this.#tombstonesAfterChange];
+      this.#tombstonesAfterChange.clear();
+      for (const pane of tombstoned) this.#watchTombstone(pane);
     }
   }
 
