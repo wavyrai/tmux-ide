@@ -15,6 +15,7 @@ import {
 } from "../mirror/__tests__/simulated-channel.ts";
 import { SessionRuntimeInputLifetimeEndedError, SessionRuntimeRegistry } from "./registry.ts";
 import { PARK_AFTER_MS } from "./terminal-replica-owner.ts";
+import { KittyImageStore } from "../graphics/kitty-graphics.ts";
 import {
   SYSTEM_SESSION_RUNTIME_SCHEDULER,
   type SessionRuntimeScheduler,
@@ -980,6 +981,31 @@ describe("SessionRuntimeRegistry", () => {
     await registry.dispose();
     expect(registry.activeControlChannelCount()).toBe(0);
     expect(sims[0]!.disposed).toBe(true);
+  });
+
+  // Group H: image placements without c/r use the renderer's cell size, in
+  // every pane of the session, including panes opened after it was reported.
+  it("gives the renderer's cell pixels to every pane's images, now and later", async () => {
+    // The pane's own image store, reached through the session and the pane's
+    // real replica owner and interpreter.
+    const spy = vi.spyOn(KittyImageStore.prototype, "setCellPixels");
+    const { registry } = rig(GENERATION_A, true);
+    try {
+      const consumer = registry.connect(FIXTURE.session, "opentui", "cells");
+      consumer.setCellPixels(16, 32, { width: 16_250, height: 32_500 });
+      expect(spy).not.toHaveBeenCalled();
+      await consumer.subscribeReplica("pane.alpha", () => {});
+      expect(spy).toHaveBeenLastCalledWith(16, 32, { width: 16_250, height: 32_500 });
+      consumer.setCellPixels(20, 40);
+      expect(spy).toHaveBeenLastCalledWith(20, 40, undefined);
+      expect(spy).toHaveBeenCalledTimes(2);
+      // A size the mirror refuses never reaches the images.
+      expect(() => consumer.setCellPixels(0, 40)).toThrow(RangeError);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+      await registry.dispose();
+    }
   });
 
   it.each(["replica", "mirror"] as const)(
