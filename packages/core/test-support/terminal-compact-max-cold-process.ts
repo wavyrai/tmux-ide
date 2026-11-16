@@ -41,6 +41,10 @@ if (process.argv[2] === "decode") {
     history: "complete",
     richPlacements: true,
   });
+  // Test data, built before the heartbeat starts: encoding this 15 MB string
+  // is the fixture's own work, not the decoder's, and on a CI runner it alone
+  // took most of the 60 ms event-loop budget (#733).
+  const denseBytes = new TextEncoder().encode(`[${"0,".repeat(7_500_000)}0]`);
   let timerDelayMs = 0;
   let heartbeatActive = true;
   let heartbeatAt = performance.now();
@@ -102,8 +106,8 @@ if (process.argv[2] === "decode") {
   );
   if (applied.status !== "applied" || applied.state.snapshot !== verified.canonicalSnapshot)
     throw new Error("max compact seed was not atomically adopted");
-  const denseBytes = new TextEncoder().encode(`[${"0,".repeat(7_500_000)}0]`);
   let denseRejected = false;
+  let denseYields = 0;
   try {
     await decodeVerifiedCompactSemanticTerminalUpdateCooperatively(
       denseBytes,
@@ -111,6 +115,7 @@ if (process.argv[2] === "decode") {
       "0000000000000000",
       {
         yieldControl: async () => {
+          denseYields += 1;
           recordSlice("dense-json");
           await new Promise<void>((resolve) => setImmediate(resolve));
           sliceCpu = process.cpuUsage();
@@ -132,6 +137,7 @@ if (process.argv[2] === "decode") {
       maxSliceStage,
       representationBytes: bytes.byteLength,
       denseRepresentationBytes: denseBytes.byteLength,
+      denseYields,
       denseRejected,
       rssBytes: memory.rss,
       heapBytes: memory.heapUsed,
