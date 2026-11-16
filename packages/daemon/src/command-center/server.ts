@@ -16,6 +16,7 @@ import { streamSSE } from "hono/streaming";
 import { cors } from "hono/cors";
 import {
   discoverSessions,
+  readSessions,
   readLiveSessionSummaries,
   buildOverviews,
   buildProjectDetail,
@@ -830,7 +831,13 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   });
 
   app.get("/api/sessions", (c) => {
-    const sessions = discoverSessions();
+    const sessions = readSessions();
+    // An empty list would tell the TUI the sessions are gone while they run (#753).
+    if (sessions === null)
+      return c.json(
+        { error: "Tmux session discovery is unavailable", code: "tmux-unavailable" },
+        503,
+      );
     const overviews = buildOverviews(sessions);
     return c.json({ sessions: overviews } satisfies DaemonSessionsResponse);
   });
@@ -1661,7 +1668,11 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       let prevOverviews: SessionOverview[] = [];
 
       const poll = () => {
-        const sessions = discoverSessions();
+        const sessions = readSessions();
+        // tmux could not be asked: the sessions may well still run. Diffing an
+        // empty list would announce every one as removed, then added (#753).
+        // Keep the last answer and wait for the next poll.
+        if (sessions === null) return;
         const overviews = buildOverviews(sessions);
 
         const prevNames = new Set(prevOverviews.map((s) => s.name));
