@@ -237,10 +237,11 @@ describe("kitty image store", () => {
     transmit(2);
     expect(grid(2)).toEqual({ columns: 10, rows: 2 });
     // Fractional metrics (thousandths of a device pixel) win over the rounded
-    // ones: 160 px at 15.9 px a cell needs 11 columns, at a rounded 16 only 10.
-    store.setCellPixels(16, 32, { width: 15_900, height: 32_000 });
+    // ones: 160 x 64 px at 15.9 x 31.9 px a cell needs 11 x 3 cells, at a
+    // rounded 16 x 32 only 10 x 2.
+    store.setCellPixels(16, 32, { width: 15_900, height: 31_900 });
     transmit(3);
-    expect(grid(3)).toEqual({ columns: 11, rows: 2 });
+    expect(grid(3)).toEqual({ columns: 11, rows: 3 });
     // A placement made before keeps its grid.
     expect(grid(1)).toEqual({ columns: 16, rows: 4 });
   });
