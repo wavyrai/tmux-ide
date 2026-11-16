@@ -41,6 +41,24 @@ describe("SessionDescriptorDiscovery", () => {
     expect(decodeTmuxArgument('"bad stamp\\tvalue"')).toBe("bad stamp\tvalue");
   });
 
+  /*
+   * Bug this catches: tmux's qa escaping is utf8_stravis(VIS_CSTYLE), which
+   * emits \a \b \f \v as well as \t \r \n. Those four fell through to the
+   * literal-escape branch, so a control byte in a path or title came back as
+   * the letter that spelled it.
+   */
+  it("decodes every C-style escape tmux emits", () => {
+    // Ground truth captured from tmux 3.8: set-option @probe $'a\ab\bc\vd\fe'
+    // then display-message -p '#{qa:@probe}' prints "a\\ab\\bc\\vd\\fe".
+    expect(decodeTmuxArgument("a\\ab\\bc\\vd\\fe")).toBe("a\x07b\x08c\x0bd\x0ce");
+    expect(decodeTmuxArgument("x\\ay")).toBe("x\x07y");
+    expect(decodeTmuxArgument("x\\by")).toBe("x\x08y");
+    expect(decodeTmuxArgument("x\\vy")).toBe("x\x0by");
+    expect(decodeTmuxArgument("x\\fy")).toBe("x\x0cy");
+    // The same byte as an octal escape must agree with the C-style spelling.
+    expect(decodeTmuxArgument("x\\007y")).toBe(decodeTmuxArgument("x\\ay"));
+  });
+
   it("recovers UTF-8 cwd and title values from tmux control-feed latin1 byte strings", () => {
     const cwd = "/repo/café 😀";
     const title = "Review café 😀";
