@@ -136,9 +136,24 @@ if (info && Number.isInteger(info.pid) && typeof info.productVersion === 'string
     const result = run(launcher, ['update', '--daemon', '--if-running', '--json'], 120000);
     let status;
     try { status = JSON.parse(String(result.stdout).trim().split('\n').at(-1)); } catch {}
-    if (result.status === 0 && status?.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
-    else if (result.status !== 0 || status?.status !== 'not-running')
-      warn(`The tmux-ide ${info.productVersion} daemon could not be moved to ${version}; your sessions are safe. Retry: ${command} update --daemon`);
+    // The command gives up after its own deadline (15 s), while a supervisor such
+    // as launchd may still be starting the new daemon. Wait up to a minute for
+    // it to publish its record, unless the old daemon is still the owner.
+    const arrived = () => {
+      for (let i = 0; i < 300; i++) {
+        const current = readInfo();
+        if (current?.productVersion === version && Number.isInteger(current.pid) && alive(current.pid)) return true;
+        if (current?.pid === info.pid && current.productVersion === info.productVersion && alive(info.pid)) return false;
+        sleep(200);
+      }
+      return false;
+    };
+    const succeeded = result.status === 0 && (status?.status === 'ready' || status?.status === 'not-running');
+    if (succeeded && status.status === 'ready') note(`Restarted the daemon on ${status.productVersion}; tmux sessions kept running.`);
+    else if (!succeeded) {
+      if (arrived()) note(`Restarted the daemon on ${version}; tmux sessions kept running.`);
+      else warn(`The tmux-ide ${info.productVersion} daemon could not be moved to ${version}; your sessions are safe. Retry: ${command} update --daemon`);
+    }
   }
 }
 JS
@@ -175,6 +190,17 @@ lock_is_stale() {
   # Same pid, another start time: the owner exited and its pid was reused.
   [ -n "$lock_start" ] && [ -n "$lock_now" ] && [ "$lock_start" != "$lock_now" ]
 }
+# mkdir(1) alone is not a lock: uutils coreutils' mkdir (the default on Ubuntu
+# 26.04) can exit 0 for two runs that create one directory at once. A lock or
+# guard directory belongs to the run that creates its claim file, which the
+# shell itself creates exclusively (O_EXCL under set -C).
+claim_dir() {
+  mkdir "$1" 2>/dev/null && (set -C; : >"$1/claim") 2>/dev/null
+}
+unclaim_dir() {
+  rm -f "$1/claim" 2>/dev/null
+  rmdir "$1" 2>/dev/null
+}
 lock_busy() {
   if [ -n "$lock_pid" ] && [ -n "$lock_host" ] && [ "$lock_host" != "$(uname -n)" ]; then
     fail "Another installation is running on $lock_host (lock: $1)"
@@ -183,22 +209,22 @@ lock_busy() {
   fail "Another installation may be running (lock: $1). If no installation is running, remove that directory and retry."
 }
 acquire_lock() {
-  if ! mkdir "$1" 2>/dev/null; then
+  if ! claim_dir "$1"; then
     lock_is_stale "$1" || lock_busy "$1"
     # One run at a time may remove a stale lock. The guard is held for a moment
     # only, so one older than a minute belongs to a run that died holding it.
-    [ -z "$(find "$1.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || rmdir "$1.takeover" 2>/dev/null || true
+    [ -z "$(find "$1.takeover" -maxdepth 0 -mmin +1 2>/dev/null)" ] || unclaim_dir "$1.takeover" || true
     # From here the owner read above is the dead one; never name it as running.
     lock_pid=''
-    mkdir "$1.takeover" 2>/dev/null || lock_busy "$1"
+    claim_dir "$1.takeover" || lock_busy "$1"
     if lock_is_stale "$1"; then
       rm -f "$1/owner" "$1"/owner.* 2>/dev/null || true
-      rmdir "$1" 2>/dev/null || true
+      unclaim_dir "$1" || true
       lock_pid=''
     fi
     lock_taken=true
-    mkdir "$1" 2>/dev/null || lock_taken=false
-    rmdir "$1.takeover" 2>/dev/null || true
+    claim_dir "$1" || lock_taken=false
+    unclaim_dir "$1.takeover" || true
     [ "$lock_taken" = true ] || lock_busy "$1"
     step 'Removed the lock of an installation that is no longer running'
   fi
@@ -215,7 +241,7 @@ release() {
   if [ -n "$candidate" ] && [ ! "$candidate" -ef "$root/current" ] && [ ! "$candidate" -ef "$root/previous" ]; then rm -rf "$candidate"; fi
   if [ -n "$lock_held" ]; then
     rm -f "$lock_held/owner" "$lock_held"/owner.* 2>/dev/null
-    rmdir "$lock_held" 2>/dev/null
+    unclaim_dir "$lock_held"
   fi
 }
 main() {

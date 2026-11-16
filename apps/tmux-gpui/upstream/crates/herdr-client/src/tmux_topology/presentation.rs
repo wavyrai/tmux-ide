@@ -8,6 +8,13 @@ use std::{
     sync::Arc,
 };
 
+/// The most panes one window may have to be presented. A layout frame may
+/// list up to 64 (`PANE_STREAM_MAX_LAYOUT_PANES` in the contracts), but every
+/// pane the app presents must be streamed, and a stream carries at most
+/// [`crate::tmux_stream::MAX_PANES`]. Same number, different limit: kept
+/// apart so that raising one does not raise the other unnoticed.
+const MAX_WINDOW_PANES: usize = 24;
+
 #[derive(Debug)]
 pub struct Region {
     pub pane: String,
@@ -111,7 +118,7 @@ impl Presentation {
         if layout.cols > 1000
             || layout.rows > 500
             || layout.panes.is_empty()
-            || layout.panes.len() > 24
+            || layout.panes.len() > MAX_WINDOW_PANES
         {
             return Err(Error::Bounds);
         }
