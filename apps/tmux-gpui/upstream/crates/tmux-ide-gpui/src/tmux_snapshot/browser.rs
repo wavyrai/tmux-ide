@@ -174,6 +174,9 @@ pub(super) struct State {
     /// Keys typed just before the drop were not delivered. Keys typed after
     /// them are then refused, never held: they must not run alone.
     pub reconnect_keys_lost: bool,
+    /// A window shown again waits (briefly) for its hidden panes' fresh state:
+    /// keys typed meanwhile are held for the pane selected after it.
+    pub reveal_hold: bool,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
     /// Agent rows and pills are last known: their link dropped, or the one
@@ -635,6 +638,7 @@ impl Reader {
             retained_preview,
             reconnect_attempt: None,
             reconnect_keys_lost: false,
+            reveal_hold: false,
             home_fault: false,
             agents_last_known: false,
             act: None,

@@ -24,6 +24,7 @@ import {
   TmuxServersResourceSchemaZ,
   TmuxServerSessionsResourceSchemaZ,
   TmuxServerSessionsResourceV2SchemaZ,
+  TmuxServerSessionsResourceV3SchemaZ,
   WorkspaceMultiplexerMutationRequestSchemaZ,
   WorkspacePaneCreateMutationRequestSchemaZ,
   WorkspaceSessionCreateArgumentsSchemaZ,
@@ -40,7 +41,10 @@ import { WorkspacePaneCreationError } from "../lib/workspace-pane-creation.ts";
 import { ownerBearerMatches } from "./owner-authority.ts";
 import { logger } from "../lib/log.ts";
 import { mountPaneStreamIssueRoute } from "./pane-stream-issue.ts";
-import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-inventory.ts";
+import {
+  projectTerminalRuntimeInventory,
+  projectTerminalRuntimeInventoryV2,
+} from "./resources/terminal-runtime-inventory.ts";
 
 export interface TmuxServerRoutesOptions {
   readonly ownerToken: string | null;
@@ -295,7 +299,9 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     `${scoped}/sessions`,
     route(async (c) => {
       const server = scope(c);
-      const v2 = c.req.query("version") === "2";
+      // #806: version 3 is version 2 plus the largest window's pane count.
+      const v3 = c.req.query("version") === "3";
+      const v2 = v3 || c.req.query("version") === "2";
       const { rows, favicons } = await options.owners.withOwner(server, async (owner) => {
         const sessions = await owner.catalog();
         const workspaces = owner.workspaceRegistry.list();
@@ -328,9 +334,10 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           }),
         );
       let budget = SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES;
+      const schema = v3 ? TmuxServerSessionsResourceV3SchemaZ : TmuxServerSessionsResourceV2SchemaZ;
       return c.json(
-        TmuxServerSessionsResourceV2SchemaZ.parse({
-          version: 2,
+        schema.parse({
+          version: v3 ? 3 : 2,
           server,
           sessions: rows.map(({ session, workspaceName }, index) => {
             const found = favicons[index] ?? null;
@@ -342,6 +349,7 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
               workspaceName,
               paneCount: session.paneCount,
               windowCount: session.windowCount,
+              ...(v3 ? { largestWindowPaneCount: session.largestWindowPaneCount } : {}),
               lastActivity: session.lastActivity,
               favicon: favicon ? { mime: favicon.mime, data: favicon.data } : null,
             };
@@ -368,6 +376,8 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
     route(async (c) => {
       const server = scope(c);
       const workspaceName = workspaceSchema.parse(c.req.param("workspaceName"));
+      // #806: version 2 also names each window and its panes.
+      const v2 = c.req.query("version") === "2";
       const resource = await options.owners.withOwner(server, async (owner) => {
         const sessions = await owner.catalog();
         const workspace = owner.workspaceRegistry.get(workspaceName);
@@ -384,10 +394,13 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           workspace.sessionName,
           c.req.raw.signal,
         );
-        return snapshot ? projectTerminalRuntimeInventory(snapshot, 0) : null;
+        if (!snapshot) return null;
+        return v2
+          ? projectTerminalRuntimeInventoryV2(snapshot, 0)
+          : projectTerminalRuntimeInventory(snapshot, 0);
       });
       return resource
-        ? c.json({ version: 1, server, resource })
+        ? c.json({ version: v2 ? 2 : 1, server, resource })
         : c.json({ error: { code: "workspace-not-found" } }, 404);
     }),
   );

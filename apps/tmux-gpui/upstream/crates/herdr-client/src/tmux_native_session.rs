@@ -436,6 +436,10 @@ impl NativeSession {
             mailbox.controls.push(raw);
         }
     }
+    /// The stream's round trip as its last answered ping measured it.
+    pub fn rtt(&self) -> Option<std::time::Duration> {
+        self.stream.rtt()
+    }
     /// Ready after the worker changed the mailbox: a commit, a control, a
     /// status. Wait on it instead of polling `drain` on a timer; it may also
     /// be ready when nothing changed.

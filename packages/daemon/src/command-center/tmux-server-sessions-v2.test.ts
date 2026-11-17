@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TmuxServerSessionsResourceSchemaZ,
   TmuxServerSessionsResourceV2SchemaZ,
+  TmuxServerSessionsResourceV3SchemaZ,
 } from "@tmux-ide/contracts";
 import { TmuxServerOwners } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
@@ -27,6 +28,7 @@ interface Row {
   readonly sessionName: string;
   readonly paneCount: number;
   readonly windowCount: number;
+  readonly largestWindowPaneCount?: number;
   readonly lastActivity: number | null;
   readonly sessionPath: string;
 }
@@ -160,7 +162,7 @@ describe("GET tmux-servers/:server/:generation/sessions?version=2", () => {
         },
       ],
     };
-    for (const query of ["", "?version=1", "?version=3", "?version=2x"]) {
+    for (const query of ["", "?version=1", "?version=4", "?version=2x"]) {
       const body = await f.get(query);
       expect(JSON.stringify(body)).toBe(JSON.stringify(expected));
       expect(TmuxServerSessionsResourceSchemaZ.parse(body)).toEqual(body);
@@ -236,5 +238,54 @@ describe("GET tmux-servers/:server/:generation/sessions?version=2", () => {
       },
     ]);
     expect((await f.get("?version=2")).sessions[0]!.favicon).toBeNull();
+  });
+});
+
+describe("GET tmux-servers/:server/:generation/sessions?version=3 (#806)", () => {
+  it("adds the largest window's pane count and keeps version 2 as it was", async () => {
+    const f = await fixture([
+      {
+        liveSessionId: id("a"),
+        sessionName: "web",
+        paneCount: 30,
+        windowCount: 3,
+        largestWindowPaneCount: 20,
+        lastActivity: 1,
+        sessionPath: "relative",
+      },
+    ]);
+    const v3 = await f.get("?version=3");
+    expect(v3.version).toBe(3);
+    expect(v3.sessions[0]).toEqual({
+      liveSessionId: id("a"),
+      sessionName: "web",
+      workspaceName: "workspace.alias",
+      paneCount: 30,
+      windowCount: 3,
+      largestWindowPaneCount: 20,
+      lastActivity: 1,
+      favicon: null,
+    });
+    expect(TmuxServerSessionsResourceV3SchemaZ.parse(v3)).toEqual(v3);
+    // Version 2 stays byte for byte as before #806.
+    const v2 = await f.get("?version=2");
+    expect(JSON.stringify(v2)).toBe(
+      JSON.stringify({
+        version: 2,
+        server: { serverId: f.server.serverId, generation: f.server.generation },
+        sessions: [
+          {
+            liveSessionId: id("a"),
+            sessionName: "web",
+            workspaceName: "workspace.alias",
+            paneCount: 30,
+            windowCount: 3,
+            lastActivity: 1,
+            favicon: null,
+          },
+        ],
+      }),
+    );
+    expect(TmuxServerSessionsResourceV2SchemaZ.parse(v2)).toEqual(v2);
   });
 });

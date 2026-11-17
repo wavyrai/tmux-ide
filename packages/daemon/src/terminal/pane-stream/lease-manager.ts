@@ -65,6 +65,8 @@ export interface PaneStreamLeaseDescriptor {
   readonly sessionName: string;
   readonly runtimeSessionId: string | null;
   readonly panes: readonly string[];
+  /** #806: the one window this stream was issued for, or null for a pane set of the session. */
+  readonly semanticWindowId: string | null;
   readonly viewerMode: PaneStreamViewerMode;
   readonly terminalDelivery: TerminalDeliveryOffer | null;
   readonly status: PaneStreamLeaseStatus;
@@ -365,6 +367,7 @@ export class PaneStreamLeaseManager {
       sessionName: state.sessionName,
       runtimeSessionId: state.runtimeSessionId,
       panes: [...state.request.panes],
+      semanticWindowId: state.request.semanticWindowId ?? null,
       viewerMode: state.request.viewerMode,
       terminalDelivery: state.request.terminalDelivery ?? null,
       status: state.status,

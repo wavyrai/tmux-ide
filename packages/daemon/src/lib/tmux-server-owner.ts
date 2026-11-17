@@ -108,6 +108,8 @@ function discoveredWorkspaceName(registry: WorkspaceRegistry, sessionName: strin
 export interface NativeLiveSessionSummary extends LiveSessionSummary {
   /** Distinct tmux windows of the session (at least one). */
   readonly windowCount: number;
+  /** Panes of the session's largest window (#806: streams open window by window). */
+  readonly largestWindowPaneCount: number;
   /** tmux `#{session_activity}` in epoch seconds, or null when tmux reports none. */
   readonly lastActivity: number | null;
   /** tmux `#{session_path}`, the session's working directory. */
@@ -159,7 +161,7 @@ export function createNativeTmuxServerCatalog(
       {
         summary: LiveSessionSummary;
         panes: Set<string>;
-        windows: Set<string>;
+        windows: Map<string, number>;
         dir: string;
         activity: number | null;
       }
@@ -192,12 +194,12 @@ export function createNativeTmuxServerCatalog(
       const row = rows.get(liveSessionId) ?? {
         summary: { liveSessionId, sessionName: name, paneCount: 0 },
         panes: new Set<string>(),
-        windows: new Set<string>(),
+        windows: new Map<string, number>(),
         dir,
         activity: activity && /^\d+$/.test(activity) ? Number(activity) : null,
       };
+      if (!row.panes.has(pane)) row.windows.set(window, (row.windows.get(window) ?? 0) + 1);
       row.panes.add(pane);
-      row.windows.add(window);
       rows.set(liveSessionId, row);
     }
     const names = new Set([...rows.values()].map(({ summary }) => summary.sessionName));
@@ -218,6 +220,7 @@ export function createNativeTmuxServerCatalog(
       ...summary,
       paneCount: panes.size,
       windowCount: windows.size,
+      largestWindowPaneCount: Math.max(...windows.values()),
       lastActivity: activity,
       sessionPath: dir,
     }));

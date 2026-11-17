@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { TmuxServerOwners } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
+import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-inventory.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
 import { logger } from "../lib/log.ts";
 
@@ -407,6 +408,67 @@ it("uses enriched agent discovery for scoped shells so fleet statuses match pane
     expect(owner.discoverShell).toHaveBeenCalledExactlyOnceWith("same");
     expect(owner.discover).not.toHaveBeenCalled();
     expect(f.ownersCreated[1]!.discoverShell).not.toHaveBeenCalled();
+  } finally {
+    await f.manager.dispose();
+  }
+});
+
+it("serves inventory version 2 with windows only when asked (#806)", async () => {
+  const f = await fixture();
+  const owner = f.ownersCreated[0]!;
+  const pane = (windowId: string, id: string, stamp: string, count: number, active: boolean) => ({
+    windowId,
+    runtimePaneId: `%${id.length}${windowId.slice(1)}`,
+    windowPaneCount: count,
+    semanticPaneId: id,
+    windowStamp: stamp,
+    index: 0,
+    title: "t",
+    currentCommand: "zsh",
+    active,
+    role: null,
+    name: null,
+    type: null,
+    missionStamp: null,
+  });
+  owner.discover.mockResolvedValue({
+    workspaceName: "same",
+    name: "same",
+    runtimeSessionId: "$4",
+    catalogIssue: null,
+    dir: "/private/project",
+    panes: [
+      pane("@1", "pane.a", "window.one", 2, false),
+      pane("@1", "pane.bb", "window.one", 2, false),
+      pane("@2", "pane.ccc", "window.two", 1, true),
+    ],
+  });
+  try {
+    // Every other query answers version 1, byte for byte as before #806.
+    const snapshot = await owner.discover.getMockImplementation()!();
+    const expectedV1 = JSON.stringify({
+      version: 1,
+      server: { serverId: f.a.serverId, generation: f.a.generation },
+      resource: projectTerminalRuntimeInventory(snapshot, 0),
+    });
+    for (const query of ["", "?version=1", "?version=3", "?version=2x"]) {
+      const text = await (await f.request(f.scope(f.a) + "/inventory/same" + query)).text();
+      expect(text).toBe(expectedV1);
+    }
+    expect(Object.keys(JSON.parse(expectedV1).resource)).toEqual([
+      "workspaceName",
+      "workspaceId",
+      "sessionId",
+      "resourceRevision",
+      "semanticPaneIds",
+    ]);
+    const v2 = await (await f.request(f.scope(f.a) + "/inventory/same?version=2")).json();
+    expect(v2.version).toBe(2);
+    expect(v2.resource.semanticPaneIds).toEqual(["pane.a", "pane.bb", "pane.ccc"]);
+    expect(v2.resource.windows).toEqual([
+      { semanticWindowId: "window.one", active: false, semanticPaneIds: ["pane.a", "pane.bb"] },
+      { semanticWindowId: "window.two", active: true, semanticPaneIds: ["pane.ccc"] },
+    ]);
   } finally {
     await f.manager.dispose();
   }
