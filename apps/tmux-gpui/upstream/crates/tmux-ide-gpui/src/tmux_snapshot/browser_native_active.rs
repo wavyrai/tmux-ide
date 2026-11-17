@@ -59,7 +59,7 @@ fn ends_outcome(command: &Command) -> bool {
 }
 
 /// Queues `command`, or refuses it (false) when that would grow the queue past
-/// `max`. A wheel step merges into the wheel step queued just before it when
+/// `max`. Queued text joins (see `merge_text`). A wheel step merges into the wheel step queued just before it when
 /// only their lines differ: a trackpad sends one per frame, and each
 /// dispatched step is a barrier that waits for its ACK (a round trip to a
 /// remote daemon), so unmerged steps fall further behind the finger.
@@ -69,7 +69,7 @@ pub(super) fn push(
     max: usize,
 ) -> bool {
     if let Some(queued) = pending.back_mut()
-        && merge_wheel(queued, &command)
+        && (merge_wheel(queued, &command) || merge_text(queued, &command))
     {
         return true;
     }
@@ -77,6 +77,39 @@ pub(super) fn push(
         return false;
     }
     pending.push_back(command);
+    true
+}
+
+/// Text typed while earlier text waits in the queue joins it: one input,
+/// one ACK, one echo. The first key of a burst is never held for this; it is
+/// queued alone and goes on the next turn. Bounded like one input (1024
+/// UTF-16 units, 4096 bytes).
+fn merge_text(queued: &mut Command, next: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input::Text;
+    let (
+        Command::Input {
+            input_target,
+            request,
+            id,
+            input: Text(text),
+        },
+        Command::Input {
+            input_target: next_target,
+            request: next_request,
+            id: next_id,
+            input: Text(next_text),
+        },
+    ) = (queued, next)
+    else {
+        return false;
+    };
+    if (&*input_target, *request, &*id) != (next_target, *next_request, next_id)
+        || text.len() + next_text.len() > 4096
+        || text.encode_utf16().count() + next_text.encode_utf16().count() > 1024
+    {
+        return false;
+    }
+    text.push_str(next_text);
     true
 }
 

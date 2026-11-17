@@ -109,3 +109,63 @@ fn a_full_queue_still_takes_a_merging_wheel_step() {
     assert_eq!(pending.len(), 1);
     assert_eq!(lines(&pending[0]), -2);
 }
+fn text(data: &str) -> Command {
+    Command::Input {
+        input_target: None,
+        request: 4,
+        id: "pane".into(),
+        input: crate::tmux_snapshot::keys::Input::Text(data.into()),
+    }
+}
+fn text_of(command: &Command) -> &str {
+    match command {
+        Command::Input {
+            input: crate::tmux_snapshot::keys::Input::Text(data),
+            ..
+        } => data,
+        _ => panic!("not text"),
+    }
+}
+/// The first key is queued alone and admitted on the next turn. Keys typed
+/// while it waits join one input, so a burst costs one frame, one ACK and
+/// one echo delivery instead of one per key; order within it is kept.
+#[test]
+fn text_typed_behind_a_queued_key_joins_it_in_order() {
+    let mut pending = std::collections::VecDeque::new();
+    queue(&mut pending, text("l"));
+    assert_eq!(text_of(&pending[0]), "l");
+    for key in ["s", " ", "-", "l", "a"] {
+        queue(&mut pending, text(key));
+    }
+    assert_eq!(pending.len(), 1);
+    assert_eq!(text_of(&pending[0]), "ls -la");
+}
+#[test]
+fn text_never_joins_across_another_command_or_past_one_input() {
+    let mut pending = std::collections::VecDeque::new();
+    queue(&mut pending, text("a"));
+    queue(
+        &mut pending,
+        Command::Input {
+            input_target: None,
+            request: 4,
+            id: "pane".into(),
+            input: crate::tmux_snapshot::keys::Input::Key("Enter".into()),
+        },
+    );
+    queue(&mut pending, text("b"));
+    assert_eq!(pending.len(), 3);
+    // Another pane or request stays its own input.
+    let mut other = text("c");
+    if let Command::Input { id, .. } = &mut other {
+        *id = "other".into();
+    }
+    queue(&mut pending, other);
+    assert_eq!(pending.len(), 4);
+    // One input carries at most 1024 UTF-16 units.
+    let mut pending = std::collections::VecDeque::new();
+    queue(&mut pending, text(&"x".repeat(1020)));
+    queue(&mut pending, text("12345"));
+    assert_eq!(pending.len(), 2);
+    assert_eq!(text_of(&pending[0]).len(), 1020);
+}
