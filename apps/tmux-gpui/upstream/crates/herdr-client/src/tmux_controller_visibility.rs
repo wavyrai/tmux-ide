@@ -139,7 +139,7 @@ impl Controller {
     /// two round trips; an unchanged pane's state is already current.
     pub(super) fn reveal_ms(&self, now: u64) -> u64 {
         self.rtt_ms(now).map_or(REVEAL_MS, |rtt| {
-            rtt.saturating_mul(2).max(FRAME_MS).min(REVEAL_MS)
+            rtt.saturating_mul(2).clamp(FRAME_MS, REVEAL_MS)
         })
     }
     /// Whether a pane shown again still waits for its fresh state, within
