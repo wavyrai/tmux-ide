@@ -26,8 +26,6 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   readonly #historyLimit: number;
   #collecting = false;
   #lastYbase: number | null = null;
-  /** Rows trimHistory dropped since the last projection. */
-  #historyTrimmed = 0;
   #lastScrollEpoch = 0;
   #lastViewportY = 0;
   #lastBufferType = "normal";
@@ -134,24 +132,6 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
         };
       }
     )._core?.buffers?.normal;
-  }
-
-  trimHistory(rows: number): boolean {
-    const buffer = this.#normalBuffer();
-    if (
-      !buffer ||
-      this.#terminal.buffer.active.type !== "normal" ||
-      !Number.isSafeInteger(rows) ||
-      rows <= 0 ||
-      rows > buffer.ybase
-    )
-      return false;
-    buffer.lines.trimStart(rows);
-    buffer.ybase -= rows;
-    buffer.ydisp = Math.max(0, buffer.ydisp - rows);
-    this.#historyTrimmed += rows;
-    if (this.#lastYbase !== null) this.#lastYbase = buffer.ybase;
-    return true;
   }
 
   #collectHistory(): void {
@@ -526,9 +506,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       historyBuffer.viewportY === this.#lastViewportY &&
       buffer.type === this.#lastBufferType &&
       previous.cols === this.#terminal.cols;
-    const trimmed = this.#historyTrimmed;
-    const canReuseHistory =
-      geometryStable && this.#scrollEpoch === this.#lastScrollEpoch && trimmed === 0;
+    const canReuseHistory = geometryStable && this.#scrollEpoch === this.#lastScrollEpoch;
     const stats = { fullWalks: dirty ? 0 : 1, gridRowsRead: 0, historyRowsRead: 0, cellsRead: 0 };
     let history: readonly TerminalReplicaRow[] = canReuseHistory ? previous.history : [];
     let historyDelta: TerminalInterpreterBackendProjection["historyDelta"] = null;
@@ -541,7 +519,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       !this.#bufferChangedSinceProjection &&
       this.#lastBufferType === buffer.type &&
       previous.cols === this.#terminal.cols &&
-      (scrolls > 0 || trimmed > 0);
+      scrolls > 0;
     if (incrementalHistory) {
       // ED2 may collect ten percent of native history before appending.
       // A negative length delta is still an incremental trim/append when
@@ -578,7 +556,6 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     this.#lastViewportY = historyBuffer.viewportY;
     this.#lastBufferType = buffer.type;
     this.#lastScrollEpoch = this.#scrollEpoch;
-    this.#historyTrimmed = 0;
     this.#hasProjected = true;
     this.#bufferChangedSinceProjection = false;
     this.#historyProjectionInvalidated = false;

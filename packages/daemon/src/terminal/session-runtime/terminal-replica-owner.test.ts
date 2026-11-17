@@ -198,61 +198,6 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
     },
   );
 
-  it.each([
-    ["fewer rows: trims the replica, one patch, no reseed", -3],
-    ["more rows: still reseeds", 2],
-  ] as const)("when tmux holds %s", async (_name, delta) => {
-    let request!: MirrorSubscribeRequest;
-    let tmuxHistory = 0;
-    const reseed = vi.fn();
-    const readHistorySize = vi.fn(async () => tmuxHistory);
-    const mirror = {
-      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
-        request = candidate;
-        queueMicrotask(() => {
-          candidate.onLayout?.(layout(8, 2));
-          candidate.onEvent({ type: "reset", cols: 8, rows: 2 });
-          candidate.onEvent({
-            type: "seed",
-            data: new TextEncoder().encode(
-              Array.from({ length: 12 }, (_, i) => `row${i}`).join("\r\n"),
-            ),
-          });
-          candidate.onEvent({ type: "cursor", x: 0, y: 1 });
-        });
-        return { ...subscription(candidate), readHistorySize, reseed };
-      },
-    };
-    const owner = new SessionRuntimeTerminalReplicaOwner(
-      generation,
-      "workspace",
-      "pane-a",
-      mirror as never,
-      { incarnation: `${generation}:0`, initialRevision: 0 },
-    );
-    const updates: CanonicalTerminalReplicaUpdate[] = [];
-    try {
-      await owner.subscribe((update) => updates.push(update));
-      const seeded = updates.find((u) => u.type === "terminal.seed")!;
-      const history = seeded.type === "terminal.seed" ? seeded.snapshot.history.length : 0;
-      expect(history).toBeGreaterThan(3);
-      tmuxHistory = history + delta;
-      request.onEvent({ type: "delta", data: new TextEncoder().encode("x") });
-      if (delta < 0) {
-        await vi.waitFor(() =>
-          expect(
-            updates.some(
-              (u) => u.type === "terminal.patch" && u.patch.historyDelta?.trim === -delta,
-            ),
-          ).toBe(true),
-        );
-        expect(reseed).not.toHaveBeenCalled();
-      } else await vi.waitFor(() => expect(reseed).toHaveBeenCalledTimes(1));
-    } finally {
-      await owner.dispose();
-    }
-  });
-
   it("shares history checks and ignores counts overtaken by output or disposal", async () => {
     let request!: MirrorSubscribeRequest;
     const replies: Array<(size: number | null) => void> = [];
