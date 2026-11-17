@@ -107,6 +107,14 @@ function scaffoldTeamWorkspace(dir: string, name: string): string[] {
   return created;
 }
 
+/**
+ * A YAML single-quoted scalar. Inside one, every character is literal — `#`,
+ * `:` and a leading digit included — and only `'` needs doubling.
+ */
+function yamlScalar(value: string): string {
+  return `'${value.replace(/'/gu, "''")}'`;
+}
+
 function scaffoldMissionsWorkspace(dir: string, name: string): string[] {
   const created: string[] = [];
   const skillsDir = join(dir, ".tmux-ide", "skills");
@@ -136,7 +144,7 @@ export async function init({
 
     let content = readFileSync(templatePath, "utf-8");
     const name = basename(dir);
-    content = content.replace(/^name: .+/m, `name: ${name}`);
+    content = content.replace(/^name: .+/m, `name: ${yamlScalar(name)}`);
     const yaml = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml.load(content));
     const config = workspaceConfigToLegacyProjection(workspace) as IdeConfig;
@@ -186,7 +194,7 @@ export async function init({
     // Fallback to default template
     const templatePath = resolve(__dirname, "..", "..", "..", "templates", "default.yml");
     let content = readFileSync(templatePath, "utf-8");
-    content = content.replace(/^name: .+/m, `name: ${name}`);
+    content = content.replace(/^name: .+/m, `name: ${yamlScalar(name)}`);
     const yaml = (await import("js-yaml")).default;
     const workspace = WorkspaceConfigV1SchemaZ.parse(yaml.load(content));
     const config = workspaceConfigToLegacyProjection(workspace) as IdeConfig;

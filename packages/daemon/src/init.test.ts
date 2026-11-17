@@ -96,7 +96,50 @@ describe("init", () => {
     await init({ template: "default", json: true });
     const content = readFileSync(join(tmpDir, ".tmux-ide", "workspace.yml"), "utf-8");
     const dirName = tmpDir.split("/").pop();
-    expect(content.includes(`name: ${dirName}`)).toBeTruthy();
+    expect((yaml.load(content) as { name?: unknown }).name).toBe(dirName);
+  });
+
+  /*
+   * Bug this catches: the name was interpolated into the template as a bare
+   * YAML scalar, so a numeric directory name parsed as a number and failed the
+   * string schema, crashing `tmux-ide init` before it wrote anything.
+   */
+  it("keeps a numeric directory name as the string it is", async () => {
+    const dir = join(tmpDir, "2048");
+    mkdirSync(dir);
+    process.chdir(dir);
+
+    await init({ template: "default", json: true });
+
+    const written = readFileSync(join(dir, ".tmux-ide", "workspace.yml"), "utf-8");
+    expect((yaml.load(written) as { name?: unknown }).name).toBe("2048");
+    expect(JSON.parse(logged[0]).name).toBe("2048");
+  });
+
+  /*
+   * Bug this catches: an unquoted `#` starts a YAML comment, so the tail of the
+   * directory name was dropped and the workspace silently got another name.
+   */
+  it("keeps a # in the directory name instead of starting a comment", async () => {
+    const dir = join(tmpDir, "app #2");
+    mkdirSync(dir);
+    process.chdir(dir);
+
+    await init({ template: "default", json: true });
+
+    const written = readFileSync(join(dir, ".tmux-ide", "workspace.yml"), "utf-8");
+    expect((yaml.load(written) as { name?: unknown }).name).toBe("app #2");
+  });
+
+  it("keeps a single quote in the directory name", async () => {
+    const dir = join(tmpDir, "it's here");
+    mkdirSync(dir);
+    process.chdir(dir);
+
+    await init({ template: "default", json: true });
+
+    const written = readFileSync(join(dir, ".tmux-ide", "workspace.yml"), "utf-8");
+    expect((yaml.load(written) as { name?: unknown }).name).toBe("it's here");
   });
 
   it("writes a new workspace config at the git project root when invoked from a nested dir", async () => {
