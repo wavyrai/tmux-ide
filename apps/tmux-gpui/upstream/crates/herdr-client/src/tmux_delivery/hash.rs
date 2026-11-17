@@ -117,10 +117,24 @@ pub(super) fn hash_row(cells: &[Cell], wrapped: bool) -> u64 {
     h.0
 }
 pub(super) fn rows_hash(rows: &[std::sync::Arc<Row>]) -> String {
-    let hash = rows
-        .iter()
-        .fold(0u64, |h, r| h.wrapping_mul(PRIME).wrapping_add(r.digest()));
-    format!("{hash:016x}")
+    format!("{:016x}", fold_rows(0, rows))
+}
+fn fold_rows(start: u64, rows: &[std::sync::Arc<Row>]) -> u64 {
+    rows.iter()
+        .fold(start, |h, r| h.wrapping_mul(PRIME).wrapping_add(r.digest()))
+}
+/// H(A ++ B) from H(A) and B (capability 122): the fold continues from the
+/// prefix's digest. `None` for a digest that is not 16 hex digits.
+pub(super) fn concat_rows_hash(prefix: &str, rows: &[std::sync::Arc<Row>]) -> Option<String> {
+    if prefix.len() != 16
+        || !prefix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    let start = u64::from_str_radix(prefix, 16).ok()?;
+    Some(format!("{:016x}", fold_rows(start, rows)))
 }
 /// Only cached row digests and small metadata are visited, never retained cells.
 pub fn hash_snapshot(s: &Snapshot) -> String {
@@ -132,6 +146,8 @@ pub fn hash_snapshot(s: &Snapshot) -> String {
         match &s.history {
             History::Complete(rows) => rows_hash(rows),
             History::Deferred(h) => h.digest.clone(),
+            History::Partial(p) =>
+                concat_rows_hash(&p.unloaded.digest, &p.loaded).unwrap_or_default(),
         },
         s.cursor,
         s.modes,

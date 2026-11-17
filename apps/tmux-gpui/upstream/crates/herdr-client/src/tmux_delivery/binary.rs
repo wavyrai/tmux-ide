@@ -300,6 +300,13 @@ pub fn decode_binary(bytes: &[u8]) -> Result<Update> {
             revision,
             snapshot: d.snapshot()?,
         }
+    } else if frame == 3 {
+        // Capability 122: history rows, oldest first, and no base revision.
+        let rows = d.rows(None, 2000)?;
+        if rows.is_empty() {
+            return Err(Error::Invalid("history chunk"));
+        }
+        Update::History { revision, rows }
     } else {
         let base_revision = d.varint(MAX_SAFE)?;
         if revision <= base_revision {

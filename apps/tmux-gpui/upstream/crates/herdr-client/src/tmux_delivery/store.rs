@@ -25,6 +25,28 @@ impl Store {
     }
     /// Stage and verify before publishing any state. Rejected updates retain Arc identity.
     pub fn apply(&mut self, update: Update, expected_hash: &str) -> Result<ApplyResult> {
+        self.apply_with(update, expected_hash, None)
+    }
+    /// `apply` for a stream with capability 122: `unloaded` is the envelope's
+    /// commitment to the history rows not sent, on every seed, patch and
+    /// history frame of such a stream, and only there.
+    pub fn apply_with(
+        &mut self,
+        update: Update,
+        expected_hash: &str,
+        unloaded: Option<DeferredHistory>,
+    ) -> Result<ApplyResult> {
+        if let Update::History { revision, rows } = update {
+            return self.apply_history(revision, rows, expected_hash, unloaded);
+        }
+        let partial = |prior: Option<&Snapshot>| {
+            prior.is_some_and(|s| matches!(s.history, History::Partial(_)))
+        };
+        if matches!(update, Update::Patch { .. })
+            && unloaded.is_some() != partial(self.snapshot.as_deref())
+        {
+            return Err(Error::Invalid("partial history"));
+        }
         let revision = update.revision();
         if self.revision.is_some_and(|r| revision <= r)
             || update
@@ -34,9 +56,15 @@ impl Store {
             return Err(Error::Revision);
         }
         let (snapshot, changed_rows, hash) = match update {
-            Update::Seed { snapshot, .. } => {
-                if !snapshot.history.is_complete() {
+            Update::Seed { mut snapshot, .. } => {
+                if !matches!(snapshot.history, History::Complete(_)) {
                     return Err(Error::Invalid("canonical history unavailable"));
+                }
+                if let Some(unloaded) = unloaded.clone() {
+                    let History::Complete(loaded) = snapshot.history else {
+                        return Err(Error::Invalid("partial history"));
+                    };
+                    snapshot.history = History::Partial(PartialHistory { unloaded, loaded });
                 }
                 validate(&snapshot)?;
                 let changed = (0..snapshot.rows).collect();
@@ -45,7 +73,10 @@ impl Store {
             }
             Update::Patch { patch, .. } => {
                 let prior = self.snapshot.as_ref().ok_or(Error::Revision)?;
-                let next = apply_patch(prior, patch)?;
+                let next = match unloaded.clone() {
+                    Some(unloaded) => apply_partial_patch(prior, patch, unloaded)?,
+                    None => apply_patch(prior, patch)?,
+                };
                 let changed = next
                     .grid
                     .iter()
@@ -68,6 +99,7 @@ impl Store {
                 }
                 (None, Vec::new(), hash_tombstone(&reason))
             }
+            Update::History { .. } => unreachable!("handled above"),
         };
         if hash != expected_hash {
             return Err(Error::Hash);
@@ -83,6 +115,75 @@ impl Store {
             tombstone,
         })
     }
+}
+impl Store {
+    /// Capability 122: prepend the newest unloaded rows after proving them
+    /// against the held commitment: the old commitment must be the new one
+    /// extended by exactly these rows. The revision and the canonical state
+    /// stay as they are.
+    fn apply_history(
+        &mut self,
+        revision: u64,
+        rows: Vec<Arc<Row>>,
+        expected_hash: &str,
+        unloaded: Option<DeferredHistory>,
+    ) -> Result<ApplyResult> {
+        let next_unloaded = unloaded.ok_or(Error::Invalid("partial history"))?;
+        if self.revision != Some(revision) || self.hash.as_deref() != Some(expected_hash) {
+            return Err(Error::Revision);
+        }
+        let prior = self.snapshot.as_ref().ok_or(Error::Revision)?;
+        let History::Partial(held) = &prior.history else {
+            return Err(Error::Invalid("partial history"));
+        };
+        if rows.is_empty()
+            || next_unloaded.rows.checked_add(rows.len()) != Some(held.unloaded.rows)
+            || super::hash::concat_rows_hash(&next_unloaded.digest, &rows).as_deref()
+                != Some(held.unloaded.digest.as_str())
+        {
+            return Err(Error::Invalid("history chunk"));
+        }
+        let mut next = Snapshot::clone(prior);
+        next.history = History::Partial(PartialHistory {
+            unloaded: next_unloaded,
+            loaded: Arc::new(
+                rows.into_iter()
+                    .chain(held.loaded.iter().cloned())
+                    .collect(),
+            ),
+        });
+        validate(&next)?;
+        let hash = hash_snapshot(&next);
+        if hash != expected_hash {
+            return Err(Error::Hash);
+        }
+        self.snapshot = Some(Arc::new(next));
+        Ok(ApplyResult {
+            revision,
+            hash,
+            changed_rows: Vec::new(),
+            tombstone: false,
+        })
+    }
+}
+/// A patch to a partial history: `trim` counts loaded rows only (the daemon
+/// takes the unloaded part itself), and the commitment never grows.
+fn apply_partial_patch(prior: &Snapshot, p: Patch, unloaded: DeferredHistory) -> Result<Snapshot> {
+    let History::Partial(held) = &prior.history else {
+        return Err(Error::Invalid("partial history"));
+    };
+    if p.history.is_some() || unloaded.rows > held.unloaded.rows {
+        return Err(Error::Invalid("partial history"));
+    }
+    let mut complete = Snapshot::clone(prior);
+    complete.history = History::Complete(held.loaded.clone());
+    let mut next = apply_patch_inner(&complete, p, None)?;
+    let History::Complete(loaded) = next.history else {
+        return Err(Error::Invalid("partial history"));
+    };
+    next.history = History::Partial(PartialHistory { unloaded, loaded });
+    validate(&next)?;
+    Ok(next)
 }
 pub(super) fn validate(s: &Snapshot) -> Result<()> {
     if s.cols == 0
@@ -103,6 +204,12 @@ pub(super) fn validate(s: &Snapshot) -> Result<()> {
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                     || s.grid.len().saturating_mul(s.cols) > 1_000_000
+            }
+            History::Partial(p) => {
+                p.loaded.len() > 10000
+                    || p.unloaded.rows > 1_000_000
+                    || super::hash::concat_rows_hash(&p.unloaded.digest, &[]).is_none()
+                    || (s.grid.len() + p.loaded.len()).saturating_mul(s.cols) > 1_000_000
             }
         }
     {
@@ -131,7 +238,7 @@ pub(super) fn validate(s: &Snapshot) -> Result<()> {
     Ok(())
 }
 fn apply_patch(prior: &Snapshot, p: Patch) -> Result<Snapshot> {
-    if !prior.history.is_complete() {
+    if !matches!(prior.history, History::Complete(_)) {
         return Err(Error::Invalid("canonical history unavailable"));
     }
     apply_patch_inner(prior, p, None)

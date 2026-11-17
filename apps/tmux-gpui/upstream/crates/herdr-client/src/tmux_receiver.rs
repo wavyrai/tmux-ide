@@ -58,6 +58,9 @@ pub struct Negotiated {
     pub delivery_nonce: String,
     #[serde(default)]
     pub alternate_screen_projection: Option<String>,
+    /// Capability 122: history on demand ("tail-v1").
+    #[serde(default)]
+    pub partial_history: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -66,6 +69,15 @@ enum Frame {
     Seed,
     Patch,
     Tombstone,
+    /// Capability 122: older history rows at the client's revision.
+    History,
+}
+/// Capability 122: the history rows the client does not hold, oldest first.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Commitment {
+    rows: usize,
+    digest: String,
 }
 
 #[derive(Deserialize)]
@@ -92,6 +104,8 @@ pub struct Envelope {
     chunk_count: usize,
     canonical_equivalent: bool,
     history: String,
+    #[serde(default)]
+    history_unloaded: Option<Commitment>,
     rich_placements: bool,
 }
 
@@ -136,6 +150,25 @@ pub struct Nack {
     pub reason: &'static str,
     pub applied_revision: i64,
 }
+
+/// Capability 122: `terminal.delivery.history-request`, for the newest
+/// `max_rows` of the pane's unloaded history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryRequest {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    pub workspace_name: String,
+    pub semantic_pane_id: String,
+    pub generation: String,
+    pub incarnation: String,
+    pub delivery_nonce: String,
+    pub canonical_revision: u64,
+    pub unloaded_rows: usize,
+    pub max_rows: usize,
+}
+/// The most rows one history request may ask for.
+pub const HISTORY_CHUNK_MAX_ROWS: usize = 2000;
 
 struct Pending {
     envelope: Envelope,
@@ -196,6 +229,10 @@ impl Receiver {
                     s != "deferred-history-v1" || negotiated.encoding != "semantic-binary-v1"
                 })
             || negotiated.fallback_encoding.is_some()
+            || negotiated
+                .partial_history
+                .as_ref()
+                .is_some_and(|s| s != "tail-v1" || negotiated.alternate_screen_projection.is_some())
             || !uuid(&negotiated.delivery_nonce)
             || negotiated.generation.is_empty()
             || workspace.is_empty()
@@ -288,6 +325,36 @@ impl Receiver {
             self.incarnation.as_deref()
         }
     }
+    /// Capability 122: a request for the newest `max_rows` (1..=2000) of this
+    /// pane's unloaded history at its committed revision. `None` when nothing
+    /// is unloaded or the pane has no committed state to name.
+    pub fn history_request(&self, max_rows: usize) -> Option<HistoryRequest> {
+        if self.retired
+            || self.tombstoned
+            || self.pending.is_some()
+            || !(1..=HISTORY_CHUNK_MAX_ROWS).contains(&max_rows)
+        {
+            return None;
+        }
+        let snapshot = self.store.snapshot()?;
+        let tmux_delivery::History::Partial(partial) = &snapshot.history else {
+            return None;
+        };
+        if partial.unloaded.rows == 0 {
+            return None;
+        }
+        Some(HistoryRequest {
+            kind: "terminal.delivery.history-request",
+            workspace_name: self.workspace.clone(),
+            semantic_pane_id: self.pane.clone(),
+            generation: self.negotiated.generation.clone(),
+            incarnation: self.incarnation.clone()?,
+            delivery_nonce: self.negotiated.delivery_nonce.clone(),
+            canonical_revision: self.revision?,
+            unloaded_rows: partial.unloaded.rows,
+            max_rows,
+        })
+    }
     pub fn changed_rows(&self) -> &[usize] {
         &self.changed_rows
     }
@@ -366,12 +433,19 @@ impl Receiver {
         {
             return Err(Error::Bounds);
         }
+        // Capability 122: every seed, patch and history frame of a stream that
+        // negotiated it is partial and carries its commitment; nothing else is.
+        let partial = self.negotiated.partial_history.is_some();
         if e.history
-            != if e.frame == Frame::Tombstone {
-                "not-applicable"
-            } else {
-                "complete"
+            != match e.frame {
+                Frame::Tombstone => "not-applicable",
+                _ if partial => "partial",
+                _ => "complete",
             }
+            || e.history_unloaded.is_some() != (e.history == "partial")
+            || e.history_unloaded
+                .as_ref()
+                .is_some_and(|c| c.rows > 1_000_000 || !hash(&c.digest))
         {
             return Err(Error::Identity);
         }
@@ -385,7 +459,17 @@ impl Receiver {
         {
             return Err(Error::Ordering);
         }
-        if e.frame == Frame::Seed {
+        if e.frame == Frame::History {
+            // At the client's revision, never advancing it.
+            if self.tombstoned
+                || self.incarnation.as_ref() != Some(&e.incarnation)
+                || self.revision.is_none()
+                || self.revision != Some(e.canonical_revision)
+                || e.base_revision != Some(e.canonical_revision as i64)
+            {
+                return Err(Error::Ordering);
+            }
+        } else if e.frame == Frame::Seed {
             if e.base_revision.is_some() {
                 return Err(Error::Ordering);
             }
@@ -470,11 +554,21 @@ impl Receiver {
                 revision,
                 ..
             } => (Frame::Tombstone, Some(*base_revision as i64), *revision),
+            Update::History { revision, .. } => (Frame::History, Some(*revision as i64), *revision),
         };
         if frame != e.frame || base != e.base_revision || revision != e.canonical_revision {
             return Err(Error::Ordering);
         }
-        let applied = self.store.apply(update, &e.canonical_state_hash)?;
+        let unloaded = e
+            .history_unloaded
+            .as_ref()
+            .map(|c| tmux_delivery::DeferredHistory {
+                rows: c.rows,
+                digest: c.digest.clone(),
+            });
+        let applied = self
+            .store
+            .apply_with(update, &e.canonical_state_hash, unloaded)?;
         self.partial = None;
         self.changed_rows = applied.changed_rows;
         self.incarnation = Some(e.incarnation.clone());
@@ -496,6 +590,9 @@ impl Receiver {
     }
 }
 
+#[cfg(test)]
+#[path = "tmux_receiver_partial_tests.rs"]
+mod partial_tests;
 #[cfg(test)]
 #[path = "tmux_receiver_tests.rs"]
 mod tests;
