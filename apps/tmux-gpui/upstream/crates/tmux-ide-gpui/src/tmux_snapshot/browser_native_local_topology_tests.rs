@@ -390,3 +390,23 @@ fn a_window_stream_follows_its_pane_set_on_the_route() {
     );
     assert_eq!(ids(&local), ["left", "right", "third", "far"]);
 }
+
+/// The view learns that the session is streamed by window: choosing a pane
+/// of another window then holds keys for it (pending_input/window_switch.rs).
+#[test]
+fn a_window_route_is_published_as_a_window_stream() {
+    let (mut local, events) = attached();
+    local.publish().unwrap();
+    let whole = events.try_iter().filter_map(|e| match e {
+        Incoming::Catalog(state) => Some(state.window_stream),
+        _ => None,
+    });
+    assert_eq!(whole.last(), Some(false));
+    window_route(&mut local);
+    local.publish().unwrap();
+    let windowed = events.try_iter().filter_map(|e| match e {
+        Incoming::Catalog(state) => Some(state.window_stream),
+        _ => None,
+    });
+    assert_eq!(windowed.last(), Some(true));
+}
