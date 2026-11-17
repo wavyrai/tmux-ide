@@ -451,3 +451,35 @@ fn a_lost_stream_reports_pipelined_command_keys_and_drops_the_queue() {
     active.controller.retire();
     peer.join().unwrap();
 }
+
+/// Keyboard bytes (C-\, C-] …) now use the input window. A daemon without the
+/// bytes capability refuses them before the wire; each refusal must give its
+/// window slot back, or eight of them would leave every later key Busy.
+#[test]
+fn refused_keyboard_bytes_release_their_window_slot() {
+    let (mut active, _state, observed, peer) = super::super::selection_tests::fixture(true);
+    for _ in 0..9 {
+        active
+            .input("left", None, Input::Bytes("1c".into()), 1)
+            .unwrap();
+        assert!(
+            !active.input.busy(),
+            "a refused bytes key kept its window slot"
+        );
+    }
+    active
+        .input("left", None, Input::Text("a".into()), 1)
+        .unwrap();
+    assert!(active.input.busy(), "the key after them never left");
+    let sent: Vec<_> = std::iter::from_fn(|| {
+        observed
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .ok()
+    })
+    .filter(|frame| frame["type"] == "input")
+    .collect();
+    assert_eq!(sent.len(), 1, "a refused bytes key reached the wire");
+    assert_eq!(sent[0]["kind"], "text");
+    active.controller.retire();
+    peer.join().unwrap();
+}

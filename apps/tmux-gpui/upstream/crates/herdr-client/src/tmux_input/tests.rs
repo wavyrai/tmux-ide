@@ -339,3 +339,13 @@ fn byte_input_is_bounded_and_pipelined() {
 
 #[path = "tests/availability.rs"]
 mod availability;
+/// Only a reservation that never reached the wire may be released: a sent
+/// input has an ACK coming, and releasing its slot early would let a ninth
+/// input overtake the window.
+#[test]
+fn cancel_unsent_input_refuses_a_ticket_already_on_the_wire() {
+    let mut s = Scheduler::new(scope());
+    let sent = fill(&mut s, 1)[0];
+    assert_eq!(s.cancel_unsent_input(sent).unwrap_err(), Error::Correlation);
+    assert!(s.retired());
+}
