@@ -106,6 +106,15 @@ impl<T> Scheduler<T> {
     pub fn retired(&self) -> bool {
         self.retired
     }
+    /// The barrier payload of the single admission that has not reached the
+    /// wire yet, for the producer to amend in place (e.g. fold the next wheel
+    /// tick into a waiting wheel step). Never a dispatched or input admission.
+    pub fn waiting_barrier_mut(&mut self) -> Option<&mut T> {
+        match &mut self.waiting.as_mut()?.work {
+            Work::Barrier(barrier) => Some(barrier),
+            Work::Input(_) => None,
+        }
+    }
     pub fn pending(&self) -> usize {
         self.pending.len()
     }

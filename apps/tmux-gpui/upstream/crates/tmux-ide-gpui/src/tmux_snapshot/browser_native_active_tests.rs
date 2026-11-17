@@ -169,3 +169,74 @@ fn text_never_joins_across_another_command_or_past_one_input() {
     assert_eq!(pending.len(), 2);
     assert_eq!(text_of(&pending[0]).len(), 1020);
 }
+/// A wheel step for another pane, another request or another input target is
+/// never folded into the queued one: its lines would scroll the wrong pane or
+/// outlive the request they were typed for.
+#[test]
+fn wheel_steps_never_merge_across_pane_request_or_target() {
+    let retarget = |command: &mut Command, change: &str| {
+        if let Command::Input {
+            input_target,
+            request,
+            id,
+            ..
+        } = command
+        {
+            match change {
+                "pane" => *id = "other".into(),
+                "request" => *request = 5,
+                _ => *input_target = Some("target".into()),
+            }
+        }
+    };
+    for change in ["pane", "request", "target"] {
+        let mut pending = std::collections::VecDeque::new();
+        queue(&mut pending, wheel(-2, 5, false));
+        let mut next = wheel(-2, 5, false);
+        retarget(&mut next, change);
+        queue(&mut pending, next);
+        assert_eq!(pending.len(), 2, "merged across a different {change}");
+        assert_eq!(lines(&pending[0]), -2);
+        assert_eq!(lines(&pending[1]), -2);
+    }
+}
+/// The transport folds only the ticks at the front of its queue, for this
+/// request's pane and no input target, into the scheduler's waiting step.
+#[test]
+fn queued_ticks_fold_into_the_waiting_wheel_step_only_from_the_front() {
+    let mut owner = InputOwner::with_waiting_wheel_for_tests("pane");
+    let mut pending: std::collections::VecDeque<Command> = [
+        wheel(-1, 5, false),
+        wheel(-1, 5, false),
+        text("a"),
+        wheel(-1, 5, false),
+    ]
+    .into();
+    fold_into_waiting(&mut pending, &mut owner, 4);
+    assert_eq!(owner.waiting_wheel_lines_for_tests(), Some(-3));
+    // The key stops it: the tick behind the key stays behind the key.
+    assert_eq!(pending.len(), 2);
+    assert_eq!(text_of(&pending[0]), "a");
+    // Another request, pane or input target is never folded.
+    for change in ["request", "pane", "target"] {
+        let mut owner = InputOwner::with_waiting_wheel_for_tests("pane");
+        let mut tick = wheel(-1, 5, false);
+        if let Command::Input {
+            input_target,
+            request,
+            id,
+            ..
+        } = &mut tick
+        {
+            match change {
+                "request" => *request = 5,
+                "pane" => *id = "other".into(),
+                _ => *input_target = Some("target".into()),
+            }
+        }
+        let mut pending: std::collections::VecDeque<Command> = [tick].into();
+        fold_into_waiting(&mut pending, &mut owner, 4);
+        assert_eq!(pending.len(), 1, "folded across a different {change}");
+        assert_eq!(owner.waiting_wheel_lines_for_tests(), Some(-1));
+    }
+}

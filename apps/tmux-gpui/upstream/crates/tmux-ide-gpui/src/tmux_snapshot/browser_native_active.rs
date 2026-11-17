@@ -84,6 +84,37 @@ pub(super) fn push(
 /// one ACK, one echo. The first key of a burst is never held for this; it is
 /// queued alone and goes on the next turn. Bounded like one input (1024
 /// UTF-16 units, 4096 bytes).
+/// Folds wheel ticks at the front of the queue into the wheel step waiting in
+/// the input scheduler (see `InputOwner::merge_waiting_wheel`). Only the
+/// front, for this request's pane, with no input target: nothing queued
+/// before a tick is ever overtaken.
+pub(super) fn merge_into_waiting(
+    pending: &mut std::collections::VecDeque<Command>,
+    active: Option<&mut Active>,
+) {
+    if let Some(active) = active {
+        fold_into_waiting(pending, &mut active.input, active.request);
+    }
+}
+
+fn fold_into_waiting(
+    pending: &mut std::collections::VecDeque<Command>,
+    input: &mut InputOwner,
+    current: u64,
+) {
+    while let Some(Command::Input {
+        input_target: None,
+        request,
+        id,
+        input: tick,
+    }) = pending.front()
+        && *request == current
+        && input.merge_waiting_wheel(id, tick)
+    {
+        pending.pop_front();
+    }
+}
+
 fn merge_text(queued: &mut Command, next: &Command) -> bool {
     use crate::tmux_snapshot::keys::Input::Text;
     let (

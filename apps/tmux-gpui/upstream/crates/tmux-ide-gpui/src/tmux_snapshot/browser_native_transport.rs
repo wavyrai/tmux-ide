@@ -724,6 +724,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     })
                 })
                 .flatten();
+            active::merge_into_waiting(&mut pending, active.as_mut());
             let can_admit = !(navigation_waiting && draining_history)
                 && active.as_ref().is_none_or(|a| {
                     !a.reissue

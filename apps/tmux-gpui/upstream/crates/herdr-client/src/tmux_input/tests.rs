@@ -285,3 +285,24 @@ fn byte_input_is_bounded_and_always_an_exclusive_barrier() {
 
 #[path = "tests/availability.rs"]
 mod availability;
+/// The single waiting admission has not reached the wire, so its barrier
+/// payload may still be amended (a wheel step folding in the next tick).
+#[test]
+fn only_the_unsent_waiting_barrier_is_reachable_for_amendment() {
+    let mut s = Scheduler::new(scope());
+    assert!(s.waiting_barrier_mut().is_none());
+    fill(&mut s, 1);
+    let Admission::Queued(_) = s.admit(&scope(), Work::Barrier("wheel")).unwrap() else {
+        panic!()
+    };
+    *s.waiting_barrier_mut().unwrap() = "wheel+1";
+    let next = s.complete_input(&ack(1, InputResult::Ok)).next.unwrap();
+    assert!(matches!(next.work, Work::Barrier("wheel+1")));
+    // Dispatched: nothing waits, nothing is reachable.
+    assert!(s.waiting_barrier_mut().is_none());
+    // A waiting key is not a barrier and is never offered.
+    let mut s = Scheduler::new(scope());
+    s.admit(&scope(), Work::Barrier("paste")).unwrap();
+    s.admit(&scope(), text()).unwrap();
+    assert!(s.waiting_barrier_mut().is_none());
+}
