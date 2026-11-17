@@ -5,6 +5,7 @@ mod reconnect;
 mod reveal;
 mod split;
 mod viewport;
+mod window_switch;
 use super::{SnapshotView, browser, keys::Input};
 pub(super) use focus_reclaim::PaintedFocus;
 use gpui::Context;
@@ -52,6 +53,10 @@ enum Kind {
     /// Typed while a dropped stream is put back: the target is the same pane,
     /// under the token its new stream gives it (`reconnect.rs`).
     Reconnect(reconnect::Hold),
+    /// Typed after choosing a pane of another window of a session streamed by
+    /// window (#806): the target is that pane, under the token its window's
+    /// new stream gives it (`window_switch.rs`).
+    Switch(window_switch::Hold),
     /// Typed while a window shown again waits for its fresh state: the target
     /// is the pane selected when it is up (`reveal.rs`).
     Reveal(reveal::Hold),
@@ -120,8 +125,10 @@ impl Pending {
         }
         // A split hold waits for the pane it created; one that was not
         // applied has nowhere to deliver.
-        let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting());
+        let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting())
+            || matches!(&self.kind, Kind::Switch(hold) if hold.waiting());
         !matches!(&self.kind, Kind::Split(hold) if hold.failed())
+            && !matches!(&self.kind, Kind::Switch(hold) if hold.failed())
             && self.started.elapsed() < self.limit()
             && self.request == view.browser_request
             && (waiting || view.browser_state.selected_pane.as_ref() == Some(&self.id))
@@ -131,6 +138,7 @@ impl Pending {
                 | Kind::Viewport { .. }
                 | Kind::History { .. }
                 | Kind::Split(_)
+                | Kind::Switch(_)
                 | Kind::Reconnect(_)
                 | Kind::Reveal(_) => {
                     view.browser_state.presence_revision == self.presence && view.presence.ready()
@@ -158,8 +166,12 @@ impl Pending {
             && view.divider.is_none()
             && view.browser_commands.is_some()
             && match self.kind {
-                Kind::Split(_) if waiting => true,
-                Kind::Selection | Kind::Split(_) | Kind::Reconnect(_) | Kind::Reveal(_) => view
+                Kind::Split(_) | Kind::Switch(_) if waiting => true,
+                Kind::Selection
+                | Kind::Split(_)
+                | Kind::Switch(_)
+                | Kind::Reconnect(_)
+                | Kind::Reveal(_) => view
                     .browser_state
                     .input_targets
                     .iter()
@@ -217,6 +229,7 @@ impl SnapshotView {
     }
     pub(super) fn expire_pending_input(&mut self, cx: &mut Context<Self>) {
         self.observe_split_hold();
+        self.observe_switch_hold();
         self.observe_reconnect_hold();
         self.observe_reveal_hold();
         if self.pending_input.is_some() && !self.pending_input_ready() {
@@ -239,6 +252,7 @@ impl SnapshotView {
             || !self.terminal_input_ready()
             || self.browser_state.request != self.browser_request
             || self.split_hold_waiting()
+            || self.switch_hold_waiting()
         {
             return;
         }

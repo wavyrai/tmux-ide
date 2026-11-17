@@ -27,11 +27,15 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             targets: BTreeMap::new(),
             stage: None,
             submitted: false,
+            window_notice: None,
             active: Some(Route {
                 id: "old-route".into(),
                 request: 7,
                 target,
                 workspace: "fixture".into(),
+                window: None,
+                notice: None,
+                window_panes: Vec::new(),
             }),
             split: split::Reader::new(path.clone()).unwrap(),
             foreground: true,
@@ -679,6 +683,7 @@ pub(in crate::tmux_snapshot) fn attached() -> (Local, mpsc::Receiver<Incoming>) 
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         })
         .collect();
     (local, events)
@@ -710,6 +715,7 @@ fn the_same_daemon_gets_one_lease_for_the_same_session_without_a_home_reset() {
         workspace,
         panes,
         selected,
+        ..
     }) = &local.stage
     else {
         panic!("expected a lease request, not rediscovery");
@@ -781,6 +787,9 @@ fn a_ready_stream_ends_the_reconnecting_badge() {
         request: 7,
         target,
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
+        window_panes: Vec::new(),
     });
     local
         .command(Command::NativeTerminalReady {
@@ -908,6 +917,9 @@ fn a_repeated_drop_continues_the_backoff() {
             request: 7,
             target: target.clone(),
             workspace: "fixture".into(),
+            window: None,
+            notice: None,
+            window_panes: Vec::new(),
         });
     }
     assert_eq!(delays, [0, 250, 500, 1000]);
@@ -936,3 +948,24 @@ mod always;
 mod cause;
 #[path = "browser_native_local_update_tests.rs"]
 mod update;
+
+/// #806: a window stream's catalog lists every window's panes; its rebind
+/// re-issues its own window and panes, not the session's.
+#[test]
+fn a_window_stream_rebind_reissues_its_window_only() {
+    let (mut local, _events) = attached();
+    let route = local.active.as_mut().unwrap();
+    route.window = Some("window.one".into());
+    route.window_panes = vec!["%1".into()];
+    local.state.selected_pane = Some("%1".into());
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    let Some(Stage::Issue { window, panes, .. }) = &local.stage else {
+        panic!("expected a lease request");
+    };
+    assert_eq!(
+        (window.as_deref(), panes.as_slice()),
+        (Some("window.one"), &["%1".to_owned()][..])
+    );
+}

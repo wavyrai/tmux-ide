@@ -12,6 +12,9 @@ fn fixture() -> (Route, Request) {
             live: format!("live-session.{}", "b".repeat(20)),
         },
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
+        window_panes: Vec::new(),
     };
     let request = Request {
         version: 1,

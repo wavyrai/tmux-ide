@@ -480,6 +480,7 @@ fn creates_session_in_explicit_owned_fixture() {
     let CatalogResult::Opened {
         workspace_name,
         panes,
+        ..
     } = worker_tests::await_result(&mut worker).unwrap()
     else {
         panic!("expected opened session");
@@ -641,6 +642,7 @@ fn creates_session_in_explicit_owned_fixture() {
                 selected_pane: panes[0].clone(),
                 visible_panes: panes,
                 mode: crate::tmux_stream::ViewerMode::ReadOnly,
+                window: None,
             },
         })
         .unwrap();

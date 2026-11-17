@@ -26,6 +26,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             targets: BTreeMap::new(),
             stage: None,
             submitted: false,
+            window_notice: None,
             active: None,
             split: split::Reader::new(path.clone()).unwrap(),
             foreground: true,
@@ -320,6 +321,7 @@ fn stable_session_identity_survives_refresh_without_reusing_selection_authority(
         window_count: None,
         last_activity: None,
         favicon: None,
+        largest_window_pane_count: None,
     };
     let old = uuid::Uuid::new_v4().to_string();
     local.catalog_session(&old, &scope, &session).unwrap();

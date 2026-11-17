@@ -39,9 +39,19 @@ impl Local {
         // Also behind other windows (PM, 17 Nov: a pane closed elsewhere stayed
         // listed until the window was activated). The labels below wait for
         // the front, as before.
+        // #806: a window stream's layout shows every window; its own pane set
+        // is the route's, and `state.panes` lists every window's panes.
+        let window_panes = (self.active.as_ref())
+            .filter(|route| route.window.is_some())
+            .map(|route| route.window_panes.clone());
         if let Some(stream_panes) = &stream_panes {
             let before = (self.state.panes.clone(), self.state.selected_pane.clone());
-            if !self.follow_stream_panes(stream_panes, &pane) {
+            let followed = if window_panes.is_some() {
+                self.follow_window_panes(stream_panes, &pane)
+            } else {
+                self.follow_stream_panes(stream_panes, &pane)
+            };
+            if !followed {
                 return Ok(());
             }
             if !self.foreground {
@@ -58,23 +68,41 @@ impl Local {
         // The terminal controller already validated topology and revisions. The
         // metadata boundary additionally requires exactly its issued pane set;
         // a delayed or partial roster must not add/remove selection authority.
-        let issued: BTreeSet<_> = self.state.panes.iter().map(|p| p.id.as_str()).collect();
-        if issued.is_empty() || issued.len() > 24 || issued.len() != self.state.panes.len() {
+        // Followed above: the route's set may have just changed.
+        let window_panes = (self.active.as_ref())
+            .filter(|route| route.window.is_some())
+            .map(|route| route.window_panes.clone());
+        let window_route = window_panes.is_some();
+        let issued: BTreeSet<_> = match &window_panes {
+            Some(panes) => panes.iter().map(String::as_str).collect(),
+            None => self.state.panes.iter().map(|p| p.id.as_str()).collect(),
+        };
+        let issued_len = window_panes
+            .as_ref()
+            .map_or(self.state.panes.len(), Vec::len);
+        if issued.is_empty() || issued.len() > 24 || issued.len() != issued_len {
             return Ok(());
         }
         let mut received = BTreeSet::new();
         for window in &layouts {
             for row in &window.panes {
                 if let Some(id) = row.pane.as_deref()
-                    && (!issued.contains(id) || !received.insert(id))
+                    && ((!window_route && !issued.contains(id)) || !received.insert(id))
                 {
                     return Ok(());
                 }
             }
         }
-        if received != issued {
+        // A whole-session stream's layout shows exactly its panes; a window
+        // stream's shows its own panes and every other window's.
+        if if window_route {
+            !issued.is_subset(&received)
+        } else {
+            received != issued
+        } {
             return Ok(());
         }
+        let issued = if window_route { received } else { issued };
         let mut choices = Vec::with_capacity(issued.len());
         let mut readers = BTreeMap::new();
         let mut remaining = issued;
@@ -100,6 +128,7 @@ impl Local {
                     browser_icon: row.browser_icon.clone(),
                     display_name_source: row.display_name_source.map(name_source),
                     window_label: Some(label(window.window_name.as_deref(), "Window")),
+                    largest_window: None,
                 });
             }
         }
@@ -114,6 +143,7 @@ impl Local {
                     browser_icon: None,
                     display_name_source: None,
                     window_label: None,
+                    largest_window: None,
                 });
             }
         }
@@ -161,10 +191,46 @@ impl Local {
                     browser_icon: None,
                     display_name_source: None,
                     window_label: None,
+                    largest_window: None,
                 });
             }
         }
         self.state.panes = panes;
+        true
+    }
+    /// The window-stream form of `follow_stream_panes` (#806): the stream's
+    /// pane set is the route's; `state.panes` keeps every window's panes and
+    /// gains a pane added to this window until the layout labels it.
+    fn follow_window_panes(&mut self, stream_panes: &[String], selected: &str) -> bool {
+        let unique: BTreeSet<&str> = stream_panes.iter().map(String::as_str).collect();
+        let Some(route) = self.active.as_mut() else {
+            return false;
+        };
+        if stream_panes.is_empty()
+            || stream_panes.len() > 24
+            || unique.len() != stream_panes.len()
+            || !unique.contains(selected)
+        {
+            return false;
+        }
+        route.window_panes = stream_panes.to_vec();
+        if (self.state.selected_pane.as_deref()).is_none_or(|held| !unique.contains(held)) {
+            self.state.selected_pane = Some(selected.to_owned());
+        }
+        for id in stream_panes {
+            if !self.state.panes.iter().any(|choice| &choice.id == id) {
+                self.state.panes.push(Choice {
+                    id: id.clone(),
+                    label: id.clone(),
+                    pane_count: None,
+                    window_id: None,
+                    browser_icon: None,
+                    display_name_source: None,
+                    window_label: None,
+                    largest_window: None,
+                });
+            }
+        }
         true
     }
 }

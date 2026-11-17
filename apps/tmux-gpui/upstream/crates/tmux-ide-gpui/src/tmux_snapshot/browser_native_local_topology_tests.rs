@@ -21,6 +21,7 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         })
         .collect();
     local.active = Some(Route {
@@ -31,6 +32,9 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             live: "live".into(),
         },
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
+        window_panes: Vec::new(),
     });
     (local, events)
 }
@@ -307,4 +311,102 @@ fn an_inactive_window_follows_its_streams_pane_set() {
         assert!(events.try_recv().is_ok(), "the change was not published");
         assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
     }
+}
+
+/// #806: a window stream (window `window`, panes left and right) of a session
+/// that also has window `other`. The layout shows both windows.
+fn window_route(local: &mut Local) {
+    let route = local.active.as_mut().unwrap();
+    route.window = Some("window".into());
+    route.window_panes = vec!["left".into(), "right".into()];
+}
+fn other_window() -> Layout {
+    serde_json::from_value(serde_json::json!({"type":"layout","semanticWindowId":"other","windowName":"Logs",
+        "currentWindow":false,"cols":80,"rows":24,"zoomed":false,
+        "panes":[{"pane":"far","displayName":"Tail","left":0,"top":0,"width":80,"height":24,"active":true}]}))
+    .unwrap()
+}
+
+#[test]
+fn a_window_stream_lists_every_windows_panes_and_keeps_its_own_set() {
+    let (mut local, _events) = attached();
+    window_route(&mut local);
+    local
+        .command(notice(&local, vec![layout(), other_window()]))
+        .unwrap();
+    assert_eq!(ids(&local), ["right", "left", "far"]);
+    let far = &local.state.panes[2];
+    assert_eq!(
+        (far.window_id.as_deref(), far.label.as_str()),
+        (Some("other"), "Tail")
+    );
+    // The stream's own set, which a rebind re-issues, is unchanged.
+    assert_eq!(
+        local.active.as_ref().unwrap().window_panes,
+        ["left", "right"]
+    );
+    // A whole-session stream still refuses a layout showing a pane it lacks.
+    let (mut local, _events) = attached();
+    local
+        .command(notice(&local, vec![layout(), other_window()]))
+        .unwrap();
+    assert_eq!(ids(&local), ["left", "right"]);
+    assert!(local.state.panes[0].window_id.is_none());
+}
+
+#[test]
+fn a_window_stream_whose_own_pane_is_missing_from_the_layout_is_not_labelled() {
+    let (mut local, _events) = attached();
+    window_route(&mut local);
+    local.active.as_mut().unwrap().window_panes =
+        vec!["left".into(), "right".into(), "gone".into()];
+    local
+        .command(notice(&local, vec![layout(), other_window()]))
+        .unwrap();
+    assert!(
+        local
+            .state
+            .panes
+            .iter()
+            .all(|pane| pane.window_id.is_none())
+    );
+}
+
+#[test]
+fn a_window_stream_follows_its_pane_set_on_the_route() {
+    let (mut local, _events) = attached();
+    window_route(&mut local);
+    let window = layout_of(&[("left", "Shell"), ("right", "Build"), ("third", "Logs")]);
+    let command = in_place(
+        &local,
+        vec![window, other_window()],
+        &["left", "right", "third"],
+        "left",
+    );
+    local.command(command).unwrap();
+    assert_eq!(
+        local.active.as_ref().unwrap().window_panes,
+        ["left", "right", "third"]
+    );
+    assert_eq!(ids(&local), ["left", "right", "third", "far"]);
+}
+
+/// The view learns that the session is streamed by window: choosing a pane
+/// of another window then holds keys for it (pending_input/window_switch.rs).
+#[test]
+fn a_window_route_is_published_as_a_window_stream() {
+    let (mut local, events) = attached();
+    local.publish().unwrap();
+    let whole = events.try_iter().filter_map(|e| match e {
+        Incoming::Catalog(state) => Some(state.window_stream),
+        _ => None,
+    });
+    assert_eq!(whole.last(), Some(false));
+    window_route(&mut local);
+    local.publish().unwrap();
+    let windowed = events.try_iter().filter_map(|e| match e {
+        Incoming::Catalog(state) => Some(state.window_stream),
+        _ => None,
+    });
+    assert_eq!(windowed.last(), Some(true));
 }

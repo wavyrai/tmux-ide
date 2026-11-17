@@ -109,3 +109,37 @@ fn version_1_still_parses_and_may_not_carry_version_2_fields() {
     future["version"] = 3.into();
     assert!(parse(&serde_json::to_vec(&future).unwrap(), &scope()).is_err());
 }
+
+/// #806: version 3 adds the largest window's pane count, which a stream of
+/// one window must fit. It can't exceed the session's panes, and only
+/// version 3 carries it.
+#[test]
+fn version_3_carries_the_largest_window_pane_count() {
+    let mut v3 = resource_v2();
+    v3["version"] = 3.into();
+    v3["sessions"][0]["paneCount"] = 30.into();
+    v3["sessions"][0]["largestWindowPaneCount"] = 12.into();
+    let result = parse(&serde_json::to_vec(&v3).unwrap(), &scope()).unwrap();
+    assert_eq!(result[0].largest_window_pane_count, Some(12));
+    assert_eq!(result[0].window_count, Some(3));
+    let mut over = v3.clone();
+    over["sessions"][0]["largestWindowPaneCount"] = 31.into();
+    assert!(parse(&serde_json::to_vec(&over).unwrap(), &scope()).is_err());
+    let mut equal = v3.clone();
+    equal["sessions"][0]["largestWindowPaneCount"] = 30.into();
+    assert!(parse(&serde_json::to_vec(&equal).unwrap(), &scope()).is_ok());
+    let mut missing = v3.clone();
+    missing["sessions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("largestWindowPaneCount");
+    assert!(parse(&serde_json::to_vec(&missing).unwrap(), &scope()).is_err());
+    let mut early = resource_v2();
+    early["sessions"][0]["largestWindowPaneCount"] = 1.into();
+    assert!(parse(&serde_json::to_vec(&early).unwrap(), &scope()).is_err());
+    assert_eq!(
+        parse(&serde_json::to_vec(&resource_v2()).unwrap(), &scope()).unwrap()[0]
+            .largest_window_pane_count,
+        None
+    );
+}

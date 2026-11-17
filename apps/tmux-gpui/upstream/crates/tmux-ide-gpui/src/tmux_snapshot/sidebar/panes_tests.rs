@@ -10,6 +10,7 @@ fn pane(id: &str, window: &str, label: &str, source: Option<NameSource>) -> brow
         label: label.into(),
         window_id: Some(window.into()),
         window_label: Some(format!("{window} name")),
+        largest_window: None,
         browser_icon: None,
         display_name_source: source,
     }
