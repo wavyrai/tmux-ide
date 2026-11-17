@@ -42,6 +42,7 @@ impl Pending {
         match self.kind {
             Kind::Split(_) => SPLIT_LIMIT,
             Kind::Reconnect(_) => reconnect::RECONNECT_LIMIT,
+            Kind::Reveal(_) => reveal::REVEAL_LIMIT,
             _ => Duration::from_secs(1),
         }
     }

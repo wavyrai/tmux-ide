@@ -2,6 +2,7 @@
 mod focus_reclaim;
 mod history;
 mod reconnect;
+mod reveal;
 mod split;
 mod viewport;
 use super::{SnapshotView, browser, keys::Input};
@@ -51,6 +52,9 @@ enum Kind {
     /// Typed while a dropped stream is put back: the target is the same pane,
     /// under the token its new stream gives it (`reconnect.rs`).
     Reconnect(reconnect::Hold),
+    /// Typed while a window shown again waits for its fresh state: the target
+    /// is the pane selected when it is up (`reveal.rs`).
+    Reveal(reveal::Hold),
 }
 pub(super) struct Pending {
     kind: Kind,
@@ -111,6 +115,9 @@ impl Pending {
         if let Kind::Reconnect(hold) = &self.kind {
             return self.reconnect_compatible(hold, view);
         }
+        if let Kind::Reveal(hold) = &self.kind {
+            return self.reveal_compatible(hold, view);
+        }
         // A split hold waits for the pane it created; one that was not
         // applied has nowhere to deliver.
         let waiting = matches!(&self.kind, Kind::Split(hold) if hold.waiting());
@@ -124,7 +131,8 @@ impl Pending {
                 | Kind::Viewport { .. }
                 | Kind::History { .. }
                 | Kind::Split(_)
-                | Kind::Reconnect(_) => {
+                | Kind::Reconnect(_)
+                | Kind::Reveal(_) => {
                     view.browser_state.presence_revision == self.presence && view.presence.ready()
                 }
                 Kind::Focus => {
@@ -151,7 +159,7 @@ impl Pending {
             && view.browser_commands.is_some()
             && match self.kind {
                 Kind::Split(_) if waiting => true,
-                Kind::Selection | Kind::Split(_) | Kind::Reconnect(_) => view
+                Kind::Selection | Kind::Split(_) | Kind::Reconnect(_) | Kind::Reveal(_) => view
                     .browser_state
                     .input_targets
                     .iter()
@@ -210,6 +218,7 @@ impl SnapshotView {
     pub(super) fn expire_pending_input(&mut self, cx: &mut Context<Self>) {
         self.observe_split_hold();
         self.observe_reconnect_hold();
+        self.observe_reveal_hold();
         if self.pending_input.is_some() && !self.pending_input_ready() {
             self.cancel_pending_input(cx);
         }
