@@ -228,6 +228,11 @@ impl Local {
                     self.state.status = "Connected".into();
                     self.publish()?;
                 }
+                // #806: say once why another window than the wanted one is up.
+                if let Some(notice) = self.active.as_mut().and_then(|r| r.notice.take()) {
+                    self.state.status = notice.into();
+                    self.publish()?;
+                }
                 if input_ready && self.foreground {
                     self.accept_visit()?;
                 }

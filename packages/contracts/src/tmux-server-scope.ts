@@ -205,6 +205,24 @@ export const TmuxServerSessionsResourceV2SchemaZ = z
   .strict();
 export type TmuxServerSessionsResourceV2 = z.infer<typeof TmuxServerSessionsResourceV2SchemaZ>;
 
+/**
+ * #806: version 3 adds the pane count of the session's largest window, so Home
+ * can tell whether a session opens window by window (at most 24 panes per
+ * window) before opening it. Versions 1 and 2 stay as they were.
+ */
+export const TmuxServerSessionsResourceV3SchemaZ = z
+  .object({
+    version: z.literal(3),
+    server: TmuxServerScopeSchemaZ,
+    sessions: z.array(
+      TmuxServerSessionsResourceV2SchemaZ.shape.sessions.element
+        .extend({ largestWindowPaneCount: z.number().int().min(1) })
+        .strict(),
+    ),
+  })
+  .strict();
+export type TmuxServerSessionsResourceV3 = z.infer<typeof TmuxServerSessionsResourceV3SchemaZ>;
+
 /** Selector intent is interpreted only by the daemon on its own host. */
 export const TmuxServerRegistrationRequestSchemaZ = z
   .object({

@@ -137,6 +137,14 @@ export const PaneStreamLeaseRequestSchemaZ = z
     viewerMode: PaneStreamViewerModeSchemaZ,
     /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
     terminalDelivery: TerminalDeliveryOfferSchemaZ.optional(),
+    /**
+     * #806: a stream for one window. `panes` must be exactly that window's
+     * panes (at most PANE_STREAM_MAX_PANES), so a session with more panes in
+     * all can be viewed window by window. Under capability 119/120 the stream
+     * follows that window's pane set in place; other windows never enter.
+     * Released daemons refuse the field: send it only to a daemon that has it.
+     */
+    semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
   })
   .strict();
 export type PaneStreamLeaseRequest = z.infer<typeof PaneStreamLeaseRequestSchemaZ>;
@@ -258,6 +266,12 @@ export const PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = 117;
  * Offered in place of 117 because the offer array has nine slots.
  */
 export const PANE_STREAM_READER_CAPABILITY_VERSION = 118;
+/**
+ * #718: layout panes carry `browserKind` ("native" | "plain" | null), so a
+ * client can say why a plain terminal browser has no tmux-ide controls.
+ * Sent only to a client offering 123; older clients refuse the field.
+ */
+export const PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION = 123;
 /**
  * The client keeps its stream when the session gains or loses a pane (#723):
  * the daemon sends a `topology` frame where it would otherwise close the
@@ -597,6 +611,11 @@ export const PaneStreamLayoutFrameSchemaZ = z
               .regex(/^(?:[0-9a-f]{2048})?$/u)
               .nullable()
               .optional(),
+            /**
+             * Only with capability 123: a terminal browser with tmux-ide's
+             * native controls, a plain one without them, or null.
+             */
+            browserKind: z.enum(["native", "plain"]).nullable().optional(),
             /** Only with capability 118: the Markdown reader's file name, never its path. */
             reader: z
               .object({

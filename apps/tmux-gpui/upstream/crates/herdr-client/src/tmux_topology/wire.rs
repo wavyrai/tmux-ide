@@ -113,7 +113,11 @@ pub(super) struct LayoutSnapshot {
     pub window_links: WindowLinks,
 }
 
-pub(super) fn identity(value: &str) -> bool {
+/// The most windows one layout snapshot may show: as many as window links.
+/// A window stream (#806) sees every window of a session that may have more
+/// windows than one stream has panes.
+pub(super) const MAX_WINDOWS: usize = 256;
+pub(crate) fn identity(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.as_bytes()[0].is_ascii_alphanumeric()
@@ -194,7 +198,7 @@ impl LayoutSnapshot {
         if self.kind != "layout-snapshot"
             || self.topology_epoch > SAFE
             || self.layouts.is_empty()
-            || self.layouts.len() > crate::tmux_stream::MAX_PANES
+            || self.layouts.len() > MAX_WINDOWS
         {
             return Err(Error::Bounds);
         }

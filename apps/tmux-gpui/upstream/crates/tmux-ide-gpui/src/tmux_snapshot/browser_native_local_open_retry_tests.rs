@@ -27,6 +27,7 @@ fn opened_empty(local: &mut Local, target: &Target) {
     let result = CatalogResult::Opened {
         workspace_name: "fixture".into(),
         panes: Vec::new(),
+        windows: None,
     };
     local.completed(stage, result).unwrap();
 }
@@ -88,6 +89,7 @@ fn a_session_that_lists_its_pane_on_a_later_try_opens() {
     let result = CatalogResult::Opened {
         workspace_name: "fixture".into(),
         panes: vec!["%2".into()],
+        windows: None,
     };
     local.completed(stage, result).unwrap();
     assert!(matches!(local.stage, Some(Stage::Issue { .. })));
@@ -145,6 +147,7 @@ fn a_session_whose_open_or_lease_fails_is_recovered_not_stopped() {
                 workspace: "fixture".into(),
                 panes: vec!["%1".into(), "%2".into()],
                 selected: "%2".into(),
+                window: None,
             }
         } else {
             Stage::Open {

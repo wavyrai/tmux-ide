@@ -20,6 +20,20 @@ const address = {
 } as const;
 
 describe("terminal delivery contracts", () => {
+  it("takes up to 16 capability numbers in an offer", () => {
+    const offer = (count: number) => ({
+      protocolVersions: [1, ...Array.from({ length: count - 1 }, (_, index) => 100 + index)],
+      encodings: ["semantic-compact-v1"],
+      richPlacements: true,
+    });
+    for (const count of [9, 10, 16])
+      expect(TerminalDeliveryOfferSchemaZ.parse(offer(count)).protocolVersions).toHaveLength(count);
+    expect(TerminalDeliveryOfferSchemaZ.safeParse(offer(17)).success).toBe(false);
+    expect(
+      TerminalDeliveryOfferSchemaZ.safeParse({ ...offer(1), protocolVersions: [] }).success,
+    ).toBe(false);
+  });
+
   it("rejects duplicate negotiation offers and impossible capabilities", () => {
     expect(() =>
       TerminalDeliveryOfferSchemaZ.parse({

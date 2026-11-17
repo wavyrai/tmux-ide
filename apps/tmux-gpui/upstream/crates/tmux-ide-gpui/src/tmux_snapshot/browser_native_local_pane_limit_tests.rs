@@ -2,6 +2,8 @@
 //! catalog stays, and a notice names the session and what to do instead.
 use super::*;
 use herdr_client::tmux_daemon::Error as DaemonError;
+#[path = "browser_native_local_window_open_tests.rs"]
+mod window_open;
 use herdr_client::tmux_daemon::{
     AgentActivity, AgentSelection, CatalogIdentity, FleetCatalog, FleetCatalogSessions,
     ObservedAgent, ObservedHarness, OpenedAgent,
@@ -24,6 +26,7 @@ fn session(name: &str, panes: u32, windows: Option<u32>) -> Session {
         window_count: windows,
         last_activity: None,
         favicon: None,
+        largest_window_pane_count: None,
     }
 }
 /// A normal session, one with 25 panes, and one with 38 windows of one pane.
@@ -139,6 +142,7 @@ fn exactly_the_limit_still_opens() {
             CatalogResult::Opened {
                 workspace_name: "fixture".into(),
                 panes: panes(24),
+                windows: None,
             },
         )
         .unwrap();
@@ -160,6 +164,7 @@ fn a_session_that_grew_past_the_limit_returns_to_a_reloading_home_that_names_it(
             CatalogResult::Opened {
                 workspace_name: "fixture".into(),
                 panes: panes(25),
+                windows: None,
             },
         )
         .unwrap();
@@ -204,6 +209,7 @@ fn an_agent_open_over_the_limit_is_handled_the_same_way() {
                 workspace_name: "fixture".into(),
                 panes: panes(25),
                 selected: "pane.p0".into(),
+                windows: None,
             }),
         )
         .unwrap();
@@ -297,6 +303,7 @@ fn an_agent_open_with_no_panes_is_unavailable() {
                 workspace_name: "fixture".into(),
                 panes: Vec::new(),
                 selected: "pane.p0".into(),
+                windows: None,
             }),
         )
         .unwrap();

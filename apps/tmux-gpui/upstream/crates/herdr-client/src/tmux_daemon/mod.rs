@@ -41,6 +41,7 @@ pub use create_pane::{
     AgentHarness, CreatedPane, CreatedPaneResource, NewPane, PaneCreateOutcome, PaneCreation,
     PaneKind,
 };
+pub use inventory::{InventoryWindow, WorkspaceInventory};
 pub use local_session::LocalSessionProof;
 mod browser_controls;
 pub use browser_controls::{BrowserAction, BrowserCommand, BrowserState};

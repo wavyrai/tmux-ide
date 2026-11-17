@@ -81,6 +81,7 @@ fn state() -> State {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         }],
         panes: vec![browser::Choice {
             id: "pane".into(),
@@ -90,6 +91,7 @@ fn state() -> State {
             browser_icon: None,
             display_name_source: None,
             window_label: Some("Editor".into()),
+            largest_window: None,
         }],
         ..Default::default()
     }

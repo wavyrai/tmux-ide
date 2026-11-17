@@ -420,6 +420,7 @@ fn fleet_hash(fleet: &browser::fleet::Fleet, hash: &mut DefaultHasher) {
                 name,
                 pane_count,
                 window_count,
+                largest_window,
                 // Read through `last_active_step`, with the clock.
                 last_activity: _,
                 favicon,
@@ -427,7 +428,8 @@ fn fleet_hash(fleet: &browser::fleet::Fleet, hash: &mut DefaultHasher) {
                 selection,
             } = session;
             (server_id, favorite, favorite_action, active, id, name).hash(hash);
-            (pane_count, window_count, session_id, selection).hash(hash);
+            (pane_count, window_count, largest_window).hash(hash);
+            (session_id, selection).hash(hash);
             favicon.as_ref().map(std::sync::Arc::as_ptr).hash(hash);
         }
     }

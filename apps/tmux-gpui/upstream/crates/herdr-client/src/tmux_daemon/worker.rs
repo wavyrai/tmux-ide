@@ -134,6 +134,8 @@ pub enum CatalogResult {
     Opened {
         workspace_name: String,
         panes: Vec<String>,
+        /// #806: the verified windows, from a daemon that streams one window.
+        windows: Option<Vec<super::InventoryWindow>>,
     },
     Created(CreatedSession),
     Issued(Box<Handoff>),
@@ -514,10 +516,11 @@ fn execute(
             if cancelled.load(Ordering::Acquire) {
                 return Err(Error::Retired);
             }
-            let panes = client.workspace_panes(&live_session_id, &workspace_name)?;
+            let inventory = client.workspace_inventory(&live_session_id, &workspace_name)?;
             Ok(CatalogResult::Opened {
                 workspace_name,
-                panes,
+                panes: inventory.panes,
+                windows: inventory.windows,
             })
         }
         CatalogAction::Create {

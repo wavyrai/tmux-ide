@@ -45,6 +45,7 @@ fn ready(view: &mut SnapshotView, state: BrowserState) {
         pane_count: None,
         window_id: Some("window-a".into()),
         window_label: None,
+        largest_window: None,
         browser_icon: None,
         display_name_source: None,
     }];

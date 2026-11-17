@@ -16,6 +16,30 @@ struct Inventory {
     session_id: String,
     resource_revision: u64,
     semantic_pane_ids: Vec<String>,
+    /// Version 2 only (#806).
+    #[serde(default)]
+    windows: Option<Vec<WireWindow>>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireWindow {
+    semantic_window_id: String,
+    active: bool,
+    semantic_pane_ids: Vec<String>,
+}
+/// One verified window of a workspace and its panes (#806), in tmux order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InventoryWindow {
+    pub id: String,
+    pub active: bool,
+    pub panes: Vec<String>,
+}
+/// A workspace's panes and, from a daemon with window-scoped streams, its
+/// verified windows. Panes of an unverified window are in no window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceInventory {
+    pub panes: Vec<String>,
+    pub windows: Option<Vec<InventoryWindow>>,
 }
 impl ServerClient {
     /// Creation receipts precede inventory publication. Observe readiness without
@@ -42,12 +66,21 @@ impl ServerClient {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
-    /// Read topology between two observations of the exact session incarnation.
     pub fn workspace_panes(
         &self,
         live_session_id: &str,
         workspace_name: &str,
     ) -> Result<Vec<String>, Error> {
+        Ok(self
+            .workspace_inventory(live_session_id, workspace_name)?
+            .panes)
+    }
+    /// Read topology between two observations of the exact session incarnation.
+    pub fn workspace_inventory(
+        &self,
+        live_session_id: &str,
+        workspace_name: &str,
+    ) -> Result<WorkspaceInventory, Error> {
         let matches = |sessions: &[super::Session]| {
             sessions.iter().any(|s| {
                 s.live_session_id == live_session_id
@@ -60,8 +93,15 @@ impl ServerClient {
         let workspace: String =
             url::form_urlencoded::byte_serialize(workspace_name.as_bytes()).collect();
         let scope = self.scope();
+        // A daemon without window-scoped streams ignores the version and
+        // answers version 1, which has no windows.
+        let version = if self.window_streams() {
+            "?version=2"
+        } else {
+            ""
+        };
         let path = format!(
-            "api/v1/tmux-servers/{}/{}/inventory/{workspace}",
+            "api/v1/tmux-servers/{}/{}/inventory/{workspace}{version}",
             scope.server_id, scope.generation
         );
         let bytes = self.daemon.get_resource(&path)?;
@@ -74,9 +114,12 @@ impl ServerClient {
         Ok(panes)
     }
 }
-fn parse(bytes: &[u8], scope: &ServerScope, workspace: &str) -> Result<Vec<String>, Error> {
+fn parse(bytes: &[u8], scope: &ServerScope, workspace: &str) -> Result<WorkspaceInventory, Error> {
     let envelope: Envelope = serde_json::from_slice(bytes).map_err(|_| Error::ResourceFormat)?;
-    if envelope.version != 1 {
+    if !matches!(
+        (envelope.version, &envelope.resource.windows),
+        (1, None) | (2, Some(_))
+    ) {
         return Err(Error::ResourceFormat);
     }
     if &envelope.server != scope || envelope.resource.workspace_name.trim() != workspace {
@@ -107,7 +150,43 @@ fn parse(bytes: &[u8], scope: &ServerScope, workspace: &str) -> Result<Vec<Strin
     {
         return Err(Error::ResourceFormat);
     }
-    Ok(resource.semantic_pane_ids)
+    let windows = match resource.windows {
+        Some(wire) => Some(windows(wire, &resource.semantic_pane_ids)?),
+        None => None,
+    };
+    Ok(WorkspaceInventory {
+        panes: resource.semantic_pane_ids,
+        windows,
+    })
+}
+/// Each window is named once, at most one is active, and each holds only
+/// panes of this workspace, none of them in two windows.
+fn windows(wire: Vec<WireWindow>, panes: &[String]) -> Result<Vec<InventoryWindow>, Error> {
+    if wire.len() > 256 || wire.iter().filter(|window| window.active).count() > 1 {
+        return Err(Error::ResourceFormat);
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    let mut placed = std::collections::BTreeSet::new();
+    for window in &wire {
+        if !crate::tmux_topology::valid_identity(&window.semantic_window_id)
+            || !ids.insert(window.semantic_window_id.as_str())
+            || window.semantic_pane_ids.is_empty()
+            || window
+                .semantic_pane_ids
+                .iter()
+                .any(|pane| !panes.contains(pane) || !placed.insert(pane.as_str()))
+        {
+            return Err(Error::ResourceFormat);
+        }
+    }
+    Ok(wire
+        .into_iter()
+        .map(|window| InventoryWindow {
+            id: window.semantic_window_id,
+            active: window.active,
+            panes: window.semantic_pane_ids,
+        })
+        .collect())
 }
 #[cfg(test)]
 #[path = "inventory_tests.rs"]

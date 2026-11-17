@@ -202,6 +202,35 @@ function commitMessages(
 }
 
 describe("SessionRuntimeTerminalDeliveryHub", () => {
+  it("negotiates an offer of 16 capability numbers and delivers to it", async () => {
+    const owner = new FakeOwner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const client = await hub.open(
+      "reader",
+      "pane-a",
+      {
+        protocolVersions: [1, ...Array.from({ length: 15 }, (_, index) => 200 + index)],
+        encodings: ["semantic-compact-v1"],
+        richPlacements: false,
+      },
+      (message) => {
+        messages.push(message);
+      },
+    );
+    expect(client.negotiation).toMatchObject({
+      accepted: true,
+      negotiated: { encoding: "semantic-compact-v1" },
+    });
+    owner.emit(seed());
+    await settle();
+    expect(
+      messages.some((message) => message.type === "terminal.delivery" && message.frame === "seed"),
+    ).toBe(true);
+    await client.close();
+    await hub.close();
+  });
+
   it("retains only live delivery baselines through redraw pressure and releases them on convergence", async () => {
     const owner = new FakeOwner();
     const hub = new SessionRuntimeTerminalDeliveryHub(generation, "workspace", () => owner);

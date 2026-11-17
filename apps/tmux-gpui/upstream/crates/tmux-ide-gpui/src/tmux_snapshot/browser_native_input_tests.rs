@@ -163,16 +163,19 @@ fn transient_pointer_mode_or_preview_change_cancels_held_release() {
     ));
 }
 
+/// Keyboard bytes pipeline like other keys now. A daemon without raw byte
+/// input refuses them before the wire: the reservation is released, nothing
+/// retires, and the next key goes.
 #[test]
-fn unsupported_bytes_barrier_can_finish_without_sequence_or_retirement() {
-    let mut scheduler = Scheduler::new(scope());
+fn unsent_bytes_release_their_reservation_without_retirement() {
+    let mut scheduler = Scheduler::<Control>::new(scope());
     let Admission::Ready(dispatch) = scheduler
-        .admit(&scope(), Work::Barrier(Control::Bytes("00ff80".into())))
+        .admit(&scope(), Work::Input(Input::Bytes("00ff80".into())))
         .unwrap()
     else {
         panic!()
     };
-    scheduler.complete_barrier(dispatch.ticket, true).unwrap();
+    scheduler.cancel_unsent_input(dispatch.ticket).unwrap();
     assert!(scheduler.idle());
     assert!(!scheduler.retired());
     assert!(matches!(
@@ -180,5 +183,90 @@ fn unsupported_bytes_barrier_can_finish_without_sequence_or_retirement() {
             .admit(&scope(), Work::Input(Input::Text("next".into())))
             .unwrap(),
         Admission::Ready(_)
+    ));
+}
+fn wheel_event(lines: i16, row: usize) -> Control {
+    Control::Wheel(tmux_pointer::WheelEvent {
+        lines,
+        row,
+        col: 3,
+        modifiers: tmux_pointer::Modifiers {
+            shift: false,
+            alt: false,
+            control: false,
+        },
+    })
+}
+fn waiting_lines(owner: &mut InputOwner) -> Option<i16> {
+    match owner.scheduler.as_mut()?.waiting_barrier_mut()? {
+        Control::Wheel(event) => Some(event.lines),
+        _ => None,
+    }
+}
+/// The tick after a wheel step in flight lands in the scheduler's waiting
+/// slot. Later ticks fold into it there, so a fling costs two round trips
+/// (in flight, then everything else), not three.
+#[test]
+fn wheel_ticks_fold_into_the_waiting_wheel_step() {
+    let scope = scope();
+    let mut scheduler = Scheduler::new(scope.clone());
+    let Admission::Ready(_) = scheduler
+        .admit(&scope, Work::Barrier(wheel_event(-1, 5)))
+        .unwrap()
+    else {
+        panic!()
+    };
+    let Admission::Queued(_) = scheduler
+        .admit(&scope, Work::Barrier(wheel_event(-1, 5)))
+        .unwrap()
+    else {
+        panic!()
+    };
+    let mut owner = InputOwner {
+        scheduler: Some(scheduler),
+        ..Default::default()
+    };
+    let tick = |lines, row| keys::Input::Wheel {
+        lines,
+        row,
+        col: 3,
+        shift: false,
+        alt: false,
+        control: false,
+    };
+    for _ in 0..10 {
+        assert!(owner.merge_waiting_wheel("pane", &tick(-1, 5)));
+    }
+    assert_eq!(waiting_lines(&mut owner), Some(-11));
+    // Another pane, row or direction is not folded.
+    assert!(!owner.merge_waiting_wheel("other", &tick(-1, 5)));
+    assert!(!owner.merge_waiting_wheel("pane", &tick(-1, 6)));
+    assert!(!owner.merge_waiting_wheel("pane", &tick(1, 5)));
+    assert_eq!(waiting_lines(&mut owner), Some(-11));
+}
+#[test]
+fn nothing_folds_into_a_waiting_step_that_is_not_a_wheel_step() {
+    let scope = scope();
+    let mut scheduler = Scheduler::new(scope.clone());
+    scheduler
+        .admit(&scope, Work::Barrier(wheel_event(-1, 5)))
+        .unwrap();
+    scheduler
+        .admit(&scope, Work::Barrier(Control::Paste("p".into())))
+        .unwrap();
+    let mut owner = InputOwner {
+        scheduler: Some(scheduler),
+        ..Default::default()
+    };
+    assert!(!owner.merge_waiting_wheel(
+        "pane",
+        &keys::Input::Wheel {
+            lines: -1,
+            row: 5,
+            col: 3,
+            shift: false,
+            alt: false,
+            control: false,
+        }
     ));
 }

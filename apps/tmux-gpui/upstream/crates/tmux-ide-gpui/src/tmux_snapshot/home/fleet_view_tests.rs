@@ -386,6 +386,7 @@ fn each_input_the_table_reads_moves_its_field_and_the_key(cx: &mut TestAppContex
                 browser_icon: None,
                 display_name_source: None,
                 window_label: None,
+                largest_window: None,
             }];
             view.open_pane_actions(window, cx)
         }),

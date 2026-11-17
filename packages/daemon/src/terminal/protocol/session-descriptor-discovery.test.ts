@@ -262,11 +262,58 @@ it("carries live browser icon metadata without changing pane identity", () => {
   });
 });
 
+it("reports a terminal browser's kind from its control option and command (#718)", () => {
+  expect(
+    SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{pane_pid}\t#{qa:@tmux_ide_browser_control}"),
+  ).toBe(true);
+  const record = (command: string, control: string) => {
+    const fields = line("%3").split("\t");
+    fields[4] = command;
+    return `${fields.join("\t")}\tmanual\t\t\t${process.pid}\t${control}`;
+  };
+  const kind = (command: string, control: string) =>
+    parseSessionPaneDescriptors([record(command, control)])[0]?.browserKind;
+  // The native browser publishes its endpoint; tmux `qa` escapes it as one argument.
+  const endpoint = (pid: number) => {
+    const json = JSON.stringify({
+      version: 1,
+      pid,
+      instance: "00000000-0000-4000-8000-000000000001",
+      pane: "%3",
+      socket: "/tmp/browser.sock",
+    });
+    return `"${json.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  };
+  const dead = 2 ** 31 - 2;
+  // A live browser with native controls, whatever its process name.
+  expect(kind("terminal-browse", endpoint(process.pid))).toBe("native");
+  expect(kind("node", endpoint(process.pid))).toBe("native");
+  // The native browser never clears its option: once its process is gone, the
+  // pane is judged by what runs there now (remain-on-exit, respawn-pane).
+  expect(kind("terminal-browse", endpoint(dead))).toBe("plain");
+  expect(kind("zsh", endpoint(dead))).toBeNull();
+  // A value that is not a live endpoint is not "native".
+  expect(kind("terminal-browse", "1")).toBe("plain");
+  expect(kind("zsh", "1")).toBeNull();
+  // tmux reports the process name cut to 15 characters on macOS.
+  expect(kind("terminal-browse", "")).toBe("plain");
+  expect(kind("terminal-browser", "")).toBe("plain");
+  expect(kind("zsh", "")).toBeNull();
+  expect(kind("terminal-browsers", "")).toBeNull();
+  // An older reply without the field: no kind, the pane is kept.
+  expect(
+    parseSessionPaneDescriptors([`${line("%3")}\tmanual\t\t\t${process.pid}`])[0],
+  ).toMatchObject({
+    runtimePaneId: "%3",
+    browserKind: null,
+  });
+});
+
 it("carries a live reader's file name and path, and drops a dead or malformed one", () => {
   const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
   // tmux `qa` escapes the option as one argument.
   const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}\t#{pane_pid}")).toBe(
+  expect(SESSION_PANE_DESCRIPTOR_FORMAT.includes("\t#{qa:@tmux_ide_reader}\t#{pane_pid}\t")).toBe(
     true,
   );
   const record = (raw: string, panePid: string | number = process.pid) =>

@@ -51,6 +51,7 @@ fn owned_daemon_native_provider_roundtrip() {
         selected_pane: pane.clone(),
         visible_panes: panes.clone(),
         mode: ViewerMode::ReadOnly,
+        window: None,
     };
     let source_handoff = client.issue_surface_source(&selection).unwrap();
     assert!(!source_handoff.graphics && source_handoff.local_images.is_none());

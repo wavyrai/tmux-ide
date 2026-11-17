@@ -174,6 +174,7 @@ fn machine_and_incarnation_distinguish_identical_session_identifiers() {
                 window_count: None,
                 last_activity: None,
                 favicon: None,
+                largest_window_pane_count: None,
             }],
         }],
     };

@@ -34,7 +34,6 @@ pub(super) enum Error {
 }
 #[derive(Debug)]
 enum Control {
-    Bytes(String),
     Paste(String),
     Mouse(PointerEvent),
     Wheel(tmux_pointer::WheelEvent),
@@ -102,6 +101,86 @@ impl InputOwner {
     }
     pub fn waiting(&self) -> bool {
         self.scheduler.as_ref().is_some_and(Scheduler::waiting)
+    }
+    /// A wheel step in flight and another waiting, both for `pane`.
+    #[cfg(test)]
+    pub(super) fn with_waiting_wheel_for_tests(pane: &str) -> Self {
+        let scope = Scope {
+            pane: pane.into(),
+            lifetime: Lifetime {
+                generation: "generation".into(),
+                incarnation: format!("{pane}:1"),
+            },
+            presentation_epoch: 1,
+        };
+        let step = || {
+            Work::Barrier(Control::Wheel(tmux_pointer::WheelEvent {
+                lines: -1,
+                row: 5,
+                col: 3,
+                modifiers: tmux_pointer::Modifiers {
+                    shift: false,
+                    alt: false,
+                    control: false,
+                },
+            }))
+        };
+        let mut scheduler = Scheduler::new(scope.clone());
+        let _ = scheduler.admit(&scope, step());
+        let _ = scheduler.admit(&scope, step());
+        Self {
+            scheduler: Some(scheduler),
+            ..Default::default()
+        }
+    }
+    /// Lines of the waiting wheel step, if one waits.
+    #[cfg(test)]
+    pub(super) fn waiting_wheel_lines_for_tests(&mut self) -> Option<i16> {
+        match self.scheduler.as_mut()?.waiting_barrier_mut()? {
+            Control::Wheel(event) => Some(event.lines),
+            _ => None,
+        }
+    }
+    /// Fold a wheel tick for `pane` into the wheel step waiting in the
+    /// scheduler (admitted, not yet sent): same cell, modifiers and direction,
+    /// within the ±128 lines one step carries. The next tick otherwise waits
+    /// behind it for one more round trip.
+    pub fn merge_waiting_wheel(&mut self, pane: &str, input: &keys::Input) -> bool {
+        let keys::Input::Wheel {
+            lines,
+            row,
+            col,
+            shift,
+            alt,
+            control,
+        } = *input
+        else {
+            return false;
+        };
+        let Some(scheduler) = self.scheduler.as_mut() else {
+            return false;
+        };
+        if scheduler.scope().pane != pane {
+            return false;
+        }
+        let Some(Control::Wheel(event)) = scheduler.waiting_barrier_mut() else {
+            return false;
+        };
+        let modifiers = &event.modifiers;
+        if event.row != usize::from(row)
+            || event.col != usize::from(col)
+            || (modifiers.shift, modifiers.alt, modifiers.control) != (shift, alt, control)
+            || event.lines.signum() != lines.signum()
+        {
+            return false;
+        }
+        match event.lines.checked_add(lines) {
+            Some(sum) if sum.abs() <= 128 => {
+                event.lines = sum;
+                true
+            }
+            _ => false,
+        }
     }
     fn observe_pointer(&mut self, scope: Option<tmux_pointer::Scope>, actionable: bool) {
         self.mouse
@@ -236,7 +315,7 @@ impl InputOwner {
                 if !herdr_client::tmux_control::valid_input_bytes(&hex) {
                     return Err(Error::Unsupported);
                 }
-                Work::Barrier(Control::Bytes(hex))
+                Work::Input(Input::Bytes(hex))
             }
             keys::Input::Resize { .. } => return Err(Error::Unsupported),
         };
@@ -366,14 +445,21 @@ impl InputOwner {
         now: u64,
     ) -> Result<(), Error> {
         match d.work {
-            Work::Input(input) => {
-                let sequence = c.input(&d.scope.pane, &d.scope.lifetime, input, now)?;
-                self.scheduler()?
-                    .bind_input(d.ticket, &d.scope.pane, sequence)?;
-            }
-            Work::Barrier(Control::Bytes(hex)) => {
-                self.reports(c, p, d.ticket, d.scope, vec![Input::Bytes(hex)], now)?
-            }
+            Work::Input(input) => match c.input(&d.scope.pane, &d.scope.lifetime, input, now) {
+                Ok(sequence) => self
+                    .scheduler()?
+                    .bind_input(d.ticket, &d.scope.pane, sequence)?,
+                // A daemon without raw byte input: the key is dropped, as before.
+                Err(herdr_client::tmux_controller::Error::Control(
+                    herdr_client::tmux_control::Error::Capability,
+                )) => {
+                    let next = self.scheduler()?.cancel_unsent_input(d.ticket)?;
+                    if let Some(dispatch) = next.next {
+                        self.dispatch(c, p, dispatch, now)?;
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            },
             Work::Barrier(Control::Paste(text)) => {
                 let snapshot = c
                     .committed(&d.scope.pane)

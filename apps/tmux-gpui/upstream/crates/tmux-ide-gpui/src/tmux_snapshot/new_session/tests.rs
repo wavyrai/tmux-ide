@@ -11,6 +11,7 @@ fn choice(id: &str, label: &str) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }
 }
 fn make_view(

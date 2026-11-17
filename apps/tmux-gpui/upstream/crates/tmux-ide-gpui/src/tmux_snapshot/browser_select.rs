@@ -72,9 +72,15 @@ impl SnapshotView {
             }
             _ => None,
         };
-        let held_input = same_window_pane
-            .as_deref()
-            .and_then(|id| pending_input::Pending::capture(self, request, id));
+        // A pane outside the stream (#806: another window of a session
+        // streamed by window) re-issues it: keys wait for that pane's stream.
+        let held_input = match (&same_window_pane, &selection) {
+            (Some(id), _) => pending_input::Pending::capture(self, request, id),
+            (None, Selection::Pane(id)) => {
+                pending_input::Pending::capture_switch(self, request, id)
+            }
+            _ => None,
+        };
         let command = match selection {
             Selection::WorkspaceAgent {
                 from_request,

@@ -31,6 +31,7 @@ fn choice(id: &str, label: &str) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }
 }
 /// Fills the one-slot command queue, then `submit`s a form: it must show an

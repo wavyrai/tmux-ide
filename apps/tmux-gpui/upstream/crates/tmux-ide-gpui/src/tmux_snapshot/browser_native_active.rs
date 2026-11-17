@@ -58,6 +58,158 @@ fn ends_outcome(command: &Command) -> bool {
     )
 }
 
+/// Queues `command`, or refuses it (false) when that would grow the queue past
+/// `max`. Queued text joins (see `merge_text`). A wheel step merges into the wheel step queued just before it when
+/// only their lines differ: a trackpad sends one per frame, and each
+/// dispatched step is a barrier that waits for its ACK (a round trip to a
+/// remote daemon), so unmerged steps fall further behind the finger.
+pub(super) fn push(
+    pending: &mut std::collections::VecDeque<Command>,
+    command: Command,
+    max: usize,
+) -> bool {
+    if let Some(queued) = pending.back_mut()
+        && (merge_wheel(queued, &command) || merge_text(queued, &command))
+    {
+        return true;
+    }
+    if pending.len() >= max {
+        return false;
+    }
+    pending.push_back(command);
+    true
+}
+
+/// Text typed while earlier text waits in the queue joins it: one input,
+/// one ACK, one echo. The first key of a burst is never held for this; it is
+/// queued alone and goes on the next turn. Bounded like one input (1024
+/// UTF-16 units, 4096 bytes).
+/// Folds wheel ticks at the front of the queue into the wheel step waiting in
+/// the input scheduler (see `InputOwner::merge_waiting_wheel`). Only the
+/// front, for this request's pane, with no input target: nothing queued
+/// before a tick is ever overtaken.
+pub(super) fn merge_into_waiting(
+    pending: &mut std::collections::VecDeque<Command>,
+    active: Option<&mut Active>,
+) {
+    if let Some(active) = active {
+        fold_into_waiting(pending, &mut active.input, active.request);
+    }
+}
+
+fn fold_into_waiting(
+    pending: &mut std::collections::VecDeque<Command>,
+    input: &mut InputOwner,
+    current: u64,
+) {
+    while let Some(Command::Input {
+        input_target: None,
+        request,
+        id,
+        input: tick,
+    }) = pending.front()
+        && *request == current
+        && input.merge_waiting_wheel(id, tick)
+    {
+        pending.pop_front();
+    }
+}
+
+fn merge_text(queued: &mut Command, next: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input::Text;
+    let (
+        Command::Input {
+            input_target,
+            request,
+            id,
+            input: Text(text),
+        },
+        Command::Input {
+            input_target: next_target,
+            request: next_request,
+            id: next_id,
+            input: Text(next_text),
+        },
+    ) = (queued, next)
+    else {
+        return false;
+    };
+    if (&*input_target, *request, &*id) != (next_target, *next_request, next_id)
+        || text.len() + next_text.len() > 4096
+        || text.encode_utf16().count() + next_text.encode_utf16().count() > 1024
+    {
+        return false;
+    }
+    text.push_str(next_text);
+    true
+}
+
+fn merge_wheel(queued: &mut Command, next: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input::Wheel;
+    let (
+        Command::Input {
+            input_target,
+            request,
+            id,
+            input:
+                Wheel {
+                    lines,
+                    row,
+                    col,
+                    shift,
+                    alt,
+                    control,
+                },
+        },
+        Command::Input {
+            input_target: next_target,
+            request: next_request,
+            id: next_id,
+            input:
+                Wheel {
+                    lines: next_lines,
+                    row: next_row,
+                    col: next_col,
+                    shift: next_shift,
+                    alt: next_alt,
+                    control: next_control,
+                },
+        },
+    ) = (queued, next)
+    else {
+        return false;
+    };
+    if (
+        &*input_target,
+        *request,
+        &*id,
+        *row,
+        *col,
+        *shift,
+        *alt,
+        *control,
+    ) != (
+        next_target,
+        *next_request,
+        next_id,
+        *next_row,
+        *next_col,
+        *next_shift,
+        *next_alt,
+        *next_control,
+    ) || lines.signum() != next_lines.signum()
+    {
+        return false;
+    }
+    match lines.checked_add(*next_lines) {
+        Some(sum) if sum.abs() <= 128 => {
+            *lines = sum;
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The transport's admission: takes the next command (the split gesture's
 /// continuation at `split` first) and lets it end the last outcome.
 pub(super) fn admit_next(
@@ -405,6 +557,8 @@ impl Active {
         // An inactive window never gets input authority, so there a live frame
         // alone says the stream is back (it ends a reconnect, not a visit).
         let input_ready = self.controller.input_ready();
+        let reveal_before = state.reveal_hold;
+        state.reveal_hold = self.controller.reveal_hold();
         let attachment_ready =
             (input_ready || !foreground) && state.frame.is_some() && !state.retained_preview;
         if attachment_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
@@ -457,6 +611,7 @@ impl Active {
             || graphics_changed
             || surfaces_changed
             || ready != state.input_ready
+            || reveal_before != state.reveal_hold
             || presence != state.presence_revision
             || match (prior.as_ref(), state.frame.as_ref()) {
                 (Some(a), Some(b)) => !a.same(b),

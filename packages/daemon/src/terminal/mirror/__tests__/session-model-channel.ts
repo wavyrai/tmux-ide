@@ -207,6 +207,8 @@ export class SessionModelChannel implements MirrorChannelIo {
         const subscription =
           text === "refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'" ||
           text === "refresh-client -B 'tmux-ide-reader:%*:#{@tmux_ide_reader}'" ||
+          text ===
+            "refresh-client -B 'tmux-ide-browser-kind:%*:#{@tmux_ide_browser_control}#{m:terminal-browse*,#{pane_current_command}}'" ||
           /^refresh-client -B 'tmux-ide-(?:pane-borders|copy-keys|pane-history|scroll-on-clear):[^']+'$/u.test(
             text,
           );
