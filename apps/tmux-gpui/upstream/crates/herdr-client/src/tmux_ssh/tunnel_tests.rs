@@ -236,13 +236,22 @@ fn the_guard_passes_on_the_forwards_exit_and_stderr() {
 fn a_forward_is_sent_term_before_kill() {
     let dir = std::env::temp_dir().join(format!("tmux-ide-guard-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let marker = dir.join("term");
+    let (marker, ready) = (dir.join("term"), dir.join("ready"));
     let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(&ready);
+    // The ready file is written after the trap is in place (review of
+    // dc0cbf7c: the command line alone shows only that the shell started).
     let script = format!(
-        "trap 'echo term > \"{}\"; exit 0' TERM; while :; do /bin/sleep 0.05; done",
-        marker.display()
+        "trap 'echo term > \"{}\"; exit 0' TERM; : > \"{}\"; while :; do /bin/sleep 0.05; done",
+        marker.display(),
+        ready.display()
     );
     let (mut holder, _guard, forward) = guarded_under(&script);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ready.exists() {
+        assert!(Instant::now() < deadline, "the forward never got ready");
+        thread::sleep(Duration::from_millis(10));
+    }
     holder.0.kill().unwrap();
     holder.0.wait().unwrap();
     assert!(gone_within(forward.0, Duration::from_secs(3)));

@@ -350,3 +350,55 @@ fn a_route_to_a_gone_daemon_is_replaced_while_shared() {
         "the dead route is reused for A while B holds it"
     );
 }
+
+/// Review of dc0cbf7c: the proof a reset makes has one bound, 2.5 s, for the
+/// identity read of a new connection and the request together. A daemon that
+/// answers each slowly (1.5 s apiece, 3 s in all) is not proven, and the
+/// proof gives up near the bound, not after both answers.
+#[test]
+fn the_proof_of_a_route_has_one_bound() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for (index, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { return };
+            thread::spawn(move || {
+                // The fixture's own connection answers at once.
+                let delay = Duration::from_millis(if index == 0 { 0 } else { 1500 });
+                loop {
+                    let mut bytes = Vec::new();
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if stream.read_exact(&mut byte).is_err() {
+                            return;
+                        }
+                        bytes.push(byte[0]);
+                    }
+                    thread::sleep(delay);
+                    let line = String::from_utf8_lossy(&bytes);
+                    if line
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .contains("/identity")
+                    {
+                        reply(&mut stream, identity());
+                    } else {
+                        reply(&mut stream, serde_json::json!({}));
+                    }
+                }
+            });
+        }
+    });
+    let route = RemoteTransport::fixture(port, descriptor()).unwrap();
+    // The fixture's proven connection is taken away: the proof needs a new one.
+    let _lane = route.fork().unwrap();
+    let started = std::time::Instant::now();
+    let proven = route.proven();
+    let took = started.elapsed();
+    assert!(!proven, "a proof past its bound counted");
+    assert!(
+        took < crate::tmux_ssh::PROOF_LIMIT + Duration::from_millis(400),
+        "the proof took {took:?}"
+    );
+}
