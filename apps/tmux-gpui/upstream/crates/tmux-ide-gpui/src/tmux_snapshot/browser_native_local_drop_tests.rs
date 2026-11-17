@@ -73,6 +73,7 @@ fn attached(local: &mut Local) {
         workspace: "fixture".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     });
     local.state.workspace_agents = Some(workspace_roster());
     local.state.home_agents = Some(roster());

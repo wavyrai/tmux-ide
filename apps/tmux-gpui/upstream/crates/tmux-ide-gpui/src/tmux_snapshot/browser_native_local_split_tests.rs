@@ -16,6 +16,7 @@ fn route() -> Route {
         workspace: "test".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     }
 }
 fn request(reader: &mut Reader, route: &Route, sequence: u64) -> Option<SplitResponse> {

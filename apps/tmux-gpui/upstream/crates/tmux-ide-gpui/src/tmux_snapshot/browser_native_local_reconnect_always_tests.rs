@@ -105,6 +105,7 @@ fn a_live_stream_in_an_inactive_window_ends_the_reconnecting_badge() {
             workspace: "fixture".into(),
             window: None,
             notice: None,
+            window_panes: Vec::new(),
         });
     };
     route(&mut local);
@@ -269,6 +270,7 @@ fn a_flapping_stream_continues_the_backoff_and_a_settled_one_starts_over() {
             workspace: "fixture".into(),
             window: None,
             notice: None,
+            window_panes: Vec::new(),
         });
         local
             .command(Command::NativeTerminalReady {
@@ -522,6 +524,7 @@ fn a_refresh_in_an_inactive_window_reads_the_panes_again_within_the_recovery() {
         workspace: "fixture".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     });
     let refresh = |id: &str, request| Command::NativeTerminalRefresh {
         id: id.into(),

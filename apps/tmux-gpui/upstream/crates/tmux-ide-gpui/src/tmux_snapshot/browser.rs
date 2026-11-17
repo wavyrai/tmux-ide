@@ -198,6 +198,10 @@ pub(super) struct State {
     /// The last split's outcome, for keys held since its click
     /// (pending_input/split.rs). Worker-owned.
     pub pane_split: Option<PaneSplit>,
+    /// #806: the session is streamed one window at a time, so a pane of
+    /// another window re-issues the stream (pending_input/window_switch.rs).
+    /// Worker-owned.
+    pub window_stream: bool,
     /// Home is live, but the session the user chose has too many panes to
     /// open; this names it and says what to do instead.
     pub home_notice: Option<String>,
@@ -652,6 +656,7 @@ impl Reader {
             agents_last_known: false,
             act: None,
             pane_split: None,
+            window_stream: false,
             home_notice: None,
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,

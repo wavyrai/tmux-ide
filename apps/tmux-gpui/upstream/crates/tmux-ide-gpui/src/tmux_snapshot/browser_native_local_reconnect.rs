@@ -237,7 +237,11 @@ impl Local {
         let Some(route) = self.active.as_ref() else {
             return Ok(());
         };
-        let panes: Vec<String> = self.state.panes.iter().map(|p| p.id.clone()).collect();
+        let panes: Vec<String> = if route.window.is_some() {
+            route.window_panes.clone()
+        } else {
+            self.state.panes.iter().map(|p| p.id.clone()).collect()
+        };
         let rebind = self
             .state
             .selected_pane

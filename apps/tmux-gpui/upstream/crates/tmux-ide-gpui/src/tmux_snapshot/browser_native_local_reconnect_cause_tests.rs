@@ -25,6 +25,7 @@ fn leased(local: &mut Local) {
         workspace: "fixture".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     });
 }
 /// The stream came back and was ready, after `tries` tries.

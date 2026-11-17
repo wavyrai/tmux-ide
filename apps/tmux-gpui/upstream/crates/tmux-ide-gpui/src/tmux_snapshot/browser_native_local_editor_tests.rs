@@ -14,6 +14,7 @@ fn fixture() -> (Route, Request) {
         workspace: "fixture".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     };
     let request = Request {
         version: 1,

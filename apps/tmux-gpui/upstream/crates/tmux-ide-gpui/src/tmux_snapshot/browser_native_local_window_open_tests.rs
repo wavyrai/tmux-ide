@@ -195,3 +195,53 @@ fn home_counts_the_largest_window_not_the_session() {
     assert!(matches!(local.stage, Some(Stage::Open { .. })));
     assert!(local.state.home_notice.is_none());
 }
+
+/// A pane of another window, chosen while a window is streamed, opens the
+/// session again on that pane's window.
+#[test]
+fn choosing_a_pane_of_another_window_reissues_for_its_window() {
+    let (mut local, _events) = loaded(3);
+    let windows = vec![win("window.a", false, 0..20), win("window.b", true, 20..30)];
+    opened(&mut local, Some(windows.clone()), None);
+    assert_eq!(issued(&local).0.as_deref(), Some("window.b"));
+    // As the window stream's labels list them: every window's panes.
+    local.state.panes = (0..30)
+        .map(|i| Choice {
+            id: format!("pane.p{i}"),
+            label: format!("pane.p{i}"),
+            pane_count: None,
+            window_id: None,
+            browser_icon: None,
+            display_name_source: None,
+            window_label: None,
+            largest_window: None,
+        })
+        .collect();
+    local.stage = None;
+    let request = local.state.request + 1;
+    local
+        .command(Command::Pane {
+            request,
+            id: "pane.p3".into(),
+        })
+        .unwrap();
+    let Some(Stage::Open { target, preferred }) = local.stage.take() else {
+        panic!("expected the session to open again");
+    };
+    assert_eq!(preferred.as_deref(), Some("pane.p3"));
+    local
+        .completed(
+            Stage::Open { target, preferred },
+            CatalogResult::Opened {
+                workspace_name: "fixture".into(),
+                panes: panes(30),
+                windows: Some(windows),
+            },
+        )
+        .unwrap();
+    let (window, _, selected) = issued(&local);
+    assert_eq!(
+        (window.as_deref(), selected.as_str()),
+        (Some("window.a"), "pane.p3")
+    );
+}

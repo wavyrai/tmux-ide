@@ -166,9 +166,7 @@ impl Topology {
                     }
                     return Ok(true);
                 }
-                if !self.layouts.contains_key(&id)
-                    && self.layouts.len() >= crate::tmux_stream::MAX_PANES
-                {
+                if !self.layouts.contains_key(&id) && self.layouts.len() >= wire::MAX_WINDOWS {
                     return Err(Error::Bounds);
                 }
                 self.layouts.insert(id, layout);

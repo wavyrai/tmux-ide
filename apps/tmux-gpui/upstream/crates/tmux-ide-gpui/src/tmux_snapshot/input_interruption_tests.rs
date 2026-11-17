@@ -300,6 +300,8 @@ mod reconnect_hold;
 mod split_hold;
 #[path = "input_interruption_tests/uncertain_pointer.rs"]
 mod uncertain_pointer;
+#[path = "input_interruption_tests/window_switch_hold.rs"]
+mod window_switch_hold;
 
 #[path = "pointer_event_tests.rs"]
 mod pointer_event_tests;

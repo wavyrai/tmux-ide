@@ -20,6 +20,7 @@ fn fixture() -> Local {
         workspace: "fixture".into(),
         window: None,
         notice: None,
+        window_panes: Vec::new(),
     };
     Local {
         machine_id: "local".into(),

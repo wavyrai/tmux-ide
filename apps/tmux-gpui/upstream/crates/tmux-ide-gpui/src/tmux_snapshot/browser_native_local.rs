@@ -25,6 +25,10 @@ struct Route {
     /// window, and the notice to show once it is up.
     window: Option<String>,
     notice: Option<&'static str>,
+    /// #806: a window stream's own panes. `state.panes` then lists every
+    /// window's panes, so the others can be offered; this is what the stream
+    /// carries and what a rebind re-issues. Empty for a whole-session stream.
+    window_panes: Vec<String>,
 }
 #[path = "browser_native_local_agents.rs"]
 mod agents;
@@ -251,6 +255,7 @@ impl Local {
                     .filter(|_| state.surface == Surface::Home)
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
+        state.window_stream = (self.active.as_ref()).is_some_and(|route| route.window.is_some());
         state.act = home_recovery::act(self.home.fault(), &state);
         // Shown on Home only, and only while the list that reported it is
         // live: a terminal names its own service, which may be another
@@ -742,6 +747,11 @@ impl Local {
             ) => {
                 let id = uuid::Uuid::new_v4().to_string();
                 self.state.selected_pane = Some(selected);
+                let window_panes = if window.is_some() {
+                    panes.clone()
+                } else {
+                    Vec::new()
+                };
                 self.state.panes = panes
                     .into_iter()
                     .map(|id| Choice {
@@ -771,6 +781,7 @@ impl Local {
                     workspace,
                     notice: self.window_notice.take().filter(|_| window.is_some()),
                     window,
+                    window_panes,
                 });
             }
             _ => {
