@@ -58,6 +58,94 @@ fn ends_outcome(command: &Command) -> bool {
     )
 }
 
+/// Queues `command`, or refuses it (false) when that would grow the queue past
+/// `max`. A wheel step merges into the wheel step queued just before it when
+/// only their lines differ: a trackpad sends one per frame, and each
+/// dispatched step is a barrier that waits for its ACK (a round trip to a
+/// remote daemon), so unmerged steps fall further behind the finger.
+pub(super) fn push(
+    pending: &mut std::collections::VecDeque<Command>,
+    command: Command,
+    max: usize,
+) -> bool {
+    if let Some(queued) = pending.back_mut()
+        && merge_wheel(queued, &command)
+    {
+        return true;
+    }
+    if pending.len() >= max {
+        return false;
+    }
+    pending.push_back(command);
+    true
+}
+
+fn merge_wheel(queued: &mut Command, next: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input::Wheel;
+    let (
+        Command::Input {
+            input_target,
+            request,
+            id,
+            input:
+                Wheel {
+                    lines,
+                    row,
+                    col,
+                    shift,
+                    alt,
+                    control,
+                },
+        },
+        Command::Input {
+            input_target: next_target,
+            request: next_request,
+            id: next_id,
+            input:
+                Wheel {
+                    lines: next_lines,
+                    row: next_row,
+                    col: next_col,
+                    shift: next_shift,
+                    alt: next_alt,
+                    control: next_control,
+                },
+        },
+    ) = (queued, next)
+    else {
+        return false;
+    };
+    if (
+        &*input_target,
+        *request,
+        &*id,
+        *row,
+        *col,
+        *shift,
+        *alt,
+        *control,
+    ) != (
+        next_target,
+        *next_request,
+        next_id,
+        *next_row,
+        *next_col,
+        *next_shift,
+        *next_alt,
+        *next_control,
+    ) || lines.signum() != next_lines.signum()
+    {
+        return false;
+    }
+    match lines.checked_add(*next_lines) {
+        Some(sum) if sum.abs() <= 128 => {
+            *lines = sum;
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The transport's admission: takes the next command (the split gesture's
 /// continuation at `split` first) and lets it end the last outcome.
 pub(super) fn admit_next(

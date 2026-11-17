@@ -565,13 +565,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         if !presence.0 && matches!(command, Command::Input { .. }) {
                             continue;
                         }
-                        if pending.len() >= MAX_PENDING {
+                        if !active::push(&mut pending, command, MAX_PENDING) {
                             // Refuse the newest command and say so; the connection stays.
                             state.status = PENDING_REFUSED.into();
                             changed = true;
-                            continue;
                         }
-                        pending.push_back(command);
                     }
                     Err(mpsc::TryRecvError::Disconnected) => break 'worker,
                     Err(mpsc::TryRecvError::Empty) => break,
