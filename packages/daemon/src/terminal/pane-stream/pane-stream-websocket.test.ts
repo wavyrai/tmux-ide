@@ -1585,6 +1585,41 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(readOnly.socket.closed).not.toBeNull();
   });
 
+  it("marks the pane an accepted input went to as the connection's typed-into pane, and no other", async () => {
+    // #424: the delivery hub never holds the typed-into pane behind its
+    // neighbours' bulk. Without this call every pane would wait alike.
+    const prioritized: string[] = [];
+    const h = harness({
+      openTerminalDelivery: async (pane) => ({
+        negotiation: {
+          accepted: true as const,
+          negotiated: {
+            protocolVersion: 1 as const,
+            encoding: "semantic-v1" as const,
+            richPlacements: false,
+            generation: INSTANCE,
+            deliveryNonce: "00000000-0000-4000-8000-000000000098",
+          },
+        },
+        ack: vi.fn(),
+        nack: vi.fn(),
+        setVisibility: vi.fn(),
+        prioritize: () => {
+          prioritized.push(pane);
+        },
+        close: async () => undefined,
+      }),
+    });
+    const { socket } = await connect(h, { viewerMode: "interactive", semanticDelivery: true });
+    socket.message({ type: "input", kind: "text", pane: "pane.shell", seq: 1, data: "ls" });
+    await vi.waitFor(() => expect(socket.framesOfType("input-ack")).toHaveLength(1));
+    expect(prioritized).toEqual(["pane.shell"]);
+    // An input the daemon refuses (sequence gap) prioritizes nothing.
+    socket.message({ type: "input", kind: "text", pane: "pane.editor", seq: 5, data: "x" });
+    await vi.waitFor(() => expect(socket.framesOfType("error")[0]?.code).toBe("input-rejected"));
+    expect(prioritized).toEqual(["pane.shell"]);
+  });
+
   it("advertises held lifetime admission only to offered capability and rejects unnegotiated fences", async () => {
     const h = harness();
     for (const offered of [false, true]) {

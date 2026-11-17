@@ -88,6 +88,21 @@ const MAX_PANES = 32;
 const MAX_PENDING_CANONICAL_CELLS = 1_000_000;
 const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
 const BACKGROUND_CADENCE_MS = 100;
+/**
+ * One connection's unacknowledged delivery bytes, across its panes, before a
+ * pane other than the one it types into waits. A remote link (SSH) queues
+ * every sent byte ahead of the next input-ack and echo; this bounds that queue
+ * to about this much plus one delivery. Daemon policy only: nothing on the wire.
+ */
+export const TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES = 256 * 1024;
+/** No pane is held longer than this: it is then sent behind whatever is in flight. */
+export const TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
+/**
+ * A pane is held only once some delivery of its connection has gone this long
+ * unacknowledged: a fast link acks bulk within a few round trips, and holding
+ * there only bunches panes up behind each other.
+ */
+export const TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS = 30;
 
 export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
@@ -143,6 +158,11 @@ export interface TerminalDeliveryConnection {
   materialize?(request: TerminalProjectionMaterialize): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
+  /**
+   * The client typed into this pane: its deliveries go ahead of the
+   * connection's other panes and never wait for their acknowledgements.
+   */
+  prioritize?(): void;
   close(): Promise<void>;
   /**
    * Kitty graphics side channel, present only when the client offered
@@ -250,6 +270,11 @@ interface ClientState {
   /** Delivery displaced by authoritative source close; its racing ACK is benign. */
   sourceClosedFlight: DeliveryEnvelope | null;
   backgroundTimer: SessionRuntimeTimer | null;
+  /** Waiting for its connection's other panes to be acknowledged. */
+  budgetHeld: boolean;
+  /** When the current hold began (it ends by TERMINAL_DELIVERY_CONNECTION_HOLD_MS). */
+  budgetHeldSince: number | null;
+  budgetTimer: SessionRuntimeTimer | null;
 }
 
 type SeedEncodingOutcome = { readonly bytes: Uint8Array } | { readonly error: unknown };
@@ -373,6 +398,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   readonly #observability: SessionRuntimeObservability;
   readonly #panes = new Map<string, PaneState>();
   readonly #clients = new Map<string, ClientState>();
+  /** Per connection: the pane it last typed into. */
+  readonly #priority = new Map<string, string>();
   #sourceCloseFailures = 0;
   #pendingSourceCloses = 0;
   /** Synchronous reservations held while an async pane source is starting. */
@@ -390,6 +417,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   #deliveryLifecycleOrdinal = 0;
   #deliveryStatusOrdinal = 0;
   #closed = false;
+  readonly #holdMs: number;
+  readonly #congestedMs: number;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -398,9 +427,15 @@ export class SessionRuntimeTerminalDeliveryHub {
     options: {
       readonly scheduler?: SessionRuntimeScheduler;
       readonly observability?: SessionRuntimeObservability;
+      /** Tests only: the longest a pane waits for its connection's bulk. */
+      readonly connectionHoldMs?: number;
+      /** Tests only: how long unacked bulk takes to count as congestion. */
+      readonly connectionCongestedMs?: number;
     } = {},
   ) {
     this.#ownerForPane = ownerForPane;
+    this.#holdMs = options.connectionHoldMs ?? TERMINAL_DELIVERY_CONNECTION_HOLD_MS;
+    this.#congestedMs = options.connectionCongestedMs ?? TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
   }
@@ -484,6 +519,9 @@ export class SessionRuntimeTerminalDeliveryHub {
         lastAck: null,
         sourceClosedFlight: null,
         backgroundTimer: null,
+        budgetHeld: false,
+        budgetHeldSince: null,
+        budgetTimer: null,
       };
       this.#clients.set(key, client);
       client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
@@ -496,6 +534,11 @@ export class SessionRuntimeTerminalDeliveryHub {
         projectionReceipt: (receipt) => this.#projectionReceipt(client, receipt),
         materialize: (request) => this.#materialize(client, request),
         nack: (nack) => this.#nack(client, nack),
+        prioritize: () => {
+          if (client.closed) return;
+          this.#priority.set(client.clientId, client.paneId);
+          this.#releaseBudget(client.clientId);
+        },
         setVisibility: (visibilityInput) => {
           if (client.closed) return;
           client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
@@ -703,6 +746,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#cancelEncoding(client);
       client.outgoing.length = 0;
       client.inFlight = null;
+      client.budgetHeld = false;
       logDeliveryFault(client, "source-closed", "source-restarted");
       this.#enqueue(client, {
         type: "terminal.delivery.fault",
@@ -1069,6 +1113,37 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
   }
 
+  #overBudget(client: ClientState): boolean {
+    if (this.#priority.get(client.clientId) === client.paneId) return false;
+    if (
+      client.budgetHeldSince !== null &&
+      this.#scheduler.nowMs() - client.budgetHeldSince >= this.#holdMs
+    )
+      return false;
+    const now = this.#scheduler.nowMs();
+    let bytes = 0;
+    let oldest = now;
+    for (const other of this.#clients.values())
+      if (other !== client && other.clientId === client.clientId && other.inFlight) {
+        bytes += other.inFlight.envelope.representationBytes;
+        oldest = Math.min(oldest, other.inFlight.sentAt);
+      }
+    return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES && now - oldest >= this.#congestedMs;
+  }
+
+  /** A pane's delivery settled or left: held panes of its connection try again, typed-into pane first. */
+  #releaseBudget(clientId: string): void {
+    const held = [...this.#clients.values()].filter(
+      (other) => other.clientId === clientId && other.budgetHeld,
+    );
+    const priority = this.#priority.get(clientId);
+    held.sort((a, b) => Number(b.paneId === priority) - Number(a.paneId === priority));
+    for (const other of held) {
+      other.budgetHeld = false;
+      this.#schedule(other);
+    }
+  }
+
   #schedule(client: ClientState): void {
     if (
       client.closed ||
@@ -1121,6 +1196,20 @@ export class SessionRuntimeTerminalDeliveryHub {
       (!completed && target.update.revision !== client.latestRevision)
     )
       return;
+    if (!completed && this.#overBudget(client)) {
+      client.budgetHeld = true;
+      client.budgetHeldSince ??= this.#scheduler.nowMs();
+      client.budgetTimer ??= this.#scheduler.timer(() => {
+        client.budgetTimer = null;
+        if (client.closed || !client.budgetHeld) return;
+        client.budgetHeld = false;
+        this.#schedule(client);
+      }, this.#holdMs);
+      return;
+    }
+    client.budgetHeldSince = null;
+    client.budgetTimer?.cancel();
+    client.budgetTimer = null;
     const traceStarted =
       completed?.traceStarted ??
       (this.#observability.enabled ? this.#observability.nowMicros() : 0);
@@ -1838,6 +1927,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.baselineHash = ack.canonicalStateHash;
     client.reseedRequired = false;
     client.inFlight = null;
+    this.#releaseBudget(client.clientId);
     client.lastAck = ack;
     if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
     this.#pruneAckSupersededCache(client.paneId);
@@ -1927,6 +2017,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.lastProjectionReceipt = receipt;
     client.reseedRequired = false;
     client.inFlight = null;
+    this.#releaseBudget(client.clientId);
     if (client.latestRevision === receipt.canonicalRevision) client.latestRevision = null;
     if (client.materializeRequested)
       client.latestRevision = this.#panes.get(client.paneId)?.latest?.update.revision ?? null;
@@ -2004,6 +2095,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#nacks += 1;
     client.reseedRequired = true;
     client.inFlight = null;
+    this.#releaseBudget(client.clientId);
     this.#pruneCanonicalRevisions(client.paneId);
     this.#schedule(client);
     this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
@@ -2058,6 +2150,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.outgoing.length = 0;
     if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
+    this.#releaseBudget(client.clientId);
     const fault: TerminalDeliveryServerMessage = {
       type: "terminal.delivery.fault",
       reason,
@@ -2137,8 +2230,13 @@ export class SessionRuntimeTerminalDeliveryHub {
     if (client.lifecycleOpenRecorded)
       this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
     client.backgroundTimer?.cancel();
+    client.budgetTimer?.cancel();
+    client.budgetTimer = null;
     client.outgoing.length = 0;
     this.#clients.delete(client.key);
+    if (![...this.#clients.values()].some((other) => other.clientId === client.clientId))
+      this.#priority.delete(client.clientId);
+    else this.#releaseBudget(client.clientId);
     this.#pruneCanonicalRevisions(client.paneId);
     if ([...this.#clients.values()].some((candidate) => candidate.paneId === client.paneId)) return;
     const pane = this.#panes.get(client.paneId);
