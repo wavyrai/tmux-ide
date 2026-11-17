@@ -46,6 +46,7 @@ import {
   TerminalDeliveryEnvelopeSchemaZ,
   TerminalDeliveryFaultSchemaZ,
   TerminalDeliveryNackSchemaZ,
+  TerminalDeliveryHistoryRequestSchemaZ,
   TerminalDeliveryNegotiationResultSchemaZ,
   TerminalDeliveryOfferSchemaZ,
   TerminalDeliveryVisibilitySchemaZ,
@@ -332,6 +333,13 @@ export const PaneStreamTerminalProjectionMaterializeFrameSchemaZ = z
     request: TerminalProjectionMaterializeSchemaZ,
   })
   .strict();
+/** Capability 122: ask for older history rows of one pane. */
+export const PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ = z
+  .object({
+    type: z.literal("terminal-delivery-history-request"),
+    request: TerminalDeliveryHistoryRequestSchemaZ,
+  })
+  .strict();
 export const PaneStreamTerminalDeliveryNackFrameSchemaZ = z
   .object({ type: z.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ })
   .strict();
@@ -457,6 +465,7 @@ export const PaneStreamClientFrameSchemaZ = z.union([
   PaneStreamTerminalProjectionReceiptFrameSchemaZ,
   PaneStreamTerminalProjectionMaterializeFrameSchemaZ,
   PaneStreamTerminalDeliveryNackFrameSchemaZ,
+  PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ,
   PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
   PaneStreamSemanticIntentFrameSchemaZ,
   PaneStreamViewportFrameSchemaZ,

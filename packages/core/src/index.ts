@@ -22,3 +22,4 @@ export * from "./resize-transaction.ts";
 export * from "./kitty-placeholders.ts";
 
 export * from "./terminal-projection.ts";
+export * from "./terminal-partial-history.ts";
