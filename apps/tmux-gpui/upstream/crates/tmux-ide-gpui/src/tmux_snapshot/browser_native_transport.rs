@@ -968,7 +968,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 send_state(&incoming, &shown);
             }
             if !changed && !admitted {
-                std::thread::sleep(Duration::from_millis(5));
+                Active::idle(active.as_ref());
             }
         }
         revoke_connection(&mut active, &mut state, &mut output);
