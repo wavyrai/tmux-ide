@@ -43,6 +43,9 @@ pub const SCENARIOS: &[&str] = &[
     "home100-refresh",
     "home100-motion",
     "home30-nosidebar",
+    "home100-nosidebar",
+    "home30-agent",
+    "home100-agent",
 ];
 
 /// What causes each timed frame.
@@ -57,6 +60,9 @@ enum Step {
     Publish,
     /// The view notified with no state change, as a Home motion frame is.
     Motion,
+    /// One agent's status changes, as the roster publishes it: the sidebar's
+    /// key moves, so it is drawn uncached.
+    Agent,
     /// The window resized by 37 pt and back, alternately.
     Resize,
     /// The window's root notified, as each agent spinner tick does.
@@ -316,9 +322,24 @@ fn scenario(name: &str, base: &browser::State) -> Result<Scenario> {
                 None,
             )
         }
+        "home30-agent" | "home100-agent" => {
+            let sessions = if name == "home30-agent" { 30 } else { 100 };
+            s(
+                fleet(state, sessions, 40, true)?,
+                HOME_SIZE,
+                true,
+                Step::Agent,
+                None,
+            )
+        }
         // Home's own cost, without the sidebar's.
-        "home30-nosidebar" => s(
-            fleet(state, 30, 40, true)?,
+        "home30-nosidebar" | "home100-nosidebar" => s(
+            fleet(
+                state,
+                if name == "home30-nosidebar" { 30 } else { 100 },
+                40,
+                true,
+            )?,
             HOME_SIZE,
             false,
             Step::Refresh,
@@ -498,6 +519,19 @@ fn run(
                     }
                 }),
                 Step::Motion => view.update(cx, |_, cx| cx.notify()),
+                Step::Agent => view.update(cx, |view, cx| {
+                    use crate::tmux_snapshot::browser::home_agents::Status;
+                    if let Some(roster) = view.browser_state.home_agents.as_mut() {
+                        let count = roster.rows.len().max(1);
+                        if let Some(row) = roster.rows.get_mut(index % count) {
+                            row.status = match row.status {
+                                Status::Working => Status::Idle,
+                                _ => Status::Working,
+                            };
+                        }
+                    }
+                    cx.notify();
+                }),
                 Step::Resize => {
                     let shrink = if index % 2 == 0 { 0. } else { 37. };
                     window.resize(size(px(width - shrink), px(height - shrink / 2.)));
