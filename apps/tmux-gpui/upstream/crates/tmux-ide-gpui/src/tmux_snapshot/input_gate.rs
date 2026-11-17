@@ -85,6 +85,7 @@ impl SnapshotView {
         if !self.terminal_input_ready()
             && !self.pending_input_ready()
             && !self.hold_reconnect_input()
+            && !self.hold_reveal_input()
         {
             self.interrupt_input(cx);
         }

@@ -24,6 +24,7 @@ import {
   PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION,
   PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION,
   PANE_STREAM_READER_CAPABILITY_VERSION,
+  PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION,
   PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   type PaneStreamInputLifetime,
@@ -3027,6 +3028,9 @@ export class PaneStreamLiveConnection {
           : {}),
         ...(this.#offers(PANE_STREAM_READER_CAPABILITY_VERSION)
           ? { reader: pane.reader ? { name: pane.reader.name } : null }
+          : {}),
+        ...(this.#offers(PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION)
+          ? { browserKind: pane.browserKind ?? null }
           : {}),
         left: pane.left,
         top: pane.top,

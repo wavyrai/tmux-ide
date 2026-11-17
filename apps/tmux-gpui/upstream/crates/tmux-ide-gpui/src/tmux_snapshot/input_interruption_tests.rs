@@ -296,6 +296,8 @@ mod terminal_link_pointer_tests;
 
 #[path = "input_interruption_tests/reconnect_hold.rs"]
 mod reconnect_hold;
+#[path = "input_interruption_tests/reveal_hold.rs"]
+mod reveal_hold;
 #[path = "input_interruption_tests/split_hold.rs"]
 mod split_hold;
 #[path = "input_interruption_tests/uncertain_pointer.rs"]

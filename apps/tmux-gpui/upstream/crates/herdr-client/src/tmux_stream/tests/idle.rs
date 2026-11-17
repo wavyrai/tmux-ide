@@ -144,3 +144,24 @@ fn a_peer_that_never_says_ready_times_out() {
     drop(client);
     peer.join().unwrap();
 }
+
+/// The worker measures the round trip with a ping of its own, which the
+/// daemon's WebSocket answers; the reveal hold is bounded by it.
+#[test]
+fn a_ping_of_its_own_measures_the_round_trip() {
+    worker::PING_EVERY_MS.with(|period| period.set(Some(50)));
+    let (client, peer) = peer(None, hold_open);
+    worker::PING_EVERY_MS.with(|period| period.set(None));
+    assert!(client.rtt().is_none(), "a round trip before any ping");
+    let started = Instant::now();
+    let rtt = loop {
+        if let Some(rtt) = client.rtt() {
+            break rtt;
+        }
+        assert!(started.elapsed() < WAIT, "no round trip was measured");
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(rtt < Duration::from_millis(500), "{rtt:?}");
+    client.cancel();
+    peer.join().unwrap();
+}

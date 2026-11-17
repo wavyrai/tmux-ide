@@ -43,6 +43,7 @@ impl Pending {
             Kind::Split(_) => SPLIT_LIMIT,
             Kind::Reconnect(_) => reconnect::RECONNECT_LIMIT,
             Kind::Switch(_) => window_switch::SWITCH_LIMIT,
+            Kind::Reveal(_) => reveal::REVEAL_LIMIT,
             _ => Duration::from_secs(1),
         }
     }
