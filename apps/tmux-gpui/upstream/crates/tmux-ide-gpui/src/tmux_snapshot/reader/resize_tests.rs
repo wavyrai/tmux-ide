@@ -30,7 +30,7 @@ fn a_reader_follows_the_window_on_every_frame_of_a_resize(cx: &mut TestAppContex
     cx.simulate_resize(size(px(900.), px(700.)));
     draw(cx);
     draw(cx);
-    let before = cx.debug_bounds("reader:pane-a").expect("the reader paints");
+    let before = cx.debug_bounds("reader:pane-a").unwrap();
     let card = |cx: &mut VisualTestContext| {
         view.read_with(cx, |v, _| {
             let (canvas, _) = v.input_geometry.unwrap();

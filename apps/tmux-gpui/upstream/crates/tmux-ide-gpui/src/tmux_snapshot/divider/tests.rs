@@ -832,8 +832,8 @@ fn reader_panes_follow_a_divider_preview(cx: &mut TestAppContext) {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(view.read_with(cx, |v, _| v.divider_content_preview().is_some()));
         let (a, b) = (card("a"), card("b"));
-        let reader_a = cx.debug_bounds("reader:a").expect("reader a paints");
-        let reader_b = cx.debug_bounds("reader:b").expect("reader b paints");
+        let reader_a = cx.debug_bounds("reader:a").unwrap();
+        let reader_b = cx.debug_bounds("reader:b").unwrap();
         // Layout rounds an edge to the device pixel; a lag is whole cells.
         let near = |x: Pixels, y: Pixels| (x - y).abs() <= px(0.5);
         assert!(
