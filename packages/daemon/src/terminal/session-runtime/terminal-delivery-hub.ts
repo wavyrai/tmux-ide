@@ -33,6 +33,7 @@ import {
   TerminalDeliveryVisibilitySchemaZ,
   TerminalDeliveryHistoryRequestSchemaZ,
   TERMINAL_DELIVERY_HISTORY_TAIL_ROWS,
+  TERMINAL_HISTORY_EMPTY_DIGEST,
   type TerminalDeliveryHistoryCommitment,
   type TerminalDeliveryHistoryRequest,
   type CanonicalTerminalReplicaUpdate,
@@ -65,8 +66,9 @@ import {
   negotiateTerminalDelivery,
   preaccountSemanticTerminalUpdateBytes,
   encodeSemanticTerminalHistory,
-  takeTerminalHistoryChunk,
   terminalHistoryPrefixCommitment,
+  dropTerminalHistoryCommitmentPrefix,
+  popTerminalHistoryCommitmentSuffix,
   type TerminalReplicaState,
 } from "@tmux-ide/core";
 import type {
@@ -91,8 +93,11 @@ export const MAX_RAW_JOURNAL_BYTES = 4 * 1024 * 1024;
 export const MAX_REPRESENTATION_CACHE_ENTRIES = 8;
 export const MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
 export const MAX_CLIENTS = 64;
-/** Capability 122: one history frame encodes at most this many cells synchronously. */
-export const HISTORY_FRAME_MAX_CELLS = 131_072;
+/**
+ * Capability 122: one history frame's encoded bytes, well under the
+ * connection's unacknowledged budget, so history never holds live output.
+ */
+export const HISTORY_FRAME_MAX_BYTES = 128 * 1024;
 const MAX_PANES = 32;
 const MAX_PENDING_CANONICAL_CELLS = 1_000_000;
 const MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
@@ -263,6 +268,8 @@ interface ClientState {
    * first), and the rows it holds. Both zero for a complete-history client.
    */
   historyUnloadedRows: number;
+  /** The digest of those unloaded rows, kept so updates cost O(trim). */
+  historyUnloadedDigest: string;
   historyLoadedRows: number;
   /** Rows the client asked for and has not been sent; null when none. */
   pendingHistoryRows: number | null;
@@ -272,7 +279,11 @@ interface ClientState {
     envelope: DeliveryEnvelope;
     projection: ProjectionBaseline | null;
     /** Capability 122: the client's unloaded and loaded rows once this is acknowledged. */
-    historyRows: { readonly unloaded: number; readonly loaded: number } | null;
+    historyRows: {
+      readonly unloaded: number;
+      readonly digest: string;
+      readonly loaded: number;
+    } | null;
     deliveryOrdinal: number;
     bytes: Uint8Array;
     nextChunk: number;
@@ -346,7 +357,11 @@ interface CachedRepresentation {
   readonly history: "complete" | "partial" | "truncated" | "not-applicable" | "deferred";
   /** Capability 122: what the client will lack and hold once this is acknowledged. */
   readonly historyUnloaded?: TerminalDeliveryHistoryCommitment;
-  readonly historyRows?: { readonly unloaded: number; readonly loaded: number };
+  readonly historyRows?: {
+    readonly unloaded: number;
+    readonly digest: string;
+    readonly loaded: number;
+  };
   readonly representationHash?: string;
   /** Internal reachability metadata; never serialized onto the wire. */
   readonly cachePaneId?: string;
@@ -537,6 +552,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         lastMaterialize: null,
         reseedRequired: false,
         historyUnloadedRows: 0,
+        historyUnloadedDigest: TERMINAL_HISTORY_EMPTY_DIGEST,
         historyLoadedRows: 0,
         pendingHistoryRows: null,
         revisionSinceHistoryRequest: false,
@@ -1972,6 +1988,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.reseedRequired = false;
     if (flight.historyRows) {
       client.historyUnloadedRows = flight.historyRows.unloaded;
+      client.historyUnloadedDigest = flight.historyRows.digest;
       client.historyLoadedRows = flight.historyRows.loaded;
       this.#pushHistoryTail(client);
     }
@@ -2049,22 +2066,46 @@ export class SessionRuntimeTerminalDeliveryHub {
         ? undefined
         : pane.revisions.get(client.baselineRevision);
     const baselineFull = baselineRecord?.state.snapshot ?? null;
-    let unloadedRows: number;
-    let baseline: TerminalReplicaSnapshot | null = null;
-    if (baselineFull && baselineRecord!.update.incarnation === target.update.incarnation) {
-      const trim = historyTrim(baselineFull.history, full.history);
-      unloadedRows = Math.min(Math.max(0, client.historyUnloadedRows - trim), full.history.length);
-      baseline =
-        client.historyUnloadedRows === 0
-          ? baselineFull
-          : { ...baselineFull, history: baselineFull.history.slice(client.historyUnloadedRows) };
-    } else {
-      const tail = full.modes.alternateScreen ? 0 : TERMINAL_DELIVERY_HISTORY_TAIL_ROWS;
-      unloadedRows = Math.max(
+    const tail = full.modes.alternateScreen ? 0 : TERMINAL_DELIVERY_HISTORY_TAIL_ROWS;
+    const loadedDepth = () =>
+      Math.max(
         0,
         full.history.length -
           Math.max(tail, client.baselineRevision >= 0 ? client.historyLoadedRows : 0),
       );
+    let unloadedRows: number;
+    let unloaded: TerminalDeliveryHistoryCommitment | null = null;
+    let baseline: TerminalReplicaSnapshot | null = null;
+    if (baselineFull && baselineRecord!.update.incarnation === target.update.incarnation) {
+      baseline =
+        client.historyUnloadedRows === 0
+          ? baselineFull
+          : { ...baselineFull, history: baselineFull.history.slice(client.historyUnloadedRows) };
+      // A trim takes unloaded rows first. The rows still unloaded must be the
+      // same row objects, so their commitment updates in O(trim).
+      const trim = historyTrim(baselineFull.history, full.history);
+      const kept = Math.max(0, client.historyUnloadedRows - trim);
+      let same = kept <= full.history.length;
+      for (let index = 0; same && index < kept; index++)
+        if (baselineFull.history[trim + index] !== full.history[index]) same = false;
+      if (same) {
+        unloadedRows = kept;
+        const before = { rows: client.historyUnloadedRows, digest: client.historyUnloadedDigest };
+        unloaded =
+          trim === 0
+            ? before
+            : dropTerminalHistoryCommitmentPrefix(
+                before,
+                baselineFull.history.slice(0, Math.min(trim, client.historyUnloadedRows)),
+              );
+      } else {
+        // Not a proved trim (a reflow, a clear): a seed that keeps the depth
+        // the client held. A patch could not grow the unloaded rows.
+        unloadedRows = loadedDepth();
+        baseline = null;
+      }
+    } else {
+      unloadedRows = loadedDepth();
     }
     const partial =
       unloadedRows === 0 ? full : { ...full, history: full.history.slice(unloadedRows) };
@@ -2106,14 +2147,19 @@ export class SessionRuntimeTerminalDeliveryHub {
       bytes = encode(semanticSeed(view));
     }
     if (frame === "seed") this.#reseeds += client.reseedRequired ? 1 : 0;
+    const commitment = unloaded ?? terminalHistoryPrefixCommitment(full.history, unloadedRows);
     return {
       bytes,
       encoding: client.negotiated.encoding as "semantic-compact-v1" | "semantic-binary-v1",
       frame,
       canonicalEquivalent: true,
       history: "partial",
-      historyUnloaded: terminalHistoryPrefixCommitment(full.history, unloadedRows),
-      historyRows: { unloaded: unloadedRows, loaded: full.history.length - unloadedRows },
+      historyUnloaded: commitment,
+      historyRows: {
+        unloaded: unloadedRows,
+        digest: commitment.digest,
+        loaded: full.history.length - unloadedRows,
+      },
     };
   }
 
@@ -2146,7 +2192,11 @@ export class SessionRuntimeTerminalDeliveryHub {
       !client.reseedRequired &&
       (client.latestRevision === null ||
         client.latestRevision === client.baselineRevision ||
-        client.revisionSinceHistoryRequest)
+        client.revisionSinceHistoryRequest) &&
+      // Live output of another pane held by the connection's budget goes first.
+      ![...this.#clients.values()].some(
+        (other) => other !== client && other.clientId === client.clientId && other.budgetHeld,
+      )
     );
   }
 
@@ -2160,18 +2210,41 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#schedule(client);
       return;
     }
-    // Bound one frame's synchronous encoding by cells as well as rows.
-    const maxRows = Math.max(
-      1,
-      Math.min(asked, Math.floor(HISTORY_FRAME_MAX_CELLS / Math.max(1, full.cols))),
-    );
-    const chunk = takeTerminalHistoryChunk(full.history, client.historyUnloadedRows, maxRows);
+    const encoding = client.negotiated.encoding as "semantic-compact-v1" | "semantic-binary-v1";
+    const unloadedRows = client.historyUnloadedRows;
     try {
-      const encoding = client.negotiated.encoding as "semantic-compact-v1" | "semantic-binary-v1";
-      const bytes = encodeSemanticTerminalHistory(
-        { frame: "history", revision: record.update.revision, rows: [...chunk.rows] },
+      // Bound the frame by its encoded bytes: start from at most one byte per
+      // cell's worth of rows and shrink until it fits.
+      let count = Math.max(
+        1,
+        Math.min(asked, unloadedRows, Math.floor(HISTORY_FRAME_MAX_BYTES / Math.max(1, full.cols))),
+      );
+      let rows = full.history.slice(unloadedRows - count, unloadedRows);
+      let bytes = encodeSemanticTerminalHistory(
+        { frame: "history", revision: record.update.revision, rows },
         encoding,
       );
+      while (bytes.byteLength > HISTORY_FRAME_MAX_BYTES && count > 1) {
+        count = Math.max(
+          1,
+          Math.min(
+            count - 1,
+            Math.floor((count * HISTORY_FRAME_MAX_BYTES * 0.9) / bytes.byteLength),
+          ),
+        );
+        rows = full.history.slice(unloadedRows - count, unloadedRows);
+        bytes = encodeSemanticTerminalHistory(
+          { frame: "history", revision: record.update.revision, rows },
+          encoding,
+        );
+      }
+      const chunk = {
+        rows,
+        unloaded: popTerminalHistoryCommitmentSuffix(
+          { rows: unloadedRows, digest: client.historyUnloadedDigest },
+          rows,
+        ),
+      };
       const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
         type: "terminal.delivery",
         workspaceName: client.deliveryWorkspaceName,
@@ -2201,6 +2274,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         projection: null,
         historyRows: {
           unloaded: chunk.unloaded.rows,
+          digest: chunk.unloaded.digest,
           loaded: full.history.length - chunk.unloaded.rows,
         },
         deliveryOrdinal,

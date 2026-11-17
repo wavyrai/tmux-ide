@@ -205,6 +205,93 @@ describe("one connection's unacknowledged delivery bytes", () => {
     }
   });
 
+  it("never holds another pane's live output behind an unacknowledged history frame (review of #435)", async () => {
+    const owners = new Map([
+      ["pane-a", new Owner("pane-a")],
+      ["pane-b", new Owner("pane-b")],
+    ]);
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "w",
+      (pane) => owners.get(pane)!,
+      {
+        connectionHoldMs: 60_000,
+        connectionCongestedMs: 0,
+      },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const sink = (m: TerminalDeliveryServerMessage) => {
+      messages.push(m);
+    };
+    const offer = {
+      protocolVersions: [1, 122],
+      encodings: ["semantic-compact-v1" as const],
+      richPlacements: false,
+    };
+    const a = await hub.open("client", "pane-a", offer, sink);
+    const b = await hub.open("client", "pane-b", offer, sink);
+    const dense = (pane: string, rows: number, revision: number) => {
+      const snapshot = structuredClone(blankTerminalReplicaSnapshot(80, 24));
+      let k = 0;
+      snapshot.history = Array.from({ length: rows }, () => {
+        const row = structuredClone(snapshot.grid[0]!);
+        for (const cell of row.cells)
+          cell.grapheme = String.fromCharCode(0x21 + ((k++ * 7919) % 90));
+        return row;
+      });
+      owners.get(pane)!.listener!({
+        type: "terminal.seed",
+        workspaceName: "w",
+        semanticPaneId: pane,
+        generation,
+        incarnation: `${generation}:0`,
+        revision,
+        cols: 80,
+        rows: 24,
+        snapshot,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        hashAlgorithm: "fnv1a64-v1",
+      });
+    };
+    const last = (pane: string) =>
+      messages.findLast(
+        (m): m is TerminalDeliveryEnvelope =>
+          m.type === "terminal.delivery" && m.semanticPaneId === pane,
+      )!;
+    const ackLast = (connection: typeof a, pane: string) =>
+      connection.ack(ackFor(connection, pane, messages.slice(messages.indexOf(last(pane)))));
+    try {
+      dense("pane-a", 100, 0);
+      dense("pane-b", 5000, 0);
+      await vi.waitFor(() => expect(last("pane-a")).toBeDefined(), { timeout: 10_000 });
+      ackLast(a, "pane-a");
+      await vi.waitFor(() => expect(last("pane-b")).toBeDefined(), { timeout: 10_000 });
+      ackLast(b, "pane-b");
+      const seed = last("pane-b");
+      b.historyRequest!({
+        type: "terminal.delivery.history-request",
+        workspaceName: "w",
+        semanticPaneId: "pane-b",
+        generation,
+        incarnation: seed.incarnation,
+        deliveryNonce: seed.deliveryNonce,
+        canonicalRevision: 0,
+        unloadedRows: seed.historyUnloaded!.rows,
+        maxRows: 2000,
+      });
+      await vi.waitFor(() => expect(last("pane-b").frame).toBe("history"), { timeout: 10_000 });
+      // The history frame is unacknowledged; pane-a's live output still goes out.
+      dense("pane-a", 101, 1);
+      await quiet();
+      expect(last("pane-b").frame).toBe("history");
+      expect(last("pane-a").canonicalRevision).toBe(1);
+    } finally {
+      await a.close();
+      await b.close();
+      await hub.close();
+    }
+  });
+
   it("never holds the pane the client types into", async () => {
     const { owners, hub, messages, a, b } = await setup();
     try {

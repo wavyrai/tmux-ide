@@ -117,12 +117,24 @@ export type TerminalDeliveryNegotiationResult = z.infer<
   typeof TerminalDeliveryNegotiationResultSchemaZ
 >;
 
+/** The rows digest of no rows. */
+export const TERMINAL_HISTORY_EMPTY_DIGEST = "0000000000000000";
+
+/**
+ * Pinned at `rows: 0` to the digest of no rows: with that anchor, each history
+ * chunk's chain check is an induction proof (review of #435). Without it a
+ * forged chain of chunks could end in any digest and still match the hash.
+ */
 export const TerminalDeliveryHistoryCommitmentSchemaZ = z
   .object({
     rows: z.number().int().nonnegative().max(1_000_000),
     digest: z.string().regex(/^[0-9a-f]{16}$/u),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) => value.rows > 0 || value.digest === TERMINAL_HISTORY_EMPTY_DIGEST,
+    "an empty commitment has the empty digest",
+  );
 export type TerminalDeliveryHistoryCommitment = z.infer<
   typeof TerminalDeliveryHistoryCommitmentSchemaZ
 >;

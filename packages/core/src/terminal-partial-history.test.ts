@@ -2,7 +2,10 @@
 // commitment to the older rows verifies against the full canonical state hash,
 // and loading every chunk gives exactly the snapshot a fresh full seed gives.
 import { describe, expect, it } from "vitest";
-import type { TerminalReplicaSnapshot } from "@tmux-ide/contracts";
+import {
+  TerminalDeliveryHistoryCommitmentSchemaZ,
+  type TerminalReplicaSnapshot,
+} from "@tmux-ide/contracts";
 import {
   blankTerminalReplicaSnapshot,
   decodeBinarySemanticTerminalUpdate,
@@ -15,6 +18,8 @@ import {
 } from "./index.ts";
 import {
   concatTerminalHistoryDigest,
+  dropTerminalHistoryCommitmentPrefix,
+  popTerminalHistoryCommitmentSuffix,
   hashPartialTerminalReplicaSnapshot,
   prependVerifiedTerminalHistory,
   splitTerminalHistory,
@@ -166,4 +171,88 @@ describe("partial terminal history", () => {
       expect(() => encodeSemanticTerminalHistory({ ...payload, rows: [] }, encoding)).toThrow();
     },
   );
+
+  // Review of #435 (review-435): P is odd, so any wrong rows R have a "next"
+  // digest that chains to the current one. Only pinning the last commitment
+  // ({rows: 0} is H of no rows) makes the per-chunk check an induction proof.
+  it("refuses a forged chunk chain that ends in a nonzero empty commitment", () => {
+    const M = 1n << 64n;
+    const P = 0x100000001b3n;
+    const inverse = (a: bigint) => {
+      let x = a;
+      for (let i = 0; i < 6; i++) x = (x * (2n - a * x)) % M;
+      return ((x % M) + M) % M;
+    };
+    const hex = (v: bigint) => (((v % M) + M) % M).toString(16).padStart(16, "0");
+    const full = structuredClone(blankTerminalReplicaSnapshot(4, 2));
+    full.history = [row(4, "a"), row(4, "b"), row(4, "c")];
+    const { snapshot, unloaded } = splitTerminalHistory(full, 1);
+    const x = row(4, "X");
+    const y = row(4, "Y");
+    const n =
+      ((BigInt(`0x${unloaded.digest}`) - BigInt(`0x${hashTerminalReplicaRows([x])}`)) *
+        inverse(P)) %
+      M;
+    const middle = { rows: 1, digest: hex(n) };
+    const forged = prependVerifiedTerminalHistory(snapshot, unloaded, [x], middle);
+    const last = {
+      rows: 0,
+      digest: hex(((n - BigInt(`0x${hashTerminalReplicaRows([y])}`)) * inverse(P)) % M),
+    };
+    expect(last.digest).not.toBe("0000000000000000");
+    expect(() => prependVerifiedTerminalHistory(forged, middle, [y], last)).toThrow(
+      /history chunk/u,
+    );
+    // The same pin on the wire.
+    expect(TerminalDeliveryHistoryCommitmentSchemaZ.safeParse(last).success).toBe(false);
+    expect(
+      TerminalDeliveryHistoryCommitmentSchemaZ.safeParse({ rows: 0, digest: "0000000000000000" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("refuses a chunk whose rows do not account for the unloaded rows it consumes", () => {
+    const full = structuredClone(blankTerminalReplicaSnapshot(4, 2));
+    full.history = Array.from({ length: 6 }, () => row(4, "h"));
+    const { snapshot, unloaded } = splitTerminalHistory(full, 2);
+    const chunk = takeTerminalHistoryChunk(full.history, unloaded.rows, 2);
+    // Right rows and digest, but the commitment claims one row fewer remains.
+    expect(() =>
+      prependVerifiedTerminalHistory(snapshot, unloaded, chunk.rows, {
+        ...chunk.unloaded,
+        rows: chunk.unloaded.rows - 1,
+      }),
+    ).toThrow(/history chunk/u);
+  });
+
+  it("updates a commitment in O(trim): dropping its oldest rows or its newest chunk", () => {
+    const history = Array.from({ length: 300 }, (_, index) => row(5, `d${index % 10}`));
+    for (const unloaded of [0, 1, 150, 300])
+      for (const dropped of [0, 1, 37, unloaded]) {
+        if (dropped > unloaded) continue;
+        const before = terminalHistoryPrefixCommitment(history, unloaded);
+        expect(dropTerminalHistoryCommitmentPrefix(before, history.slice(0, dropped))).toEqual(
+          terminalHistoryPrefixCommitment(history.slice(dropped), unloaded - dropped),
+        );
+        expect(
+          popTerminalHistoryCommitmentSuffix(before, history.slice(unloaded - dropped, unloaded)),
+        ).toEqual(terminalHistoryPrefixCommitment(history, unloaded - dropped));
+      }
+  });
+
+  it("refuses a compact history payload with extra or reordered keys", () => {
+    const payload = { frame: "history" as const, revision: 3, rows: [row(5, "k")] };
+    const wire = JSON.parse(
+      new TextDecoder().decode(encodeSemanticTerminalHistory(payload, "semantic-compact-v1")),
+    ) as Record<string, unknown>;
+    const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+    expect(decodeSemanticTerminalHistory(encode(wire), "semantic-compact-v1")).toEqual(payload);
+    expect(() =>
+      decodeSemanticTerminalHistory(encode({ ...wire, x: 1 }), "semantic-compact-v1"),
+    ).toThrow();
+    const { f, h, k, r, v } = wire;
+    expect(() =>
+      decodeSemanticTerminalHistory(encode({ h, f, k, r, v }), "semantic-compact-v1"),
+    ).toThrow();
+  });
 });

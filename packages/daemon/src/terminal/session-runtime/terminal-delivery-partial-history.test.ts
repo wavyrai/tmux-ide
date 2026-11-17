@@ -20,7 +20,9 @@ import {
   TerminalDeliveryAssembler,
 } from "@tmux-ide/core";
 import {
+  HISTORY_FRAME_MAX_BYTES,
   SessionRuntimeTerminalDeliveryHub,
+  TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
   type TerminalDeliverySourceOwner,
 } from "./terminal-delivery-hub.ts";
 
@@ -371,6 +373,91 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     expect(partial.state.appliedHash).toBe(hashTerminalReplicaSnapshot(src.cur));
     await hub.close();
   });
+
+  it("reseeds a reflowed history at the depth the client held (review of #435)", async () => {
+    const owner = new Owner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner);
+    const partial = await client(hub, "partial");
+    const src = source(owner);
+    await settle();
+    src.seed(withHistory(src, 1500));
+    await converge([partial]);
+    partial.requestHistory(700);
+    await converge([partial]);
+    expect(partial.state.historyUnloaded!.rows).toBe(600);
+    // A resize reflows every row: the same incarnation, new row objects, more rows.
+    src.seed(withHistory(src, 2400));
+    await converge([partial]);
+    const last = partial.envelopes.at(-1)!;
+    expect(last.frame).toBe("seed");
+    expect(last.historyUnloaded!.rows).toBe(1500);
+    expect(partial.messages.some((m) => m.type === "terminal.delivery.fault")).toBe(false);
+    expect(partial.state.appliedHash).toBe(hashTerminalReplicaSnapshot(src.cur));
+    await hub.close();
+  });
+
+  it("faults a history request that names another pane, serving nothing", async () => {
+    const owner = new Owner();
+    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner);
+    const partial = await client(hub, "partial");
+    const src = source(owner);
+    await settle();
+    src.seed(withHistory(src, 3000));
+    await converge([partial]);
+    const s = partial.state;
+    partial.c.historyRequest!({
+      type: "terminal.delivery.history-request",
+      workspaceName: "w",
+      semanticPaneId: "other",
+      generation,
+      incarnation: s.incarnation!,
+      deliveryNonce: partial.c.negotiation.accepted
+        ? partial.c.negotiation.negotiated.deliveryNonce
+        : "",
+      canonicalRevision: s.appliedRevision,
+      unloadedRows: s.historyUnloaded!.rows,
+      maxRows: 10,
+    });
+    await converge([partial]);
+    expect(partial.messages.some((m) => m.type === "terminal.delivery.fault")).toBe(true);
+    expect(partial.historyRows).toEqual([]);
+    await hub.close();
+  });
+
+  it(
+    "keeps every history frame well under the connection's byte budget",
+    { timeout: 120_000 },
+    async () => {
+      const owner = new Owner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner);
+      const partial = await client(hub, "partial");
+      const src = source(owner);
+      await settle();
+      // Dense 80-column rows: the cell count alone would allow a frame of megabytes.
+      const snap: Snap = structuredClone(blankTerminalReplicaSnapshot(80, 24));
+      let k = 0;
+      snap.history = Array.from({ length: 5000 }, () => {
+        const r = structuredClone(snap.grid[0]!);
+        for (const cell of r.cells) cell.grapheme = String.fromCharCode(0x21 + ((k++ * 7919) % 90));
+        return r;
+      });
+      src.seed(snap);
+      await converge([partial]);
+      while (partial.state.historyUnloaded!.rows > 0) {
+        partial.requestHistory(2000);
+        await converge([partial]);
+      }
+      const frames = partial.envelopes.filter((e) => e.frame === "history");
+      expect(frames.length).toBeGreaterThan(1);
+      for (const frame of frames)
+        expect(frame.representationBytes).toBeLessThanOrEqual(HISTORY_FRAME_MAX_BYTES);
+      expect(HISTORY_FRAME_MAX_BYTES).toBeLessThanOrEqual(
+        TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES / 2,
+      );
+      expect(partial.state.canonicalSnapshot).toEqual(src.cur);
+      await hub.close();
+    },
+  );
 
   it("refuses a history request from a client without the capability", async () => {
     const owner = new Owner();

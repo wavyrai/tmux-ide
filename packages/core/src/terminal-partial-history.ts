@@ -1,10 +1,13 @@
-import type {
-  TerminalDeliveryHistoryCommitment,
-  TerminalReplicaRow,
-  TerminalReplicaSnapshot,
+import {
+  TERMINAL_HISTORY_EMPTY_DIGEST,
+  type TerminalDeliveryHistoryCommitment,
+  type TerminalReplicaRow,
+  type TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import {
   concatTerminalReplicaRowsDigest,
+  dropTerminalReplicaRowsDigestPrefix,
+  popTerminalReplicaRowsDigestSuffix,
   hashTerminalReplicaRows,
   hashTerminalReplicaSnapshotWithHistoryDigest,
 } from "./terminal-replica.ts";
@@ -25,18 +28,66 @@ export function concatTerminalHistoryDigest(
   return concatTerminalReplicaRowsDigest(prefixDigest, suffix);
 }
 
-/** The commitment to the oldest `unloadedRows` rows of a history. */
+/** Frozen histories are immutable: a prefix digest computed once is reused. */
+const PREFIX_COMMITMENTS = new WeakMap<
+  readonly TerminalReplicaRow[],
+  Map<number, TerminalDeliveryHistoryCommitment>
+>();
+
+/** The commitment to the oldest `unloadedRows` rows of a history (O(unloaded), cached). */
 export function terminalHistoryPrefixCommitment(
   history: readonly TerminalReplicaRow[],
   unloadedRows: number,
 ): TerminalDeliveryHistoryCommitment {
   if (!Number.isSafeInteger(unloadedRows) || unloadedRows < 0 || unloadedRows > history.length)
     throw new RangeError("Unloaded rows outside the history");
-  return Object.freeze({
+  const cache = Object.isFrozen(history) ? PREFIX_COMMITMENTS.get(history) : undefined;
+  const cached = cache?.get(unloadedRows);
+  if (cached) return cached;
+  const commitment = Object.freeze({
     rows: unloadedRows,
     digest: hashTerminalReplicaRows(
       unloadedRows === history.length ? history : history.slice(0, unloadedRows),
     ),
+  });
+  if (Object.isFrozen(history)) {
+    const entries = cache ?? new Map<number, TerminalDeliveryHistoryCommitment>();
+    if (entries.size >= 8) entries.delete(entries.keys().next().value!);
+    entries.set(unloadedRows, commitment);
+    PREFIX_COMMITMENTS.set(history, entries);
+  }
+  return commitment;
+}
+
+/** The commitment once its oldest rows `dropped` are trimmed away: O(|dropped|). */
+export function dropTerminalHistoryCommitmentPrefix(
+  commitment: TerminalDeliveryHistoryCommitment,
+  dropped: readonly TerminalReplicaRow[],
+): TerminalDeliveryHistoryCommitment {
+  if (dropped.length > commitment.rows) throw new RangeError("Dropped rows exceed the commitment");
+  const rows = commitment.rows - dropped.length;
+  return Object.freeze({
+    rows,
+    digest:
+      rows === 0
+        ? TERMINAL_HISTORY_EMPTY_DIGEST
+        : dropTerminalReplicaRowsDigestPrefix(commitment.digest, dropped, rows),
+  });
+}
+
+/** The commitment once its newest rows `taken` are sent as a chunk: O(|taken|). */
+export function popTerminalHistoryCommitmentSuffix(
+  commitment: TerminalDeliveryHistoryCommitment,
+  taken: readonly TerminalReplicaRow[],
+): TerminalDeliveryHistoryCommitment {
+  if (taken.length > commitment.rows) throw new RangeError("Taken rows exceed the commitment");
+  const rows = commitment.rows - taken.length;
+  return Object.freeze({
+    rows,
+    digest:
+      rows === 0
+        ? TERMINAL_HISTORY_EMPTY_DIGEST
+        : popTerminalReplicaRowsDigestSuffix(commitment.digest, taken),
   });
 }
 
@@ -92,6 +143,7 @@ export function prependVerifiedTerminalHistory(
 ): TerminalReplicaSnapshot {
   if (
     rows.length === 0 ||
+    (next.rows === 0 && next.digest !== TERMINAL_HISTORY_EMPTY_DIGEST) ||
     next.rows + rows.length !== unloaded.rows ||
     concatTerminalHistoryDigest(next.digest, rows) !== unloaded.digest
   )
