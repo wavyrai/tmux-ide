@@ -198,28 +198,30 @@ export function decodeWidgetMarkerLine(line: string): { id: string; args: unknow
  *
  * A row that the emulator marked wrapped is the continuation of the row above
  * it, so it is appended rather than started; that is what lets a marker longer
- * than the grid is wide survive being displayed at all. Trailing blank cells
- * are dropped per row, because the grid pads every row out to `cols` and those
- * pad cells are not content.
+ * than the grid is wide survive being displayed at all. The grid pads only the
+ * row a line ENDS on out to `cols`, so the pad cells are dropped from the
+ * assembled line — never from a row the next row continues, where a trailing
+ * space is content.
  */
 export function widgetLogicalLines(rows: readonly WidgetCellRow[]): string[] {
   const lines: string[] = [];
   for (const row of rows) {
-    let end = row.cells.length;
-    while (end > 0 && isBlankCell(row.cells[end - 1])) end -= 1;
     let text = "";
-    for (let index = 0; index < end; index += 1) text += row.cells[index] ?? "";
+    for (const cell of row.cells) text += cell ?? "";
     if (row.wrapped && lines.length > 0) {
       lines[lines.length - 1] += text;
     } else {
       lines.push(text);
     }
   }
-  return lines;
+  return lines.map(dropTrailingPadCells);
 }
 
-function isBlankCell(cell: string | undefined): boolean {
-  return cell === undefined || cell === "" || cell === " ";
+/** Drop the spaces a grid pads a finished line with. An empty cell adds nothing. */
+function dropTrailingPadCells(line: string): string {
+  let end = line.length;
+  while (end > 0 && line[end - 1] === " ") end -= 1;
+  return line.slice(0, end);
 }
 
 /**
@@ -254,10 +256,8 @@ export function detectWidgetMarkerFromReplicaRows(
 ): WidgetMarker | null {
   const lines: string[] = [];
   for (const row of rows) {
-    let end = row.cells.length;
-    while (end > 0 && isBlankCell(row.cells[end - 1]?.grapheme)) end -= 1;
     let text = "";
-    for (let index = 0; index < end; index += 1) text += row.cells[index]?.grapheme ?? "";
+    for (const cell of row.cells) text += cell?.grapheme ?? "";
     if (row.wrapped && lines.length > 0) lines[lines.length - 1] += text;
     else lines.push(text);
   }
