@@ -131,6 +131,29 @@ impl VerifiedConnection {
         }
         Ok(format!("{}/{path}", self.base))
     }
+    /// `get_resource` with its own bound, for a caller with a deadline.
+    pub(crate) fn get_resource_within(
+        &self,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ConnectionError> {
+        if timeout.is_zero() {
+            return Err(ConnectionError::Network(
+                io::Error::new(io::ErrorKind::TimedOut, "SSH request deadline expired").into(),
+            ));
+        }
+        let response = self
+            .agent
+            .get(self.endpoint(path)?)
+            .header("Authorization", self.descriptor.authorization())
+            .header("Cache-Control", "no-store")
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .call()
+            .map_err(ConnectionError::Network)?;
+        read_response(response)
+    }
     pub(crate) fn get_resource(&self, path: &str) -> Result<Vec<u8>, ConnectionError> {
         let response = self
             .agent

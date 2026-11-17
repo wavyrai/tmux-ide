@@ -26,6 +26,8 @@ pub enum TransportError {
     #[error("SSH connection deadline expired")]
     Timeout,
 }
+/// The whole of `RemoteTransport::proven`: identity read and request.
+pub(crate) const PROOF_LIMIT: Duration = Duration::from_millis(2500);
 /// Keep on the catalog worker, not a GPUI entity. Dropping the route closes its
 /// HTTP pool and asynchronously retires its tunnel. Remote processes stay alive.
 pub struct RemoteTransport {
@@ -167,6 +169,22 @@ impl RemoteTransport {
     pub fn retire(&self) {
         self.tunnel.retire();
     }
+    /// Whether the route still reaches the same daemon: its forward runs and a
+    /// request through it succeeds on an identity-proven connection, which a
+    /// restarted or replaced daemon (new instance and token) fails. A running
+    /// ssh alone proves nothing (review of 01c1de50).
+    ///
+    /// One bound for the whole proof (`PROOF_LIMIT`): the identity read of a
+    /// new connection and the request share it (review of dc0cbf7c).
+    pub(crate) fn proven(&self) -> bool {
+        let deadline = Instant::now() + PROOF_LIMIT;
+        self.tunnel.check().is_ok()
+            && self
+                .request_until(deadline, |connection, left| {
+                    connection.get_resource_within("api/v2/capabilities", left)
+                })
+                .is_ok()
+    }
     pub fn capabilities(&self, cancelled: &AtomicBool) -> Result<Vec<u8>, TransportError> {
         if cancelled.load(Ordering::Acquire) {
             return Err(TransportError::Cancelled);
@@ -181,6 +199,28 @@ impl RemoteTransport {
         &self,
         action: impl FnOnce(&VerifiedConnection) -> Result<Vec<u8>, ConnectionError>,
     ) -> Result<Vec<u8>, TransportError> {
+        self.request_with(
+            Duration::from_millis(2500),
+            |connection, _| action(connection),
+            None,
+        )
+    }
+    /// `request`, but a new connection's identity read and the action share
+    /// one deadline: the action gets what is left of it.
+    fn request_until(
+        &self,
+        deadline: Instant,
+        action: impl FnOnce(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
+    ) -> Result<Vec<u8>, TransportError> {
+        let left = deadline.saturating_duration_since(Instant::now());
+        self.request_with(left, action, Some(deadline))
+    }
+    fn request_with(
+        &self,
+        connect_timeout: Duration,
+        action: impl FnOnce(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
+        deadline: Option<Instant>,
+    ) -> Result<Vec<u8>, TransportError> {
         self.tunnel.check()?;
         let mut slot = self.connection.lock().map_err(|_| TunnelError::Worker)?;
         let connection = match slot.take() {
@@ -188,11 +228,14 @@ impl RemoteTransport {
             None => VerifiedConnection::connect_shared(
                 self.tunnel.port(),
                 self.descriptor.clone(),
-                Duration::from_millis(2500),
+                connect_timeout,
             )?,
         };
         self.tunnel.check()?;
-        let result = action(&connection);
+        let left = deadline.map_or(Duration::from_millis(2500), |deadline| {
+            deadline.saturating_duration_since(Instant::now())
+        });
+        let result = action(&connection, left);
         self.tunnel.check()?;
         // Never replay a failed request. A later explicit operation may establish
         // a new identity-proven connection, while retaining this tunnel generation.
