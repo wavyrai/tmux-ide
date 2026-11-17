@@ -869,3 +869,6 @@ mod tests;
 #[cfg(test)]
 #[path = "browser_native_local_topology_live_tests.rs"]
 mod topology_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_window_live_tests.rs"]
+mod window_live_tests;
