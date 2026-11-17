@@ -698,9 +698,12 @@ fn a_partial_history_asks_for_older_rows_near_its_oldest_loaded_row() {
 fn a_full_scrollback_asks_for_no_older_rows() {
     use herdr_client::tmux_delivery::{DeferredHistory, History, PartialHistory};
     use herdr_client::tmux_history::{Scope, Scroll};
-    let wide = json!([0, [[2048, "x", 1, [2, 16_777_215], [2, 16_777_215], 255]]]);
-    let value = json!({"v":1,"k":"terminal-semantic-compact","f":"s","r":0,"s":[2048,2,[wide,wide],
-        vec![wide; 30],[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]});
+    // 20 screen rows and 40 wide history rows: the view at the top of the
+    // scrollback is within a screen of the oldest loaded row, so only the
+    // byte bound keeps it from asking.
+    let wide = json!([0, [[1024, "x", 1, [2, 16_777_215], [2, 16_777_215], 255]]]);
+    let value = json!({"v":1,"k":"terminal-semantic-compact","f":"s","r":0,"s":[1024,20,vec![wide.clone(); 20],
+        vec![wide; 40],[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]});
     let Update::Seed { mut snapshot, .. } =
         decode_compact(&serde_json::to_vec(&value).unwrap()).unwrap()
     else {
