@@ -14,6 +14,7 @@ fn selection() -> TerminalSelection {
         selected_pane: "pane.first".into(),
         visible_panes: vec!["pane.first".into(), "pane.second".into()],
         mode: ViewerMode::Interactive,
+        window: None,
     }
 }
 fn descriptor(request: &str) -> serde_json::Value {
@@ -294,4 +295,46 @@ fn the_browser_kind_is_offered_only_to_a_daemon_that_knows_it() {
         ),
         [1, 101, 114, 120, 103, 104, 116, 105, 106, 123]
     );
+}
+
+/// #806: a window-scoped selection names its window only to a daemon that
+/// knows window-scoped streams; a released daemon would refuse the field, so
+/// the selection fails here instead. A whole-session selection is unchanged.
+#[test]
+fn window_selection_is_sent_only_to_a_daemon_that_knows_it() {
+    let body = |selection: &TerminalSelection, version: Option<&str>| {
+        issue_body("request", "generation", selection, &[118], version)
+            .map(|body| serde_json::from_str::<serde_json::Value>(&body).unwrap())
+    };
+    let mut windowed = selection();
+    windowed.window = Some("window.two".into());
+    for knowing in ["2.9.26", "2.10.0", "3.0.0"] {
+        let sent = body(&windowed, Some(knowing)).unwrap();
+        assert_eq!(
+            sent["stream"]["semanticWindowId"], "window.two",
+            "{knowing}"
+        );
+        assert_eq!(
+            sent["stream"]["panes"],
+            serde_json::json!(["pane.first", "pane.second"])
+        );
+    }
+    for older in [Some("2.9.25"), Some("2.9.26-rc.1"), Some("bad"), None] {
+        assert!(body(&windowed, older).is_err(), "{older:?}");
+    }
+    for any in [Some("2.9.24"), Some("2.9.26"), None] {
+        let sent = body(&selection(), any).unwrap();
+        assert!(sent["stream"].get("semanticWindowId").is_none(), "{any:?}");
+    }
+}
+#[test]
+fn an_invalid_window_id_cannot_reach_the_owner() {
+    for window in ["", "@1", "constructor", "terminal.discovered.fake", "w:1"] {
+        let mut s = selection();
+        s.window = Some(window.into());
+        assert!(s.validate().is_err(), "{window:?}");
+    }
+    let mut s = selection();
+    s.window = Some("window.two".into());
+    assert!(s.validate().is_ok());
 }

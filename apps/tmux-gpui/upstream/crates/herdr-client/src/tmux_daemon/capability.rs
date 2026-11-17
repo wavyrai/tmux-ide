@@ -14,6 +14,10 @@ pub struct TerminalSelection {
     pub selected_pane: String,
     pub visible_panes: Vec<String>,
     pub mode: ViewerMode,
+    /// #806: the one tmux window this stream is for (`visible_panes` are
+    /// exactly its panes); `None` for the whole session, as before. Sent only
+    /// to a daemon that knows window-scoped streams (`window_streams`).
+    pub window: Option<String>,
 }
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -111,6 +115,33 @@ fn with_browser_kind(
 fn knows_topology_bundle(product_version: Option<&str>) -> bool {
     release_at_least(product_version, TOPOLOGY_BUNDLE_SINCE)
 }
+/// Whether a daemon of this product version knows window-scoped streams
+/// (#806): the issue request's `semanticWindowId`, inventory version 2 and
+/// sessions version 3. A released daemon refuses the unknown issue field.
+pub(super) fn knows_window_streams(product_version: Option<&str>) -> bool {
+    release_at_least(product_version, WINDOW_STREAMS_SINCE)
+}
+/// The issue request. A window-scoped selection (#806) names its window, and
+/// only to a daemon that knows the field: a released daemon refuses unknown
+/// stream fields, so an older one gets no window selection at all.
+fn issue_body(
+    request_id: &str,
+    generation: &str,
+    selection: &TerminalSelection,
+    versions: &[u32],
+    daemon_version: Option<&str>,
+) -> Result<String, Error> {
+    let mut body = serde_json::json!({"requestId":request_id,"expectedDaemonInstanceId":generation,
+        "stream":{"protocolVersion":2,"workspaceName":selection.workspace_name,"panes":selection.visible_panes,"viewerMode":selection.mode,
+        "terminalDelivery":{"protocolVersions":versions,"encodings":["semantic-compact-v1"],"richPlacements":true}}});
+    if let Some(window) = &selection.window {
+        if !knows_window_streams(daemon_version) {
+            return Err(Error::TerminalSelection);
+        }
+        body["stream"]["semanticWindowId"] = window.as_str().into();
+    }
+    Ok(body.to_string())
+}
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
     let Some(version) = product_version else {
@@ -147,6 +178,9 @@ const BROWSER_KIND_SINCE: [u64; 3] = [2, 9, 26];
 /// The bound a daemon of 2.9.26 or later puts on an offer (#433). The same
 /// constant as on the partial-history branch (#122); keep one at merge.
 const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
+/// The first daemon release with window-scoped streams (#806). Not yet set
+/// by a release: the PM confirms it when the daemon side ships.
+const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;
@@ -191,11 +225,7 @@ impl ServerClient {
     ) -> Result<Handoff, Error> {
         self.assert_current()?;
         selection.validate()?;
-        let daemon_version = match &self.daemon {
-            super::owner::Owner::Local(local) => Some(local.product_version().to_owned()),
-            #[cfg(unix)]
-            super::owner::Owner::Remote(_) => None,
-        };
+        let daemon_version = self.product_version();
         let (origin, local_images, remote): (_, _, Option<(u16, crate::tmux_ssh::PeerIdentity)>) =
             match &self.daemon {
                 super::owner::Owner::Local(local) => (
@@ -234,9 +264,13 @@ impl ServerClient {
             knows_topology_bundle(daemon_version.as_deref()),
         );
         let versions = with_browser_kind(versions, graphics, daemon_version.as_deref());
-        let body=serde_json::json!({"requestId":request_id,"expectedDaemonInstanceId":scope.generation,
-            "stream":{"protocolVersion":2,"workspaceName":selection.workspace_name,"panes":selection.visible_panes,"viewerMode":selection.mode,
-            "terminalDelivery":{"protocolVersions":versions,"encodings":["semantic-compact-v1"],"richPlacements":true}}}).to_string();
+        let body = issue_body(
+            &request_id,
+            &scope.generation,
+            selection,
+            &versions,
+            daemon_version.as_deref(),
+        )?;
         let path = format!(
             "api/v1/tmux-servers/{}/{}/pane-streams/issue?liveSessionId={}",
             scope.server_id, scope.generation, selection.live_session_id
@@ -301,6 +335,10 @@ impl TerminalSelection {
                 .iter()
                 .enumerate()
                 .any(|(i, v)| !valid_pane(v) || self.visible_panes[..i].contains(v))
+            || self
+                .window
+                .as_ref()
+                .is_some_and(|window| !crate::tmux_topology::valid_identity(window))
             || live.is_none_or(|v| {
                 v.len() != 20
                     || !v

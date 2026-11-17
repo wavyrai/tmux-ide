@@ -143,6 +143,7 @@ fn parse(bytes: &[u8], scope: &ServerScope) -> Result<NativeSurfaceContext, Erro
             selected_pane: context.pane.clone(),
             visible_panes: vec![context.pane],
             mode: ViewerMode::ReadOnly,
+            window: None,
         },
     })
 }

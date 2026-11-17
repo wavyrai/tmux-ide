@@ -1,0 +1,95 @@
+---
+title: tmux-ide 2.9.26
+metaTitle: "What's new in 2.9.26"
+description: "Typing next to busy panes over SSH is several times faster, large sessions open one window at a time, and the installer's prune keeps releases in use."
+---
+
+`2.9.26` is a CLI/daemon release that makes typing next to busy panes faster,
+most of all over SSH. It also lets a client open a stream for one window of a
+session, and its installer keeps releases that a running process uses. It adds
+no commands. Native Mac alpha 0.1.19 uses the window streams; older apps and
+the TUI work with it as before.
+
+## Typing next to busy panes is faster over SSH
+
+When other panes in the session were busy, keys typed over SSH could take a
+quarter of a second or more to show, and a burst of short commands well over a
+second. Three daemon changes remove most of that wait:
+
+- A pane at tmux's `history-limit` (2000 lines by default, where long agent
+  sessions sit) no longer sends its whole history again each time it pauses.
+  The daemon's copy of the pane now drops old lines the way tmux does, so it
+  stays equal to tmux and nothing has to be captured again.
+- A client that is behind on such a pane gets the change (old lines dropped,
+  new lines added) instead of the pane's whole history.
+- When busy panes have filled the connection, the pane you type into goes
+  first. Other panes wait at most 250 ms. On a fast link nothing waits.
+
+Measured on 17 Nov on one Mac: a test daemon with the tmux the app ships,
+reached through the Mac app's own SSH tunnel with a 5 ms round trip, typing
+into one pane while three others were busy. "Agents" means three panes printing
+20 lines a second with full history; "heavy" means three panes redrawing the
+whole screen 30 times a second. "5 ms + 50 Mbit" adds a 50 Mbit cap, like a
+busy Wi-Fi link. The left column is CLI/daemon 2.9.25 with Mac app 0.1.18; the
+right is main on 17 Nov, which has this release's daemon and the Mac app 0.1.19
+changes to how keys are sent, but not its trackpad and burst merging. Each
+value is the middle of 3 runs in milliseconds, from the key press until the key
+is in the app's picture of the screen, with the range across runs in brackets.
+
+| What you do                              | Busy panes | Link           | 2.9.25           | 2.9.26        |
+| ---------------------------------------- | ---------- | -------------- | ---------------- | ------------- |
+| Type one key                             | agents     | 5 ms           | 15 [14–233]      | 13 [12–13]    |
+| Type one key                             | heavy      | 5 ms           | 69 [61–123]      | 17 [17–18]    |
+| Type one key                             | heavy      | 5 ms + 50 Mbit | 303 [175–388]    | 20 [20–21]    |
+| Slowest 1 in 10 keys                     | heavy      | 5 ms + 50 Mbit | 512 [378–682]    | 35 [34–70]    |
+| Type a key every 60 ms                   | heavy      | 5 ms           | 111 [99–112]     | 15 [12–20]    |
+| 10 short commands (text + Enter) at once | agents     | 5 ms           | 590 [523–681]    | 110 [75–110]  |
+| 10 short commands (text + Enter) at once | heavy      | 5 ms + 50 Mbit | 1727 [1681–1996] | 142 [103–152] |
+
+The Mac was busy with other work during these runs, the same for both columns
+because the runs alternated. Painting adds at most one screen refresh on top.
+They were not run against a real remote machine or with a person typing in the
+app. The daemon on the machine that runs tmux does this work, so update remote
+machines too.
+
+## Large sessions open one window at a time
+
+A stream could only show a whole session, and the Mac app refuses a session of
+more than 24 panes. A client can now open a stream for one window of a session:
+the 24-pane limit then applies to that window. Panes of other windows never
+enter it. For a client that offers the in-place capability of 2.9.25, the
+stream follows its window when another tmux client splits, closes or moves a
+pane. Switching windows opens a new stream.
+
+Two read routes gain an opt-in version for this: the scoped inventory with
+`?version=2` lists each window and its panes, and the scoped sessions list with
+`?version=3` adds the pane count of each session's largest window. Without the
+query they answer as before.
+
+Mac app 0.1.19 uses this with a daemon of 2.9.26 or later on the same Mac. See
+the [native alpha](https://tmux-ide.com/docs/native-alpha) 0.1.19 notes.
+
+## More connection fixes
+
+- Right after another tmux client changed the panes of a session, the Mac app's
+  next stream could close with 1011 `stream-unavailable` because the daemon's
+  view of the session had not settled yet. In a soak this happened once in
+  each window. The daemon now tries again after 150 ms and 400 ms first.
+
+## Installer
+
+- An update could stop with "Eight retained releases reached" and advise you to
+  stop tmux-ide processes and prune. When your tmux server ran from an older
+  release, following that advice stopped the server. A release that a running
+  process uses no longer counts towards the eight, prune keeps it, and the
+  advice no longer says to stop anything. Prune now says, for example, "Removed
+  1 retired release; kept 1 in use by a running process".
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. A running older daemon
+restarts on 2.9.26 by itself; your tmux sessions keep running. Update remote
+machines too: the typing fixes are in the daemon on the machine that runs tmux.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).

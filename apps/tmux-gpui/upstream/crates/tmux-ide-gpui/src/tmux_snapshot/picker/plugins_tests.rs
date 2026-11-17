@@ -364,6 +364,7 @@ mod keyboard {
             label: label.into(),
             window_id: None,
             window_label: None,
+            largest_window: None,
             browser_icon: None,
             display_name_source: None,
         };
@@ -502,6 +503,7 @@ mod keyboard {
                     label: "demo".into(),
                     window_id: None,
                     window_label: None,
+                    largest_window: None,
                     browser_icon: None,
                     display_name_source: None,
                 }];

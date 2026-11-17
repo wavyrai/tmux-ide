@@ -27,6 +27,7 @@ fn state(axis: Axis) -> browser::State {
                 browser_icon: None,
                 display_name_source: None,
                 window_label: None,
+                largest_window: None,
             })
             .collect(),
         regions,
@@ -300,6 +301,7 @@ fn pane(id: &str, window: Option<&str>) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }
 }
 fn make_view(

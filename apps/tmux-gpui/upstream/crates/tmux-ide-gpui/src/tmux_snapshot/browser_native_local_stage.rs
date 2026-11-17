@@ -70,6 +70,8 @@ pub(super) enum Stage {
         workspace: String,
         panes: Vec<String>,
         selected: String,
+        /// #806: the one window `panes` are, for a session streamed by window.
+        window: Option<String>,
     },
 }
 impl Stage {
@@ -162,6 +164,7 @@ impl Stage {
                 workspace,
                 panes,
                 selected,
+                window,
             } => CatalogAction::Issue {
                 scope: target.scope.clone(),
                 selection: TerminalSelection {
@@ -170,6 +173,7 @@ impl Stage {
                     selected_pane: selected.clone(),
                     visible_panes: panes.clone(),
                     mode: ViewerMode::Interactive,
+                    window: window.clone(),
                 },
             },
         }

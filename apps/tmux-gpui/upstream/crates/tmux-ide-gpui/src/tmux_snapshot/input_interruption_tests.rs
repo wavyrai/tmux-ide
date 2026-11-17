@@ -248,7 +248,7 @@ fn dropped_drag_prefix_stays_interrupted_after_release_until_ready_click(cx: &mu
         view.browser_state.selected_session = Some("session".into());
         view.browser_state.resize_token = Some("312b2c16-a13d-4411-82e5-1fdb58adab92".into());
         view.browser_state.regions = serde_json::from_str(r#"[{"id":"pane-a","left":0,"top":0,"width":5,"height":9},{"id":"pane-b","left":6,"top":0,"width":5,"height":9}]"#).unwrap();
-        view.browser_state.panes = ["pane-a", "pane-b"].into_iter().map(|id| browser::Choice { id:id.into(), label:id.into(), pane_count:None, window_id:Some("window".into()), browser_icon: None, display_name_source: None, window_label:None }).collect();
+        view.browser_state.panes = ["pane-a", "pane-b"].into_iter().map(|id| browser::Choice { id:id.into(), label:id.into(), pane_count:None, window_id:Some("window".into()), browser_icon: None, display_name_source: None, window_label:None, largest_window: None }).collect();
         for offered in 0..3 {
             click(view, window, cx);
             assert!(!view.input_interrupted);
@@ -296,10 +296,14 @@ mod terminal_link_pointer_tests;
 
 #[path = "input_interruption_tests/reconnect_hold.rs"]
 mod reconnect_hold;
+#[path = "input_interruption_tests/reveal_hold.rs"]
+mod reveal_hold;
 #[path = "input_interruption_tests/split_hold.rs"]
 mod split_hold;
 #[path = "input_interruption_tests/uncertain_pointer.rs"]
 mod uncertain_pointer;
+#[path = "input_interruption_tests/window_switch_hold.rs"]
+mod window_switch_hold;
 
 #[path = "pointer_event_tests.rs"]
 mod pointer_event_tests;
@@ -352,6 +356,7 @@ fn native_browser_shortcuts_never_become_terminal_input(cx: &mut TestAppContext)
                     pane_count: None,
                     window_id: Some("window-a".into()),
                     window_label: None,
+                    largest_window: None,
                     browser_icon: None,
                     display_name_source: None,
                 })

@@ -470,6 +470,7 @@ fn group(
                 name: session.session_name.clone(),
                 pane_count: session.pane_count.into(),
                 window_count: session.window_count.map(u64::from),
+                largest_window: session.largest_window_pane_count.map(u64::from),
                 last_activity: session.last_activity,
                 favicon: session
                     .favicon

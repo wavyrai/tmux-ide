@@ -2,7 +2,8 @@
 //! here. Home stays live with the rest of its sessions and a notice that names
 //! the session and says what to do instead (#754 follow-up).
 use super::*;
-use crate::tmux_snapshot::browser::NATIVE_STREAM_MAX_PANES;
+use crate::tmux_snapshot::browser::{NATIVE_STREAM_MAX_PANES, too_many_panes};
+use herdr_client::tmux_daemon::InventoryWindow;
 
 impl Local {
     /// Refuses to open a session whose catalog pane count is already over the
@@ -13,24 +14,30 @@ impl Local {
         if self.state.surface != Surface::Home {
             return Ok(false);
         }
-        let Some((label, count)) = self.state.sessions.iter().find_map(|choice| {
-            let count = choice.pane_count.filter(|c| *c > NATIVE_STREAM_MAX_PANES)?;
-            (choice.id == key).then(|| (choice.label.clone(), count))
+        let Some((label, count, largest)) = self.state.sessions.iter().find_map(|choice| {
+            let count = choice
+                .pane_count
+                .filter(|c| too_many_panes(*c, choice.largest_window))?;
+            let largest = choice.largest_window.filter(|c| *c > 0);
+            (choice.id == key).then(|| (choice.label.clone(), count, largest))
         }) else {
             return Ok(false);
         };
         self.state.request = request;
-        self.state.home_notice = Some(self.too_many_panes(&label, count));
+        self.state.home_notice = Some(self.too_many_panes(&label, count, largest));
         self.publish()?;
         Ok(true)
     }
     /// Checks the panes an open returned. `None` lets the open continue. Over
     /// the limit, it goes back to a freshly loaded Home with the notice, the
     /// same as Refresh, so every other session stays usable.
+    /// `windows` are the session's windows when the daemon streams one window
+    /// (#806): `panes` are then over the limit only when no window fits.
     pub(super) fn pane_limit_exceeded(
         &mut self,
         target: &Target,
         panes: &[String],
+        windows: Option<&[InventoryWindow]>,
     ) -> Option<Result<(), Error>> {
         if panes.is_empty() {
             return Some(self.unavailable("Session exceeds the native stream pane limit"));
@@ -39,10 +46,13 @@ impl Local {
         if count <= NATIVE_STREAM_MAX_PANES {
             return None;
         }
+        let largest = windows
+            .and_then(|windows| windows.iter().map(|window| window.panes.len()).max())
+            .map(|largest| u64::try_from(largest).unwrap_or(u64::MAX));
         let label = (self.state.sessions.iter())
             .find(|choice| choice.id == target.live)
             .map_or_else(|| "This session".into(), |choice| choice.label.clone());
-        let notice = self.too_many_panes(&label, count);
+        let notice = self.too_many_panes(&label, count, largest);
         let request = self.state.request;
         Some(self.home(request).and_then(|()| {
             self.state.home_notice = Some(notice);
@@ -58,7 +68,7 @@ impl Local {
             self.state.home_notice = None;
         }
     }
-    fn too_many_panes(&self, label: &str, count: u64) -> String {
+    fn too_many_panes(&self, label: &str, count: u64, largest_window: Option<u64>) -> String {
         // No single command attaches reliably: a managed install's tmux is
         // bundled off PATH, and the session's server may not be on tmux's
         // default socket. So the notice names the machine, not a command.
@@ -67,6 +77,14 @@ impl Local {
         } else {
             format!("in a terminal on {}", self.machine_label)
         };
+        if let Some(largest) = largest_window {
+            return format!(
+                "The largest window of “{label}” has {largest} panes. This app opens \
+                 windows with up to {NATIVE_STREAM_MAX_PANES}. Close panes in that window \
+                 until it has {NATIVE_STREAM_MAX_PANES} or fewer, or attach to it with tmux \
+                 {place}."
+            );
+        }
         format!(
             "“{label}” has {count} panes. This app opens sessions with up to \
              {NATIVE_STREAM_MAX_PANES}. Close panes until it has {NATIVE_STREAM_MAX_PANES} \

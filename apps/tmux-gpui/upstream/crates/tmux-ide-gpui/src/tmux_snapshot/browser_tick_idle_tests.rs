@@ -584,6 +584,7 @@ fn a_settling_fit_with_a_full_queue_does_not_hang(cx: &mut TestAppContext) {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     };
     let workspace = browser::State {
         surface: browser::Surface::Workspace,

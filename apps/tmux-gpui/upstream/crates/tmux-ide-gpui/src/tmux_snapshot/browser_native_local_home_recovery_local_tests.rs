@@ -13,6 +13,7 @@ fn home_with_a_session() -> (Local, mpsc::Receiver<Incoming>) {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }];
     local.targets.insert(
         "session-a".into(),

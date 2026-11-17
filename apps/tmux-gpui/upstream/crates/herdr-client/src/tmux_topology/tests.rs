@@ -463,3 +463,44 @@ fn layout_panes_carry_the_browser_kind() {
         );
     }
 }
+
+/// #806: a window stream's layout shows every window of the session, and a
+/// session streamed by window can have more windows than one stream has
+/// panes. Up to the 256 window links, the snapshot stands.
+#[test]
+fn a_layout_snapshot_may_show_more_windows_than_a_stream_has_panes() {
+    let snapshot = |count: usize| {
+        let mut frame = frames()
+            .into_iter()
+            .find(|frame| frame["type"] == "layout-snapshot")
+            .unwrap();
+        let template = frame["layouts"][0].clone();
+        let mut layouts = Vec::new();
+        let mut links = Vec::new();
+        for index in 0..count {
+            let mut layout = template.clone();
+            layout["semanticWindowId"] = json!(format!("window-{index}"));
+            layout["currentWindow"] = json!(index == 0);
+            layout["panes"][0]["pane"] = json!(format!("left-{index}"));
+            layout["panes"][1]["pane"] = json!(format!("right-{index}"));
+            layouts.push(layout);
+            links.push(json!({
+                "linkId": format!("window-link.{index:0>32}"),
+                "semanticWindowId": format!("window-{index}"),
+                "displayIndex": index,
+            }));
+        }
+        frame["layouts"] = json!(layouts);
+        frame["windowLinks"]["activeLinkId"] = json!(format!("window-link.{:0>32}", 0));
+        frame["windowLinks"]["links"] = json!(links);
+        let mut state =
+            Topology::new(GENERATION.into(), vec!["left-0".into(), "right-0".into()]).unwrap();
+        state.apply_control(&to_raw_value(&frame).unwrap())
+    };
+    assert!(snapshot(30).is_ok());
+    assert!(snapshot(256).is_ok());
+    assert!(matches!(
+        snapshot(257),
+        Err(Error::Bounds | Error::Identity)
+    ));
+}

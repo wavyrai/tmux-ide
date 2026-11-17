@@ -12,6 +12,9 @@ fn fixture() -> (Route, Request) {
             live: format!("live-session.{}", "b".repeat(20)),
         },
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
+        window_panes: Vec::new(),
     };
     let request = Request {
         version: 1,
@@ -106,6 +109,7 @@ fn focus_and_pane_changes_cancel_editor_without_retiring_terminal() {
         targets: BTreeMap::new(),
         stage: None,
         submitted: false,
+        window_notice: None,
         active: Some(route),
         split: split::Reader::new(path.clone()).unwrap(),
         foreground: true,

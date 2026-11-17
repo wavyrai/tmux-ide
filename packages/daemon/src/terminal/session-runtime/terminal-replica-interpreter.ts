@@ -270,6 +270,7 @@ export class TerminalReplicaInterpreter {
       rows: options.rows,
       scrollback: this.#scrollback,
     });
+    this.#backend.startHistoryCollection?.();
     this.#kitty = new KittyImageStore(
       options.kittyImageBudget ? { budget: options.kittyImageBudget } : {},
     );
@@ -501,6 +502,7 @@ export class TerminalReplicaInterpreter {
         this.#admitRaw(chunk);
         this.#observeMarkerBytes(chunk);
       }
+      replacement.startHistoryCollection?.();
       const previous = this.#backend;
       this.#backend = replacement;
       this.#attachKitty(replacement);

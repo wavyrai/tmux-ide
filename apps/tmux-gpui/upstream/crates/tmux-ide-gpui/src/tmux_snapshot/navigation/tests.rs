@@ -14,6 +14,7 @@ fn pane(id: &str, window: Option<&str>) -> Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: Some("Same name".into()),
+        largest_window: None,
     }
 }
 

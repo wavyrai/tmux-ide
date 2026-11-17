@@ -42,6 +42,7 @@ fn pane(
         label: label.into(),
         window_id: None,
         window_label: None,
+        largest_window: None,
         browser_icon: None,
         display_name_source: source,
     }
