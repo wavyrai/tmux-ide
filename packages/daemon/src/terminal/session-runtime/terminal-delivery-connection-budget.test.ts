@@ -250,4 +250,57 @@ describe("one connection's unacknowledged delivery bytes", () => {
       await hub.close();
     }
   });
+
+  it("counts the bound from the first hold, across a release and a re-hold", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+    const owners = new Map(["pane-b", "pane-c", "pane-a"].map((p) => [p, new Owner(p)]));
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "w",
+      (pane) => owners.get(pane)!,
+      {
+        connectionHoldMs: TERMINAL_DELIVERY_CONNECTION_HOLD_MS,
+        connectionCongestedMs: 0,
+      },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const offer = { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false };
+    const sink = (m: TerminalDeliveryServerMessage) => {
+      messages.push(m);
+    };
+    // Fake time moves only when this test moves it.
+    const until = async (done: () => boolean) => {
+      for (let n = 0; n < 2000 && !done(); n++) await vi.advanceTimersByTimeAsync(1);
+      expect(done()).toBe(true);
+    };
+    // Opened in this order, so a release tries pane-c before pane-a.
+    const b = await hub.open("client", "pane-b", offer, sink);
+    const c = await hub.open("client", "pane-c", offer, sink);
+    const a = await hub.open("client", "pane-a", offer, sink);
+    try {
+      b.prioritize!();
+      owners.get("pane-b")!.emit(0, "b");
+      await until(() => deliveredPanes(messages).length === 1);
+      owners.get("pane-c")!.emit(0, "c");
+      owners.get("pane-a")!.emit(0, "a");
+      await vi.advanceTimersByTimeAsync(5);
+      const firstHold = Date.now();
+      await vi.advanceTimersByTimeAsync(95);
+      expect(deliveredPanes(messages)).toEqual(["pane-b"]);
+      // pane-b's ack releases both; pane-c goes first and its bulk holds
+      // pane-a again. That second hold must not restart pane-a's bound.
+      b.ack(ackFor(b, "pane-b", messages));
+      await until(() => deliveredPanes(messages).length >= 2);
+      expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-c"]);
+      await until(() => deliveredPanes(messages).length === 3);
+      expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-c", "pane-a"]);
+      expect(Date.now() - firstHold).toBeLessThanOrEqual(TERMINAL_DELIVERY_CONNECTION_HOLD_MS + 10);
+    } finally {
+      vi.useRealTimers();
+      await a.close();
+      await b.close();
+      await c.close();
+      await hub.close();
+    }
+  });
 });
