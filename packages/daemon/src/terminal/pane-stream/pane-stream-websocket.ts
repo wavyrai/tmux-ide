@@ -17,6 +17,7 @@ import {
   TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
   type TerminalProjectionReceipt,
   type TerminalProjectionMaterialize,
+  type TerminalDeliveryHistoryRequest,
 } from "@tmux-ide/contracts";
 import type { LocalImageOwner } from "../graphics/local-image-owner.ts";
 import {
@@ -421,6 +422,8 @@ export interface SessionRuntimeTerminalDeliveryConnection {
   ack(ack: TerminalDeliveryAck): void;
   projectionReceipt?(receipt: TerminalProjectionReceipt): void;
   materialize?(request: TerminalProjectionMaterialize): void;
+  /** Capability 122: older history rows for a client holding a partial history. */
+  historyRequest?(request: TerminalDeliveryHistoryRequest): void;
   nack(nack: TerminalDeliveryNack): void;
   setVisibility(visibility: TerminalDeliveryVisibility): void;
   /** The client typed into this pane: send its deliveries first. */
@@ -3300,6 +3303,18 @@ export class PaneStreamLiveConnection {
       if (!channel) return;
       if (!channel.delivery?.projectionReceipt) return this.#failProtocol("protocol-error");
       channel.delivery.projectionReceipt(frame.receipt);
+      return;
+    }
+    if (frame.type === "terminal-delivery-history-request") {
+      const channel = this.#deliveryChannel(frame.request);
+      if (!channel) return;
+      if (
+        !channel.delivery?.historyRequest ||
+        !channel.delivery.negotiation.accepted ||
+        channel.delivery.negotiation.negotiated.partialHistory !== "tail-v1"
+      )
+        return this.#failProtocol("protocol-error");
+      channel.delivery.historyRequest(frame.request);
       return;
     }
     if (frame.type === "terminal-projection-materialize") {
