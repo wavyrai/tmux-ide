@@ -1,8 +1,10 @@
 // Differential test written by review-393 for #430: the replica's history after
 // a byte stream must equal real tmux's after the same stream, size and every
-// row. tmux runs on a private -S socket in a fresh temporary directory. It is
-// the test any size-only history repair must pass before it lands: such a
-// repair once kept wrong rows after a clear at the limit.
+// row. tmux runs on a private -S socket in a fresh temporary directory.
+//
+// It drives the backend alone, so it says nothing about owner-side repairs.
+// #430's reverted size-only trim (option B) stays out unless an owner-level
+// test shows a real negative history gap under production conditions.
 //
 // The backend gets tmux's scroll-on-clear mode as the mirror reports it in
 // production (default on). Without it, xterm's own ED2 does not push the
