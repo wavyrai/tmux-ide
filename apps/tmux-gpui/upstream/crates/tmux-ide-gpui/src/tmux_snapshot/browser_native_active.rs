@@ -390,6 +390,8 @@ impl Active {
         // An inactive window never gets input authority, so there a live frame
         // alone says the stream is back (it ends a reconnect, not a visit).
         let input_ready = self.controller.input_ready();
+        let reveal_before = state.reveal_hold;
+        state.reveal_hold = self.controller.reveal_hold();
         let attachment_ready =
             (input_ready || !foreground) && state.frame.is_some() && !state.retained_preview;
         if attachment_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
@@ -442,6 +444,7 @@ impl Active {
             || graphics_changed
             || surfaces_changed
             || ready != state.input_ready
+            || reveal_before != state.reveal_hold
             || presence != state.presence_revision
             || match (prior.as_ref(), state.frame.as_ref()) {
                 (Some(a), Some(b)) => !a.same(b),

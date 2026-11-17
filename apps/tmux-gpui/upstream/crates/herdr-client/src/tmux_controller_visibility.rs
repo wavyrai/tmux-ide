@@ -116,6 +116,12 @@ impl Controller {
         revealing
     }
 
+    /// A window shown again is held for its panes' fresh state: input waits
+    /// for it, and keys typed meanwhile are held for the pane then selected.
+    pub fn reveal_hold(&self) -> bool {
+        !self.visibility.revealing.is_empty()
+    }
+
     /// The window was held for a reveal that has now settled: present again
     /// even with nothing else new.
     pub(super) fn reveal_settled(&mut self, now: u64) -> bool {
