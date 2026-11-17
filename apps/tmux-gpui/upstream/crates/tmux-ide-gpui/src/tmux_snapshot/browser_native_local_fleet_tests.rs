@@ -27,6 +27,7 @@ fn catalog(environment: &str, generation: &str, rows: usize) -> FleetCatalog {
                     window_count: None,
                     last_activity: None,
                     favicon: None,
+                    largest_window_pane_count: None,
                 })
                 .collect(),
         }],

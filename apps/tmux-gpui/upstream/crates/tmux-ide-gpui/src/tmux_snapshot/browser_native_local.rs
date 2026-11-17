@@ -21,6 +21,14 @@ struct Route {
     request: u64,
     target: Target,
     workspace: String,
+    /// #806: the window this stream is for, when the session is streamed by
+    /// window, and the notice to show once it is up.
+    window: Option<String>,
+    notice: Option<&'static str>,
+    /// #806: a window stream's own panes. `state.panes` then lists every
+    /// window's panes, so the others can be offered; this is what the stream
+    /// carries and what a rebind re-issues. Empty for a whole-session stream.
+    window_panes: Vec<String>,
 }
 #[path = "browser_native_local_agents.rs"]
 mod agents;
@@ -69,6 +77,8 @@ mod quiet;
 mod split;
 #[path = "browser_native_local_stage.rs"]
 mod stage;
+#[path = "browser_native_local_window.rs"]
+mod window;
 use stage::Stage;
 struct Local {
     machine_id: String,
@@ -82,6 +92,8 @@ struct Local {
     targets: BTreeMap<String, Target>,
     stage: Option<Stage>,
     submitted: bool,
+    /// #806: the notice for the window chosen at open, until its route.
+    window_notice: Option<&'static str>,
     active: Option<Route>,
     split: split::Reader,
     foreground: bool,
@@ -162,6 +174,7 @@ fn start_source(
         targets: BTreeMap::new(),
         stage: Some(Stage::Servers),
         submitted: false,
+        window_notice: None,
         active: None,
         split,
         foreground: true,
@@ -242,6 +255,7 @@ impl Local {
                     .filter(|_| state.surface == Surface::Home)
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
+        state.window_stream = (self.active.as_ref()).is_some_and(|route| route.window.is_some());
         state.act = home_recovery::act(self.home.fault(), &state);
         // Shown on Home only, and only while the list that reported it is
         // live: a terminal names its own service, which may be another
@@ -636,15 +650,13 @@ impl Local {
     fn completed(&mut self, stage: Stage, result: CatalogResult) -> Result<(), Error> {
         match (stage, result) {
             (Stage::AgentOpen { target, .. }, CatalogResult::AgentOpened(opened)) => {
-                if let Some(done) = self.pane_limit_exceeded(&target, &opened.panes) {
-                    return done;
-                }
-                self.stage = Some(Stage::Issue {
+                return self.opened(
                     target,
-                    workspace: opened.workspace_name,
-                    panes: opened.panes,
-                    selected: opened.selected,
-                });
+                    opened.workspace_name,
+                    opened.panes,
+                    opened.windows,
+                    Some(opened.selected),
+                );
             }
             (Stage::LocalProve, CatalogResult::LocalSessionProof(proof)) => {
                 self.local_creation_proved(proof)?
@@ -715,23 +727,13 @@ impl Local {
                 CatalogResult::Opened {
                     workspace_name,
                     panes,
+                    windows,
                 },
             ) => {
-                let Some(selected) = (preferred.clone())
-                    .filter(|id| panes.contains(id))
-                    .or_else(|| panes.first().cloned())
-                else {
+                if panes.is_empty() {
                     return self.opened_without_panes(target, preferred);
-                };
-                if let Some(done) = self.pane_limit_exceeded(&target, &panes) {
-                    return done;
                 }
-                self.stage = Some(Stage::Issue {
-                    target,
-                    workspace: workspace_name,
-                    panes,
-                    selected,
-                });
+                return self.opened(target, workspace_name, panes, windows, preferred);
             }
             (
                 Stage::Issue {
@@ -739,11 +741,17 @@ impl Local {
                     panes,
                     selected,
                     workspace,
+                    window,
                 },
                 CatalogResult::Issued(capability),
             ) => {
                 let id = uuid::Uuid::new_v4().to_string();
                 self.state.selected_pane = Some(selected);
+                let window_panes = if window.is_some() {
+                    panes.clone()
+                } else {
+                    Vec::new()
+                };
                 self.state.panes = panes
                     .into_iter()
                     .map(|id| Choice {
@@ -754,6 +762,7 @@ impl Local {
                         browser_icon: None,
                         display_name_source: None,
                         window_label: None,
+                        largest_window: None,
                     })
                     .collect();
                 self.state.status = "Connecting terminal".into();
@@ -770,6 +779,9 @@ impl Local {
                     request: self.state.request,
                     target,
                     workspace,
+                    notice: self.window_notice.take().filter(|_| window.is_some()),
+                    window,
+                    window_panes,
                 });
             }
             _ => {
@@ -857,3 +869,6 @@ mod tests;
 #[cfg(test)]
 #[path = "browser_native_local_topology_live_tests.rs"]
 mod topology_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_window_live_tests.rs"]
+mod window_live_tests;

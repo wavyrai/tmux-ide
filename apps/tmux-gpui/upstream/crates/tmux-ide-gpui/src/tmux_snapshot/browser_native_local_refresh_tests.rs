@@ -24,6 +24,7 @@ fn changed_home_catalog_preserves_current_tokens_but_retires_changed_generations
                 window_count: None,
                 last_activity: None,
                 favicon: None,
+                largest_window_pane_count: None,
             }],
         }],
     };

@@ -11,6 +11,7 @@ fn pane(id: &str, window: Option<&str>) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: Some("Same window label".into()),
+        largest_window: None,
     }
 }
 fn make_view(

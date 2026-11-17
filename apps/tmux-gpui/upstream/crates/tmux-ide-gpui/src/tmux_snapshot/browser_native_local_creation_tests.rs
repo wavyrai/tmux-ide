@@ -36,6 +36,7 @@ fn created() -> (CreatedSession, FleetCatalog) {
                 window_count: None,
                 last_activity: None,
                 favicon: None,
+                largest_window_pane_count: None,
             }],
         }],
     };

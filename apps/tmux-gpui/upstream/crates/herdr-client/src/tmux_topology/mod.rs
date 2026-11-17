@@ -5,6 +5,7 @@ pub use presentation::{CopyRegion, Presentation, PresentedWindow, Region, Window
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) use wire::identity as valid_identity;
 pub use wire::{
     BorderStatus, DisplayNameSource, Layout, LayoutPane, ModeKeys, ReaderBadge, WindowLink,
     WindowLinks,
@@ -165,9 +166,7 @@ impl Topology {
                     }
                     return Ok(true);
                 }
-                if !self.layouts.contains_key(&id)
-                    && self.layouts.len() >= crate::tmux_stream::MAX_PANES
-                {
+                if !self.layouts.contains_key(&id) && self.layouts.len() >= wire::MAX_WINDOWS {
                     return Err(Error::Bounds);
                 }
                 self.layouts.insert(id, layout);

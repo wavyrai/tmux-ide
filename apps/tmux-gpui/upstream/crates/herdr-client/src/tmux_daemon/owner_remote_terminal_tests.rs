@@ -134,6 +134,7 @@ fn remote_catalog_issue_reaches_identity_verified_terminal_without_helper() {
             selected_pane: "pane.first".into(),
             visible_panes: vec!["pane.first".into()],
             mode: ViewerMode::Interactive,
+            window: None,
         })
         .unwrap();
     assert!(handoff.remote_peer.is_some());
@@ -220,6 +221,7 @@ fn owned_openssh_real_daemon_terminal() {
             selected_pane: panes[0].clone(),
             visible_panes: panes,
             mode: ViewerMode::ReadOnly,
+            window: None,
         })
         .unwrap();
     assert!(handoff.remote_peer.is_some() && handoff.local_images.is_none());

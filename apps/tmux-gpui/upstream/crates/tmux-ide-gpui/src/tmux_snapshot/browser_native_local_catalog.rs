@@ -66,6 +66,7 @@ impl Local {
                     id,
                     label: session.session_name,
                     pane_count: Some(u64::from(session.pane_count)),
+                    largest_window: session.largest_window_pane_count.map(u64::from),
                     window_id: None,
                     browser_icon: None,
                     display_name_source: None,
@@ -196,6 +197,7 @@ impl Local {
             name: session.session_name.clone(),
             pane_count: u64::from(session.pane_count),
             window_count: session.window_count.map(u64::from),
+            largest_window: session.largest_window_pane_count.map(u64::from),
             last_activity: session.last_activity,
             favicon: session
                 .favicon
@@ -359,6 +361,7 @@ impl Local {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         });
         self.open(self.state.request, key, None)
     }
