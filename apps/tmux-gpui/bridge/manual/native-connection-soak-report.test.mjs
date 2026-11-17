@@ -61,8 +61,10 @@ test("a pane change the stream followed in place is not a disconnect", () => {
   const report = run(
     [
       { event: "down", fault: "pane-split#1" },
+      { event: "panes", fault: "pane-split#1", from: 1, to: 2 },
       { event: "up", fault: "pane-split#1", ms: 40, msAfterFault: 0, manual: [], trail: [layout] },
       { event: "down", fault: "pane-split#1" },
+      { event: "panes", fault: "pane-split#1", from: 2, to: 1 },
       { event: "up", fault: "pane-split#1", ms: 64, msAfterFault: 64, manual: [], trail: [layout] },
       // The stream was replaced: a disconnect as any other.
       { event: "down", fault: "pane-split#2" },
@@ -88,4 +90,20 @@ test("a pane change the stream followed in place is not a disconnect", () => {
   assert.equal(row.inPlaceMax, 64);
   assert.equal(report.totals.inPlace, 2);
   assert.match(table(report), /\| 2 \(64 ms\) \|$/m);
+});
+
+test("an inactive window's pane change is counted in place without a status line", () => {
+  const report = run(
+    [
+      { event: "panes", fault: "pane-split#1", from: 1, to: 2, inactive: true },
+      { event: "panes", fault: "pane-split#1", from: 2, to: 1, inactive: true },
+    ],
+    [{ tag: "pane-split#1", name: "pane-split", expectedEnd: false }],
+  );
+  const [row] = report.faults;
+  assert.equal(row.disconnects, 0);
+  assert.equal(row.inPlace, 2);
+  assert.equal(row.inPlaceMax, null);
+  assert.equal(report.totals.inPlace, 2);
+  assert.match(table(report), /\| 2 \|$/m);
 });
