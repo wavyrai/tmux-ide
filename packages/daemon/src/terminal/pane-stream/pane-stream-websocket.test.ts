@@ -5360,6 +5360,37 @@ it("delivers reader names only with capability 118, which also carries 117's bro
   // and nothing was tried twice.
 });
 
+it("delivers a browser's kind only with capability 123, and nothing else changes without it (#718)", async () => {
+  const frames: Record<string, string> = {};
+  for (const versions of [
+    [1, 118],
+    [1, 118, 123],
+    [1, 120],
+    [1, 120, 123],
+  ]) {
+    const h = harness();
+    const layout = authoritativeLayout(["pane.editor", "pane.shell"]);
+    layout.panes[0]!.browserKind = "plain";
+    h.mirror.initialLayouts = [layout];
+    const { socket } = await connect(h, { semanticDelivery: true, protocolVersions: versions });
+    const panes = socket.framesOfType("layout-snapshot")[0]!.layouts[0]!.panes;
+    const offered = versions.includes(123);
+    expect(panes[0]!.browserKind).toBe(offered ? "plain" : undefined);
+    expect(panes[1]!.browserKind).toBe(offered ? null : undefined);
+    frames[versions.join(",")] = JSON.stringify(
+      panes.map(({ browserKind: _kind, ...rest }) => {
+        void _kind;
+        return rest;
+      }),
+    );
+    if (!offered) expect(JSON.stringify(panes)).not.toContain("browserKind");
+    socket.close();
+  }
+  // Apart from the new field, a 123 client sees exactly what the same offer without 123 sees.
+  expect(frames["1,118,123"]).toBe(frames["1,118"]);
+  expect(frames["1,120,123"]).toBe(frames["1,120"]);
+});
+
 describe("a step of the opening that fails", () => {
   const negotiation = {
     accepted: true as const,

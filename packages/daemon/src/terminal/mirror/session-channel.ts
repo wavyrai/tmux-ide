@@ -755,6 +755,10 @@ export class SessionChannel {
     await this.captureAttachedSessionIdentity();
     this.io.send("refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'");
     this.io.send("refresh-client -B 'tmux-ide-reader:%*:#{@tmux_ide_reader}'");
+    // #718: a browser's controls appear, or a plain terminal browser starts or exits.
+    this.io.send(
+      "refresh-client -B 'tmux-ide-browser-kind:%*:#{@tmux_ide_browser_control}#{m:terminal-browse*,#{pane_current_command}}'",
+    );
     // Changing border placement can resize PTYs without changing the layout
     // string, so tmux emits no layout-change. Subscribe to this window option.
     this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
@@ -2937,7 +2941,9 @@ export class SessionChannel {
       this.opts.onWindowTopologyChanged?.();
     if (
       name === "subscription-changed" &&
-      (rest.startsWith("tmux-ide-browser-icon ") || rest.startsWith("tmux-ide-reader "))
+      (rest.startsWith("tmux-ide-browser-icon ") ||
+        rest.startsWith("tmux-ide-reader ") ||
+        rest.startsWith("tmux-ide-browser-kind "))
     ) {
       this.scheduleSync();
       return;
@@ -3355,6 +3361,7 @@ export class SessionChannel {
           displayName: display?.name ?? null,
           displayNameSource: display?.source ?? null,
           browserIcon: pane?.descriptor?.browserIcon ?? null,
+          browserKind: pane?.descriptor?.browserKind ?? null,
           reader: pane?.descriptor?.reader ?? null,
           left: leaf.left,
           top: leaf.top,
