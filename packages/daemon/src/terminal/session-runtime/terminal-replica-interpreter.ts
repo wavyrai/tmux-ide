@@ -111,6 +111,8 @@ export type TerminalReplicaInterpreterOperation =
       readonly observedModes?: MirrorObservedTerminalModes;
     }
   | { readonly type: "resize"; readonly cols: number; readonly rows: number }
+  /** tmux holds `rows` fewer history rows: drop the replica's oldest ones. */
+  | { readonly type: "trim-history"; readonly rows: number }
   | {
       readonly type: "reseed";
       readonly native?: NativeGridCapture;
@@ -551,6 +553,11 @@ export class TerminalReplicaInterpreter {
       if (operation.observedModes) this.#backend.setAuthoritativeModes(operation.observedModes);
       this.#backend.setAuthoritativeCursor(operation.x, operation.y);
       this.#commit(false, { start: 1, end: 0 });
+      return;
+    }
+    if (operation.type === "trim-history") {
+      if (!this.#backend.trimHistory?.(operation.rows)) throw new Error("History trim unsupported");
+      this.#commit(false);
       return;
     }
     if (operation.type === "resize") {

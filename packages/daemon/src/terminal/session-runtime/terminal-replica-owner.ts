@@ -535,6 +535,11 @@ export class SessionRuntimeTerminalReplicaOwner {
         }
         if (this.#reconstructedHistoryGap.gap === gap) return;
       } else if (gap === 0) return;
+      // tmux holds fewer rows: it dropped its oldest ones and ours drifted
+      // (its collection is a tenth at the limit). Drop the same oldest rows
+      // here, one history trim to clients, instead of capturing everything.
+      // Any other difference still reseeds.
+      if (reconstructed === null && gap < 0 && (await this.#trimHistory(-gap, epoch))) return;
       upstream.reseed();
     } catch {
       // Unavailable metadata is not evidence that history disappeared.
@@ -542,6 +547,15 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#historyChecking = false;
       if (this.#historyDirty) this.#scheduleHistoryCheck();
     }
+  }
+
+  async #trimHistory(rows: number, epoch: number): Promise<boolean> {
+    try {
+      await this.#interpreter.enqueue({ type: "trim-history", rows });
+    } catch {
+      return false;
+    }
+    return !this.#disposed && epoch === this.#subscriptionEpoch;
   }
 
   #observePane(event: MirrorPaneEvent): void {

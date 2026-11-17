@@ -47,6 +47,12 @@ export interface TerminalInterpreterBackend {
    * limit) is replayed as it is.
    */
   startHistoryCollection?(): void;
+  /**
+   * Drop the oldest `rows` normal-history rows, as tmux's own collection
+   * did. The next projection reports them as a history trim. False when
+   * this backend cannot (then the caller reseeds).
+   */
+  trimHistory?(rows: number): boolean;
   modes(): TerminalReplicaModes;
   dirtyRange(): { readonly start: number; readonly end: number } | undefined;
   project(
