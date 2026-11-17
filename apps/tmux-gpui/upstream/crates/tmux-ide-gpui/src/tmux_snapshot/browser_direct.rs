@@ -137,8 +137,9 @@ impl NativePresentation {
     }
     /// Capability 122: the selected pane's older history rows are wanted, as
     /// the view nears the oldest loaded row (within a screen) or a restore
-    /// waits for them. Only rows the scrollback can show count
-    /// (`tmux_history::MAX_ROWS`).
+    /// waits for them. Only rows the scrollback can show count: once it holds
+    /// fewer rows than are loaded (`tmux_history::MAX_ROWS` and `MAX_BYTES`),
+    /// older rows would never be shown.
     pub fn history_wanted(&self) -> bool {
         let Some(s) = self.viewport.live() else {
             return false;
@@ -147,6 +148,7 @@ impl NativePresentation {
         !s.modes.alternate_screen
             && s.history.unloaded_rows() > 0
             && !s.history.is_deferred()
+            && self.viewport.history_len() == loaded
             && loaded < herdr_client::tmux_history::MAX_ROWS
             && (self.pending_restore.is_some() || self.viewport.offset() + 2 * s.rows >= loaded)
     }
@@ -156,7 +158,10 @@ impl NativePresentation {
         self.selected = None;
         self.history_action = None;
         if let Some(proof) = self.proof.clone()
-            && self.viewport.live().is_some_and(|s| history_ready(s))
+            && self
+                .viewport
+                .live()
+                .is_some_and(|s| history_ready(s, self.viewport.history_len()))
         {
             self.pending_restore = None;
             self.history_action = self
@@ -314,7 +319,7 @@ impl NativePresentation {
         self.proof = Some(proof.clone());
         self.restoration
             .observe(proof.clone(), &mut self.viewport, now_ms);
-        if history_ready(canonical)
+        if history_ready(canonical, self.viewport.history_len())
             && let Some((token, requested_at)) = self.pending_restore.take()
         {
             self.history_action =
@@ -606,15 +611,18 @@ fn pointer_modes(modes: &herdr_client::tmux_delivery::Modes) -> Option<decode::P
 #[path = "browser_direct_tests.rs"]
 mod tests;
 
-/// Menu actions expire across focus changes; input/focus lifetime identities stay stable.
 /// Every history row the scrollback can show is here: the whole history, or,
-/// for a partial one, at least the newest `tmux_history::MAX_ROWS`.
-fn history_ready(snapshot: &herdr_client::tmux_delivery::Snapshot) -> bool {
+/// for a partial one, more rows than the scrollback holds (`shown`, bounded
+/// by `tmux_history::MAX_ROWS` and `MAX_BYTES`).
+fn history_ready(snapshot: &herdr_client::tmux_delivery::Snapshot, shown: usize) -> bool {
     let history = &snapshot.history;
+    let loaded = history.materialized().map_or(0, <[_]>::len);
     !history.is_deferred()
         && (history.unloaded_rows() == 0
-            || history.materialized().map_or(0, <[_]>::len) >= herdr_client::tmux_history::MAX_ROWS)
+            || shown < loaded
+            || loaded >= herdr_client::tmux_history::MAX_ROWS)
 }
+/// Menu actions expire across focus changes; input/focus lifetime identities stay stable.
 pub(super) fn action_token(
     input_token: &str,
     presence_revision: u64,

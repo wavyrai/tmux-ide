@@ -34,6 +34,11 @@ impl Viewport {
     pub fn offset(&self) -> usize {
         self.offset
     }
+    /// History rows the scrollback holds: the newest held rows, up to
+    /// `MAX_ROWS` and `MAX_BYTES`.
+    pub fn history_len(&self) -> usize {
+        self.history.len()
+    }
     pub fn live(&self) -> Option<&Arc<Snapshot>> {
         self.current.as_ref()
     }

@@ -678,9 +678,11 @@ fn a_partial_history_asks_for_older_rows_near_its_oldest_loaded_row() {
     let mut waiting = presentation(with(200, 300, false), None);
     waiting.pending_restore = Some(("token".into(), 0));
     assert!(waiting.history_wanted());
-    assert!(!history_ready(&with(200, 300, false)));
-    assert!(history_ready(&with(1000, 300, false)));
-    assert!(history_ready(&with(200, 0, false)));
+    assert!(!history_ready(&with(200, 300, false), 200));
+    assert!(history_ready(&with(1000, 300, false), 1000));
+    assert!(history_ready(&with(200, 0, false), 200));
+    // The scrollback is full by its byte bound: older rows would not show.
+    assert!(history_ready(&with(300, 300, false), 250));
     // A projection never asks: it materializes instead.
     let mut projected = Snapshot::clone(&snapshot());
     projected.history = History::Deferred(DeferredHistory {
@@ -688,4 +690,50 @@ fn a_partial_history_asks_for_older_rows_near_its_oldest_loaded_row() {
         digest: "0".repeat(16),
     });
     assert!(!presentation(Arc::new(projected), Some(Scroll::Home)).history_wanted());
+}
+
+/// Capability 122: once the scrollback is full by its byte bound, rows older
+/// than it would never show, so none are asked for.
+#[test]
+fn a_full_scrollback_asks_for_no_older_rows() {
+    use herdr_client::tmux_delivery::{DeferredHistory, History, PartialHistory};
+    use herdr_client::tmux_history::{Scope, Scroll};
+    let wide = json!([0, [[2048, "x", 1, [2, 16_777_215], [2, 16_777_215], 255]]]);
+    let value = json!({"v":1,"k":"terminal-semantic-compact","f":"s","r":0,"s":[2048,2,[wide,wide],
+        vec![wide; 30],[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]});
+    let Update::Seed { mut snapshot, .. } =
+        decode_compact(&serde_json::to_vec(&value).unwrap()).unwrap()
+    else {
+        panic!("seed")
+    };
+    let History::Complete(loaded) = snapshot.history.clone() else {
+        panic!("complete")
+    };
+    snapshot.history = History::Partial(PartialHistory {
+        unloaded: DeferredHistory {
+            rows: 300,
+            digest: "0".repeat(16),
+        },
+        loaded,
+    });
+    let snapshot = Arc::new(snapshot);
+    let mut p = NativePresentation::new("scope", "workspace");
+    p.viewport.update(
+        Scope {
+            lifetime: 1,
+            workspace_name: "workspace".into(),
+            pane: "pane".into(),
+            generation: "generation".into(),
+            incarnation: "pane:1".into(),
+        },
+        snapshot.clone(),
+    );
+    p.viewport.scroll(Scroll::Home);
+    let shown = p.viewport.history_len();
+    assert!(
+        shown < 40,
+        "the byte bound holds fewer than 40 wide rows: {shown}"
+    );
+    assert!(!p.history_wanted());
+    assert!(history_ready(&snapshot, shown));
 }
