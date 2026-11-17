@@ -278,6 +278,30 @@ describe("real SessionRuntime qualification", () => {
     }
   });
 
+  it("passes the hub's typed-into marker through the consumer connection (#424)", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:prioritize");
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const opening = client.openTerminalDelivery(
+      "delivery:prioritize",
+      "request:prioritize",
+      "pane.alpha",
+      OFFER,
+      (message) => messages.push(message),
+    );
+    await waitForDriver(drivers);
+    await drivers[0]!.settleUntil(
+      () => messages.some((message) => message.type === "terminal.delivery"),
+      "prioritize seed",
+    );
+    const connection = await opening;
+    // pane-stream calls this after each accepted input; dropping it here makes
+    // the typed-into pane wait behind its neighbours like any other pane.
+    expect(connection.prioritize).toBeTypeOf("function");
+    expect(() => connection.prioritize!()).not.toThrow();
+    await connection.close();
+  });
+
   it("correlates real parse, reduce and transport boundaries on one daemon clock", async () => {
     const { registry, drivers } = rig();
     const client = registry.connect("zz-sim", "opentui", "client:trace");

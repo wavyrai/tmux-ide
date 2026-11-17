@@ -77,6 +77,116 @@ function payload(e: TerminalDeliveryEnvelope, m: TerminalDeliveryServerMessage[]
     : JSON.parse(new TextDecoder().decode(a.complete()));
 }
 describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
+  "coalesced %s delivery at the history limit",
+  (encoding) => {
+    // A pane at tmux's history-limit trims its oldest rows on every scroll. The
+    // replica keeps the surviving rows' identity, so a client one or more
+    // revisions behind (any remote client: one delivery in flight per RTT)
+    // must get a trim patch, not a seed that resends the whole history.
+    it.each([1, 7])("sends a trim patch when %i rows scrolled off", async (scrolled) => {
+      const owner = new Owner(),
+        hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner),
+        messages: TerminalDeliveryServerMessage[] = [];
+      const c = await hub.open(
+        "client",
+        "pane",
+        { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+        (m) => {
+          messages.push(m);
+        },
+      );
+      try {
+        const baseline = initial();
+        baseline.history = Array.from({ length: 2000 }, (_, i) =>
+          structuredClone({
+            ...baseline.history[0]!,
+            cells: baseline.history[0]!.cells.map((cell, j) => ({
+              ...cell,
+              grapheme: j === 0 ? String(i % 10) : " ",
+            })),
+          }),
+        );
+        owner.emit(baseline, 0);
+        await settle();
+        await vi.waitFor(() =>
+          expect(messages.some((m) => m.type === "terminal.delivery.chunk")).toBe(true),
+        );
+        const seeded = commit(
+          createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+          messages[0] as TerminalDeliveryEnvelope,
+          messages,
+        );
+        // Two scrolls while the first delivery is unacknowledged: the second
+        // skips revision 1, as a remote client's deliveries do. The source
+        // sends canonical patches that trim at the history limit, as the
+        // replica does.
+        const scroll = (from: TerminalReplicaSnapshot, rows: number, mark: string) => {
+          const grid = [...from.grid];
+          const append: TerminalReplicaSnapshot["history"] = [];
+          for (let n = 0; n < rows; n++) {
+            append.push(structuredClone(grid.shift()!));
+            const row = structuredClone(from.grid[0]!);
+            row.cells[0]!.grapheme = `${mark}${n % 10}`.slice(-1);
+            grid.push(row);
+          }
+          const next = structuredClone({
+            ...from,
+            grid,
+            history: [...from.history.slice(rows), ...append],
+          });
+          const patch = {
+            rows: grid.map((row, index) => ({ index, row: structuredClone(row) })),
+            historyDelta: { trim: rows, append },
+          };
+          return { next, patch };
+        };
+        const middle = scroll(baseline, scrolled, "m");
+        const target = scroll(middle.next, scrolled, "t").next;
+        const emitPatch = (step: ReturnType<typeof scroll>, revision: number) =>
+          owner.listener!({
+            type: "terminal.patch",
+            workspaceName: "w",
+            semanticPaneId: "pane",
+            generation,
+            incarnation: `${generation}:0`,
+            baseRevision: revision - 1,
+            revision,
+            cols: step.next.cols,
+            rows: step.next.rows,
+            patch: step.patch,
+            stateHash: hashTerminalReplicaSnapshot(step.next),
+            hashAlgorithm: "fnv1a64-v1",
+          } as CanonicalTerminalReplicaUpdate);
+        emitPatch(middle, 1);
+        emitPatch(scroll(middle.next, scrolled, "t"), 2);
+        await settle();
+        c.ack(seeded.ack);
+        await settle();
+        await vi.waitFor(() =>
+          expect(messages.filter((m) => m.type === "terminal.delivery").at(-1)).toMatchObject({
+            canonicalRevision: 2,
+          }),
+        );
+        const e = messages
+          .filter((m): m is TerminalDeliveryEnvelope => m.type === "terminal.delivery")
+          .at(-1)!;
+        expect(e.frame).toBe("patch");
+        expect(e.baseRevision).toBe(0);
+        expect(payload(e, messages).patch.historyDelta.trim).toBe(2 * scrolled);
+        expect(payload(e, messages).patch.historyDelta.append).toHaveLength(2 * scrolled);
+        // The patch is a few rows, not the 2000-row history the seed carried.
+        const seed = messages[0] as TerminalDeliveryEnvelope;
+        expect(e.representationBytes * 20).toBeLessThan(seed.representationBytes);
+        const result = commit(seeded.state, e, messages);
+        expect(result.state.canonicalSnapshot).toEqual(target);
+      } finally {
+        await c.close();
+        await hub.close();
+      }
+    });
+  },
+);
+describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
   "coalesced exact %s delivery",
   (encoding) => {
     it.each([

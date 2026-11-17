@@ -53,36 +53,93 @@ fn eight_pipeline_and_one_waiting_no_bypass() {
     assert_eq!(update.next.unwrap().ticket, ninth);
     assert_eq!(s.pending(), 8);
 }
+/// The daemon applies every input kind in arrival order (one InputCoalescer
+/// FIFO per session), so a command key need not wait for earlier ACKs: over
+/// SSH that wait cost a round trip per Enter, Tab, Escape or Ctrl key.
 #[test]
-fn enter_waits_for_every_ack_and_blocks_following_printable_input() {
+fn command_keys_pipeline_behind_unacknowledged_text_in_order() {
     let mut s = Scheduler::new(scope());
     fill(&mut s, 3);
-    let Admission::Queued(enter) = s
+    for (seq, key) in [(4, "Enter"), (5, "Tab"), (6, "Escape"), (7, "C-c")] {
+        let enter = ready(
+            s.admit(&scope(), Work::Input(Input::Key(key.into())))
+                .unwrap(),
+        );
+        s.bind_input(enter.ticket, "pane.one", seq).unwrap();
+    }
+    // Text typed after them goes too; the window is the same eight.
+    let after = ready(s.admit(&scope(), text()).unwrap());
+    s.bind_input(after.ticket, "pane.one", 8).unwrap();
+    assert_eq!(s.pending(), 8);
+    let Admission::Queued(ninth) = s
         .admit(&scope(), Work::Input(Input::Key("Enter".into())))
         .unwrap()
     else {
-        panic!()
+        panic!("the ninth input must wait for a slot")
     };
-    assert!(s.complete_input(&ack(3, InputResult::Ok)).next.is_none());
-    assert!(s.complete_input(&ack(1, InputResult::Ok)).next.is_none());
     assert_eq!(
-        s.complete_input(&ack(2, InputResult::Ok))
+        s.complete_input(&ack(1, InputResult::Ok))
             .next
             .unwrap()
             .ticket,
-        enter
+        ninth
     );
-    s.bind_input(enter, "pane.one", 4).unwrap();
-    let Admission::Queued(text) = s.admit(&scope(), text()).unwrap() else {
-        panic!()
-    };
-    assert_eq!(
-        s.complete_input(&ack(4, InputResult::Ok))
-            .next
-            .unwrap()
-            .ticket,
-        text
-    );
+}
+/// Input N fails: everything behind it, in flight or waiting, finishes as not
+/// sent (Retired) in one update, and nothing is ever dispatched again.
+#[test]
+fn a_failed_input_reports_every_pipelined_input_behind_it_and_replays_none() {
+    for failure in [
+        InputResult::Timeout,
+        InputResult::AuthorityLost,
+        InputResult::Retired,
+    ] {
+        let mut s = Scheduler::new(scope());
+        let mut tickets = fill(&mut s, 2);
+        for (seq, key) in [(3, "Enter"), (4, "C-c")] {
+            let d = ready(
+                s.admit(&scope(), Work::Input(Input::Key(key.into())))
+                    .unwrap(),
+            );
+            s.bind_input(d.ticket, "pane.one", seq).unwrap();
+            tickets.push(d.ticket);
+        }
+        tickets.extend(fill_from(&mut s, 5, 4));
+        let Admission::Queued(waiting) = s.admit(&scope(), Work::Barrier("paste")).unwrap() else {
+            panic!()
+        };
+        let update = s.complete_input(&ack(3, failure));
+        assert!(update.next.is_none());
+        assert_eq!(update.finished.len(), 9);
+        for (ticket, completion) in &update.finished {
+            let expected = if *ticket == tickets[2] {
+                match failure {
+                    InputResult::Timeout => Completion::Timeout,
+                    InputResult::AuthorityLost => Completion::AuthorityLost,
+                    _ => Completion::Retired,
+                }
+            } else {
+                Completion::Retired
+            };
+            assert_eq!(*completion, expected);
+        }
+        assert!(update.finished.iter().any(|(t, _)| *t == waiting));
+        assert!(s.retired());
+        // Late ACKs for inputs already reported never release anything.
+        for seq in [1, 2, 4, 5, 8] {
+            let late = s.complete_input(&ack(seq, InputResult::Ok));
+            assert!(late.finished.is_empty() && late.next.is_none());
+        }
+    }
+}
+fn fill_from(s: &mut Scheduler<&'static str>, first: u32, count: u32) -> Vec<Ticket> {
+    (first..first + count)
+        .map(|seq| {
+            let dispatch = ready(s.admit(&scope(), text()).unwrap());
+            s.bind_input(dispatch.ticket, "pane.one", seq).unwrap();
+            dispatch.ticket
+        })
+        .collect()
 }
 #[test]
 fn paste_mouse_presence_and_control_are_exclusive_barriers() {
@@ -178,22 +235,19 @@ fn exact_correlation_out_of_order_duplicate_and_invalid_binding() {
     assert_eq!(s.retire().finished, vec![(tickets[0], Completion::Retired)]);
 }
 #[test]
-fn pipeline_classifier_matches_existing_printable_and_unmodified_key_rule() {
-    for data in ["hi", "é🦀", "\u{200b}"] {
+fn every_input_pipelines_and_every_barrier_waits() {
+    for data in [
+        "hi", "é🦀", "\u{200b}", "\0", "\x1b", "\t", "\r", "\n", "\u{85}",
+    ] {
         assert!(pipeline::<()>(&Work::Input(Input::Text(data.into()))));
     }
-    for data in ["\0", "\x1b", "\t", "\r", "\n", "\u{85}"] {
-        assert!(!pipeline::<()>(&Work::Input(Input::Text(data.into()))));
-    }
     for key in [
-        "BSpace", "DC", "Left", "Right", "Up", "Down", "Home", "End", "NPage", "PPage", "PgUp",
-        "PgDn", "Space",
+        "BSpace", "Space", "Enter", "Tab", "Escape", "C-a", "M-Left", "S-Up", "F1",
     ] {
         assert!(pipeline::<()>(&Work::Input(Input::Key(key.into()))));
     }
-    for key in ["Enter", "Tab", "Escape", "C-a", "M-Left", "S-Up", "F1"] {
-        assert!(!pipeline::<()>(&Work::Input(Input::Key(key.into()))));
-    }
+    assert!(pipeline::<()>(&Work::Input(Input::Bytes("1b".into()))));
+    assert!(!pipeline(&Work::Barrier(())));
 }
 #[test]
 fn failed_barrier_retires_waiting_and_failed_enqueue_can_retire_reservation() {
@@ -268,8 +322,8 @@ fn cancel_waiting_does_not_cancel_dispatched_exclusive_barrier() {
 }
 
 #[test]
-fn byte_input_is_bounded_and_always_an_exclusive_barrier() {
-    assert!(!pipeline::<()>(&Work::Input(Input::Bytes("61".into()))));
+fn byte_input_is_bounded_and_pipelined() {
+    assert!(pipeline::<()>(&Work::Input(Input::Bytes("61".into()))));
     let mut scheduler = Scheduler::<()>::new(scope());
     assert!(
         scheduler
@@ -285,3 +339,13 @@ fn byte_input_is_bounded_and_always_an_exclusive_barrier() {
 
 #[path = "tests/availability.rs"]
 mod availability;
+/// Only a reservation that never reached the wire may be released: a sent
+/// input has an ACK coming, and releasing its slot early would let a ninth
+/// input overtake the window.
+#[test]
+fn cancel_unsent_input_refuses_a_ticket_already_on_the_wire() {
+    let mut s = Scheduler::new(scope());
+    let sent = fill(&mut s, 1)[0];
+    assert_eq!(s.cancel_unsent_input(sent).unwrap_err(), Error::Correlation);
+    assert!(s.retired());
+}

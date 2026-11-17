@@ -238,6 +238,7 @@ impl Mailbox {
 pub struct NativeSession {
     graphics_missing: crossbeam_channel::Sender<Vec<String>>,
     graphics_drained: crossbeam_channel::Sender<()>,
+    updated: crossbeam_channel::Receiver<()>,
     stream: Arc<PaneStream>,
     shared: Arc<Mutex<Mailbox>>,
 }
@@ -337,6 +338,7 @@ impl NativeSession {
         };
         let (graphics_missing, missing) = crossbeam_channel::bounded(8);
         let (graphics_drained, drained) = crossbeam_channel::bounded(1);
+        let (updated_tx, updated) = crossbeam_channel::bounded(1);
         let state = TerminalState::new_offered(
             options.descriptor.daemon_instance_id.clone(),
             workspace,
@@ -360,13 +362,14 @@ impl NativeSession {
                     graphics,
                     local_images,
                     (missing, drained),
-                    &worker_stream,
+                    (&worker_stream, &updated_tx),
                     &worker_shared,
                     surfaces,
                 ) && let Ok(mut mailbox) = worker_shared.lock()
                 {
                     mailbox.retire(Status::Failed(Arc::new(error)));
                 }
+                let _ = updated_tx.try_send(());
             });
         if let Err(error) = worker {
             stream.cancel();
@@ -377,6 +380,7 @@ impl NativeSession {
             shared,
             graphics_missing,
             graphics_drained,
+            updated,
         })
     }
 
@@ -435,6 +439,12 @@ impl NativeSession {
     /// The stream's round trip as its last answered ping measured it.
     pub fn rtt(&self) -> Option<std::time::Duration> {
         self.stream.rtt()
+    }
+    /// Ready after the worker changed the mailbox: a commit, a control, a
+    /// status. Wait on it instead of polling `drain` on a timer; it may also
+    /// be ready when nothing changed.
+    pub fn updated(&self) -> &crossbeam_channel::Receiver<()> {
+        &self.updated
     }
 
     pub fn drain(&self) -> Result<Updates, Error> {
@@ -551,7 +561,7 @@ fn run(
         crossbeam_channel::Receiver<Vec<String>>,
         crossbeam_channel::Receiver<()>,
     ),
-    stream: &PaneStream,
+    (stream, updated): (&PaneStream, &crossbeam_channel::Sender<()>),
     shared: &Mutex<Mailbox>,
     mut surfaces: Option<surfaces::Owner>,
 ) -> Result<(), Error> {
@@ -567,6 +577,9 @@ fn run(
         .as_ref()
         .map_or_else(crossbeam_channel::never, surfaces::Owner::events);
     loop {
+        // Whatever the last turn published is there to drain: wake the reader
+        // now rather than at its next poll.
+        let _ = updated.try_send(());
         if shared.lock().map_err(|_| Error::Mailbox)?.retired {
             state.retire();
             return Err(Error::Cancelled);

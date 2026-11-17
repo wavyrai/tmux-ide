@@ -35,6 +35,8 @@ pub use tunnel::{Tunnel, TunnelError};
 
 #[cfg(unix)]
 mod transport;
+#[cfg(test)]
+pub(crate) use transport::PROOF_LIMIT;
 #[cfg(unix)]
 pub use transport::{RemoteTransport, TransportError};
 

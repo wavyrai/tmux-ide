@@ -163,16 +163,19 @@ fn transient_pointer_mode_or_preview_change_cancels_held_release() {
     ));
 }
 
+/// Keyboard bytes pipeline like other keys now. A daemon without raw byte
+/// input refuses them before the wire: the reservation is released, nothing
+/// retires, and the next key goes.
 #[test]
-fn unsupported_bytes_barrier_can_finish_without_sequence_or_retirement() {
-    let mut scheduler = Scheduler::new(scope());
+fn unsent_bytes_release_their_reservation_without_retirement() {
+    let mut scheduler = Scheduler::<Control>::new(scope());
     let Admission::Ready(dispatch) = scheduler
-        .admit(&scope(), Work::Barrier(Control::Bytes("00ff80".into())))
+        .admit(&scope(), Work::Input(Input::Bytes("00ff80".into())))
         .unwrap()
     else {
         panic!()
     };
-    scheduler.complete_barrier(dispatch.ticket, true).unwrap();
+    scheduler.cancel_unsent_input(dispatch.ticket).unwrap();
     assert!(scheduler.idle());
     assert!(!scheduler.retired());
     assert!(matches!(

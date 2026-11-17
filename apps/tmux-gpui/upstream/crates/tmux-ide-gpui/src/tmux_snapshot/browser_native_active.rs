@@ -94,6 +94,21 @@ pub(super) fn input_report_line(report: &herdr_client::tmux_controller::InputRep
     )
 }
 impl Active {
+    /// The terminal loop's wait when it has nothing to do. A frame wakes it at
+    /// once; the 5 ms bound still serves commands from the window and the
+    /// loop's own timers. Polling alone found each frame 2.5 ms late on
+    /// average, 5 ms at most (conn-app-o, 17 Nov: 5.1-5.3 ms p50 from commit to
+    /// the loop seeing it, under three busy neighbour panes over SSH).
+    pub(super) fn idle(active: Option<&Self>) {
+        let bound = Duration::from_millis(5);
+        match active {
+            Some(active) => {
+                let _ = active.controller.updated().recv_timeout(bound);
+            }
+            None => std::thread::sleep(bound),
+        }
+    }
+
     pub(super) fn owner_completed(&mut self, completion: browser_native_owner::Completion) {
         self.action_status.set(match completion.outcome {
             herdr_client::tmux_controller::OwnerOutcome::Applied => None,

@@ -285,3 +285,26 @@ fn each_panes_name_source_reaches_its_choice() {
         ]
     );
 }
+
+/// PM, 17 Nov: in a window that is not the key window, a pane closed by
+/// another client stayed in the pane list until the window was activated: the
+/// catalog notice was dropped in the background. A stream's own pane set is
+/// followed in front or behind; the window's labels wait for the front.
+#[test]
+fn an_inactive_window_follows_its_streams_pane_set() {
+    for (panes, layout) in [
+        (vec!["left"], layout_of(&[("left", "Shell")])),
+        (
+            vec!["left", "right", "third"],
+            layout_of(&[("left", "Shell"), ("right", "Build"), ("third", "Logs")]),
+        ),
+    ] {
+        let (mut local, events) = attached();
+        local.foreground = false;
+        let command = in_place(&local, vec![layout], &panes, "left");
+        local.command(command).unwrap();
+        assert_eq!(ids(&local), panes, "the inactive window kept a stale list");
+        assert!(events.try_recv().is_ok(), "the change was not published");
+        assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
+    }
+}
