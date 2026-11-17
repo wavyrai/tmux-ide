@@ -97,6 +97,12 @@ const BACKGROUND_CADENCE_MS = 100;
 export const TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES = 256 * 1024;
 /** No pane is held longer than this: it is then sent behind whatever is in flight. */
 export const TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
+/**
+ * A pane is held only once some delivery of its connection has gone this long
+ * unacknowledged: a fast link acks bulk within a few round trips, and holding
+ * there only bunches panes up behind each other.
+ */
+export const TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS = 30;
 
 export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
@@ -412,6 +418,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   #deliveryStatusOrdinal = 0;
   #closed = false;
   readonly #holdMs: number;
+  readonly #congestedMs: number;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -422,10 +429,13 @@ export class SessionRuntimeTerminalDeliveryHub {
       readonly observability?: SessionRuntimeObservability;
       /** Tests only: the longest a pane waits for its connection's bulk. */
       readonly connectionHoldMs?: number;
+      /** Tests only: how long unacked bulk takes to count as congestion. */
+      readonly connectionCongestedMs?: number;
     } = {},
   ) {
     this.#ownerForPane = ownerForPane;
     this.#holdMs = options.connectionHoldMs ?? TERMINAL_DELIVERY_CONNECTION_HOLD_MS;
+    this.#congestedMs = options.connectionCongestedMs ?? TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
   }
@@ -1110,11 +1120,15 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#scheduler.nowMs() - client.budgetHeldSince >= this.#holdMs
     )
       return false;
+    const now = this.#scheduler.nowMs();
     let bytes = 0;
+    let oldest = now;
     for (const other of this.#clients.values())
-      if (other !== client && other.clientId === client.clientId && other.inFlight)
+      if (other !== client && other.clientId === client.clientId && other.inFlight) {
         bytes += other.inFlight.envelope.representationBytes;
-    return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES;
+        oldest = Math.min(oldest, other.inFlight.sentAt);
+      }
+    return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES && now - oldest >= this.#congestedMs;
   }
 
   /** A pane's delivery settled or left: held panes of its connection try again, typed-into pane first. */

@@ -88,7 +88,7 @@ const deliveredPanes = (messages: TerminalDeliveryServerMessage[]) =>
     .map((m) => m.semanticPaneId);
 
 describe("one connection's unacknowledged delivery bytes", () => {
-  async function setup(connectionHoldMs = 60_000) {
+  async function setup(connectionHoldMs = 60_000, connectionCongestedMs = 0) {
     const owners = new Map([
       ["pane-a", new Owner("pane-a")],
       ["pane-b", new Owner("pane-b")],
@@ -97,7 +97,7 @@ describe("one connection's unacknowledged delivery bytes", () => {
       generation,
       "w",
       (pane) => owners.get(pane)!,
-      { connectionHoldMs },
+      { connectionHoldMs, connectionCongestedMs },
     );
     const messages: TerminalDeliveryServerMessage[] = [];
     const offer = { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false };
@@ -228,6 +228,23 @@ describe("one connection's unacknowledged delivery bytes", () => {
       await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-a"]));
     } finally {
       vi.useRealTimers();
+      await a.close();
+      await b.close();
+      await hub.close();
+    }
+  });
+
+  it("does not hold while the bulk in flight is younger than a congested link's", async () => {
+    // A fast link acks bulk within a few round trips; holding then only
+    // bunches panes up. Only bulk that stays unacked marks the link congested.
+    const { owners, hub, messages, a, b } = await setup(60_000, 60_000);
+    try {
+      owners.get("pane-b")!.emit(0, "b");
+      await settle();
+      await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b"]));
+      owners.get("pane-a")!.emit(0, "a");
+      await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-a"]));
+    } finally {
       await a.close();
       await b.close();
       await hub.close();
