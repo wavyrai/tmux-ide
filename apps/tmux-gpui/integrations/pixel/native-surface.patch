@@ -6153,10 +6153,10 @@ index 0000000..83401d1
 +});
 diff --git a/pixel/engine/crates/pixel-core/src/tmux_surface.rs b/pixel/engine/crates/pixel-core/src/tmux_surface.rs
 new file mode 100644
-index 0000000..f4cb2cc
+index 0000000..eda62e9
 --- /dev/null
 +++ b/pixel/engine/crates/pixel-core/src/tmux_surface.rs
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,214 @@
 +use crate::{canvas::Frame, terminal::SessionEnv};
 +use herdr_client::{
 +    tmux_daemon::{LocalConfigNamespace, LocalDaemon, NativeSurfaceLocation, TerminalSelection},
@@ -6203,6 +6203,7 @@ index 0000000..f4cb2cc
 +                selected_pane: pane.clone(),
 +                visible_panes: vec![pane],
 +                mode: ViewerMode::ReadOnly,
++                window: None,
 +            },
 +        })
 +    }
