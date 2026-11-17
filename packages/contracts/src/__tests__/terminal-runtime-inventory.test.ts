@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   TerminalRuntimeInventoryProjectionV1SchemaZ,
+  TerminalRuntimeInventoryProjectionV2SchemaZ,
   TerminalRuntimeInventoryResourceV1SchemaZ,
 } from "../terminal-runtime-inventory.ts";
 import { DAEMON_WIRE_PROTOCOL_VERSION } from "../daemon-wire.ts";
@@ -63,6 +64,36 @@ describe("terminal runtime inventory contract", () => {
         ...base,
         semanticPaneIds: ["pane.a", "pane.a"],
       }).success,
+    ).toBe(false);
+  });
+
+  it("version 2 lists each window's panes, and only panes it lists (#806)", () => {
+    const base = {
+      workspaceName: "alpha",
+      workspaceId: "workspace.0123456789abcdefabcd",
+      sessionId: "session.0123456789abcdefabcd",
+      resourceRevision: 0,
+      semanticPaneIds: ["pane.a", "pane.b", "pane.c"],
+    };
+    const windows = [
+      { semanticWindowId: "window.one", active: true, semanticPaneIds: ["pane.a", "pane.b"] },
+      { semanticWindowId: "window.two", active: false, semanticPaneIds: ["pane.c"] },
+    ];
+    expect(TerminalRuntimeInventoryProjectionV2SchemaZ.parse({ ...base, windows }).windows).toEqual(
+      windows,
+    );
+    const bad = (value: unknown) =>
+      TerminalRuntimeInventoryProjectionV2SchemaZ.safeParse({ ...base, windows: value }).success;
+    // A pane the inventory does not list, a pane in two windows, a repeated window, two active.
+    expect(bad([{ ...windows[0], semanticPaneIds: ["pane.a", "pane.z"] }])).toBe(false);
+    expect(bad([windows[0], { ...windows[1], semanticPaneIds: ["pane.b"] }])).toBe(false);
+    expect(bad([windows[0], { ...windows[1], semanticWindowId: "window.one" }])).toBe(false);
+    expect(bad([windows[0], { ...windows[1], active: true }])).toBe(false);
+    expect(bad([{ ...windows[0], semanticPaneIds: [] }])).toBe(false);
+    // A window may be missing (its panes are unverified); version 1 has no windows.
+    expect(bad([windows[1]])).toBe(true);
+    expect(
+      TerminalRuntimeInventoryProjectionV1SchemaZ.safeParse({ ...base, windows }).success,
     ).toBe(false);
   });
 });

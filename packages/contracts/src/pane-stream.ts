@@ -136,6 +136,14 @@ export const PaneStreamLeaseRequestSchemaZ = z
     viewerMode: PaneStreamViewerModeSchemaZ,
     /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
     terminalDelivery: TerminalDeliveryOfferSchemaZ.optional(),
+    /**
+     * #806: a stream for one window. `panes` must be exactly that window's
+     * panes (at most PANE_STREAM_MAX_PANES), so a session with more panes in
+     * all can be viewed window by window. Under capability 119/120 the stream
+     * follows that window's pane set in place; other windows never enter.
+     * Released daemons refuse the field: send it only to a daemon that has it.
+     */
+    semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
   })
   .strict();
 export type PaneStreamLeaseRequest = z.infer<typeof PaneStreamLeaseRequestSchemaZ>;

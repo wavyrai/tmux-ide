@@ -418,3 +418,68 @@ fn a_key_that_arrives_with_no_stream_marks_the_held_frame() {
     assert!(super::key(&stale, Some(&active), &mut hold, &mut changed));
     assert_eq!(hold.lost_input(), Some(true));
 }
+
+/// Command keys pipeline behind text (no wait for ACKs). When the stream
+/// fails with them in flight and more keys queued, every one of them is
+/// reported as not sent, and none is left to replay onto the new stream.
+#[test]
+fn a_lost_stream_reports_pipelined_command_keys_and_drops_the_queue() {
+    let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    for input in [
+        Input::Text("ls".into()),
+        Input::Key("Enter".into()),
+        Input::Key("C-c".into()),
+        Input::Text("x".into()),
+    ] {
+        active.input("left", None, input, 1).unwrap();
+    }
+    assert!(active.input.busy(), "the keys never left");
+    assert!(
+        !active.input.waiting(),
+        "a command key waited for earlier ACKs instead of pipelining"
+    );
+    let mut pending = queue(vec![key("y"), key("z")]);
+    let mut hold = Hold::default();
+    stream_lost(&active, &mut pending, &mut hold, &state, 1, &closed());
+    assert_eq!(inputs(&pending), 0, "queued keys would replay");
+    assert_eq!(
+        hold.lost_input(),
+        Some(true),
+        "pipelined keys were lost silently"
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
+
+/// Keyboard bytes (C-\, C-] …) now use the input window. A daemon without the
+/// bytes capability refuses them before the wire; each refusal must give its
+/// window slot back, or eight of them would leave every later key Busy.
+#[test]
+fn refused_keyboard_bytes_release_their_window_slot() {
+    let (mut active, _state, observed, peer) = super::super::selection_tests::fixture(true);
+    for _ in 0..9 {
+        active
+            .input("left", None, Input::Bytes("1c".into()), 1)
+            .unwrap();
+        assert!(
+            !active.input.busy(),
+            "a refused bytes key kept its window slot"
+        );
+    }
+    active
+        .input("left", None, Input::Text("a".into()), 1)
+        .unwrap();
+    assert!(active.input.busy(), "the key after them never left");
+    let sent: Vec<_> = std::iter::from_fn(|| {
+        observed
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .ok()
+    })
+    .filter(|frame| frame["type"] == "input")
+    .collect();
+    assert_eq!(sent.len(), 1, "a refused bytes key reached the wire");
+    assert_eq!(sent[0]["kind"], "text");
+    active.controller.retire();
+    peer.join().unwrap();
+}
