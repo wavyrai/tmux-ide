@@ -273,9 +273,28 @@ it("reports a terminal browser's kind from its control option and command (#718)
   };
   const kind = (command: string, control: string) =>
     parseSessionPaneDescriptors([record(command, control)])[0]?.browserKind;
-  // A browser with native controls sets the control option, whatever its process name.
-  expect(kind("terminal-browse", "1")).toBe("native");
-  expect(kind("node", "1")).toBe("native");
+  // The native browser publishes its endpoint; tmux `qa` escapes it as one argument.
+  const endpoint = (pid: number) => {
+    const json = JSON.stringify({
+      version: 1,
+      pid,
+      instance: "00000000-0000-4000-8000-000000000001",
+      pane: "%3",
+      socket: "/tmp/browser.sock",
+    });
+    return `"${json.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  };
+  const dead = 2 ** 31 - 2;
+  // A live browser with native controls, whatever its process name.
+  expect(kind("terminal-browse", endpoint(process.pid))).toBe("native");
+  expect(kind("node", endpoint(process.pid))).toBe("native");
+  // The native browser never clears its option: once its process is gone, the
+  // pane is judged by what runs there now (remain-on-exit, respawn-pane).
+  expect(kind("terminal-browse", endpoint(dead))).toBe("plain");
+  expect(kind("zsh", endpoint(dead))).toBeNull();
+  // A value that is not a live endpoint is not "native".
+  expect(kind("terminal-browse", "1")).toBe("plain");
+  expect(kind("zsh", "1")).toBeNull();
   // tmux reports the process name cut to 15 characters on macOS.
   expect(kind("terminal-browse", "")).toBe("plain");
   expect(kind("terminal-browser", "")).toBe("plain");

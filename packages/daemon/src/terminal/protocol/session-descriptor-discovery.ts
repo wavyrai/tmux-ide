@@ -1,4 +1,4 @@
-import { browserIcon } from "./browser-icon.ts";
+import { browserIcon, processAlive } from "./browser-icon.ts";
 import { readerOption, type ReaderOption } from "./reader-option.ts";
 
 export interface SessionPaneDescriptor {
@@ -439,14 +439,25 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 }
 
 /**
- * #718: a pane runs a terminal browser with tmux-ide's native controls when
- * the browser set @tmux_ide_browser_control; a plain one otherwise, known by
- * its process name (tmux cuts it to 15 characters on macOS).
+ * #718: a pane runs a terminal browser with tmux-ide's native controls while
+ * the browser that published @tmux_ide_browser_control is alive: the browser
+ * never clears the option, so a pane that outlives it (remain-on-exit,
+ * respawn-pane) is judged by what runs there now. A plain terminal browser
+ * is known by its process name (tmux cuts it to 15 characters on macOS).
  */
 export function terminalBrowserKind(
   control: string,
   currentCommand: string,
+  alive: (pid: number) => boolean = processAlive,
 ): "native" | "plain" | null {
-  if (control.length > 0) return "native";
+  if (control.length > 0 && control.length <= 4096) {
+    try {
+      const pid = (JSON.parse(control) as { pid?: unknown } | null)?.pid;
+      if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && alive(pid))
+        return "native";
+    } catch {
+      // Not an endpoint: judged by the process name below.
+    }
+  }
   return /^terminal-browser?$/u.test(currentCommand) ? "plain" : null;
 }
