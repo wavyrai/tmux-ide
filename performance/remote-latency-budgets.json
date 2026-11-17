@@ -1,0 +1,16 @@
+{
+  "$comment": "Remote input latency gate (scripts/remote-latency). Each ratio divides by plain key echo p50 in the same round on the same link, then takes the median across rounds. Budgets are set from calibration runs on GitHub's Linux runner with room for noise; see the PR that added them. echoFloor: key echo must be at least this share of the link's RTT, which proves the delay was applied.",
+  "rounds": 3,
+  "busyPanes": 12,
+  "echoFloor": 0.9,
+  "profiles": [
+    { "name": "rtt50", "oneWayDelayMs": 25 },
+    { "name": "rtt150", "oneWayDelayMs": 75 },
+    { "name": "rtt150-10mbit", "oneWayDelayMs": 75, "mbit": 10 }
+  ],
+  "ratios": {
+    "burst30Last": { "max": 3 },
+    "linesLag": { "max": 4 },
+    "busyEcho": { "max": 2 }
+  }
+}

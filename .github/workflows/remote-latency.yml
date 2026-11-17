@@ -1,0 +1,80 @@
+name: Remote input latency
+
+# A private daemon and tmux (a scratch fleet with its own tmux socket and HOME)
+# reached through a delay proxy: 50 ms and 150 ms round trip, and 150 ms at
+# 10 Mbit/s. The production Rust controller and input scheduler (herdr-client
+# example tmux_input_latency_probe) measure key echo, a 30-key burst, text+Enter
+# lines, and key echo beside busy neighbour panes. The gate compares each result
+# to plain key echo in the same round, which cancels runner noise; budgets are in
+# performance/remote-latency-budgets.json. Nightly and on demand, not on every PR.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: Rounds per link (default from the budgets file)
+        default: ""
+      calibrate:
+        description: Report only, never fail
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/remote-latency.yml
+      - scripts/remote-latency/**
+      - performance/remote-latency-budgets.json
+      - apps/tmux-gpui/upstream/crates/herdr-client/examples/tmux_input_latency_probe.rs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-latency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  remote-latency:
+    name: Remote input latency (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: ./.github/actions/setup-tmux
+        with:
+          test-node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Delay proxy and gate tests
+        run: node --test scripts/remote-latency/delay-proxy.test.mjs scripts/remote-latency/gate.test.mjs
+      - name: Build the latency probe
+        working-directory: apps/tmux-gpui/upstream
+        run: |
+          rustup show
+          cargo build --locked --release -p herdr-client --example tmux_input_latency_probe
+          echo "REMOTE_LATENCY_PROBE=$PWD/target/release/examples/tmux_input_latency_probe" >> "$GITHUB_ENV"
+      - name: Build the CLI from source
+        run: |
+          node scripts/build-cli.mjs --outfile "$RUNNER_TEMP/remote-latency/cli.mjs"
+          echo "REMOTE_LATENCY_CLI=$RUNNER_TEMP/remote-latency/cli.mjs" >> "$GITHUB_ENV"
+      - name: Measure and gate
+        env:
+          REMOTE_LATENCY_OUT: ${{ runner.temp }}/remote-latency/evidence
+          # TEMPORARY for the first PR runs: calibrate the budgets on this runner.
+          REMOTE_LATENCY_ROUNDS: ${{ inputs.rounds || '5' }}
+          REMOTE_LATENCY_CALIBRATE: "1"
+        run: node --import tsx scripts/remote-latency/run.mjs
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-latency
+          path: ${{ runner.temp }}/remote-latency/evidence
+          retention-days: 30
+          if-no-files-found: warn
