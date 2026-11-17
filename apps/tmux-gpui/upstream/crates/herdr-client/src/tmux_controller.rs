@@ -83,6 +83,9 @@ pub struct Controller {
     reported: bool,
     /// Capability 119: what following a pane change in place needs.
     in_place: in_place::InPlace,
+    /// Per pane: the delivery nonce and whether the daemon was last told it is
+    /// on screen (`visibility`).
+    visibility_sent: BTreeMap<String, (String, bool)>,
 }
 /// What one stream cost until its window could take input.
 pub struct InputReport {
@@ -155,6 +158,7 @@ impl Controller {
             received: BTreeMap::new(),
             reported: false,
             in_place: Default::default(),
+            visibility_sent: BTreeMap::new(),
         })
     }
     pub fn retire(&mut self) {
@@ -528,6 +532,7 @@ impl Controller {
         ) && self.pending_selection.is_none()
             && !self.changing()
             && window.as_ref().is_some_and(|window| window.coherent);
+        self.follow_visibility()?;
         self.flush_viewport(now)?;
         Ok(Update {
             panes: updates.panes,
@@ -571,4 +576,7 @@ pub use owner::{OwnerAuthorization, OwnerCompletion, OwnerEvent, OwnerOutcome, O
 
 #[path = "tmux_controller_divider.rs"]
 mod divider;
+
+#[path = "tmux_controller_visibility.rs"]
+mod visibility;
 pub use divider::{DividerState, SplitPhase, SplitPublication, SplitRead};

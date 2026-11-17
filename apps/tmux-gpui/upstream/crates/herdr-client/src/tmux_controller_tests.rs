@@ -13,8 +13,8 @@ use std::{
 };
 const GEN: &str = "e01ce8ee-74d8-40d0-9a59-a096050a6ade";
 const OP: &str = "b987f903-e864-43dd-8591-8d0a464ca6e8";
-const TOKEN: &str = "f8da3f73-66c3-4621-bf6f-547ee1d5fd1c";
-fn authority() -> Value {
+pub(super) const TOKEN: &str = "f8da3f73-66c3-4621-bf6f-547ee1d5fd1c";
+pub(super) fn authority() -> Value {
     json!({"generation":GEN,"session":"session","revision":1,"owners":{"input":"native.test","focus":null,"geometry":null},"nativeGeometryYieldUntilMs":0,"clients":[]})
 }
 fn populate(controller: &mut Controller) {
