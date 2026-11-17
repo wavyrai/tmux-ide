@@ -220,6 +220,25 @@ it("reads windows, last activity and the session path from the same list-panes c
   );
 });
 
+it("counts a pane once when its window is linked twice into one session (#806)", async () => {
+  const dir = mkdtempSync("/tmp/tmux-owner-catalog-");
+  directories.push(dir);
+  const registry = new WorkspaceRegistry({ dir, listSessions: () => [] });
+  // list-panes -s lists a linked window once per link, with the same pane ids.
+  const catalog = createNativeTmuxServerCatalog(registry, async () =>
+    [
+      `22\t$0\t1234\tweb\t%0\t@0\t1\t${dir}`,
+      `22\t$0\t1234\tweb\t%1\t@0\t1\t${dir}`,
+      `22\t$0\t1234\tweb\t%2\t@1\t1\t${dir}`,
+      `22\t$0\t1234\tweb\t%0\t@0\t1\t${dir}`,
+      `22\t$0\t1234\tweb\t%1\t@0\t1\t${dir}`,
+    ].join("\n"),
+  );
+  expect(await catalog()).toMatchObject([
+    { sessionName: "web", paneCount: 3, windowCount: 2, largestWindowPaneCount: 2 },
+  ]);
+});
+
 it("rejects a row whose window id is not a tmux window id", async () => {
   const dir = mkdtempSync("/tmp/tmux-owner-catalog-");
   directories.push(dir);

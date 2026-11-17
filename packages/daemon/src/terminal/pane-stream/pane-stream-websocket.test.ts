@@ -3062,6 +3062,28 @@ describe("PaneStreamAdmissionCoordinator", () => {
         expect(socket.closed).toBeNull();
       });
 
+      it("still lists every window and pane of the session in its layout snapshot", async () => {
+        const { socket } = await openWindow({
+          [W1]: ["pane.one", "pane.two"],
+          [W2]: ["pane.three"],
+        });
+        await vi.waitFor(() => expect(socket.framesOfType("layout-snapshot")).toHaveLength(1));
+        const layouts = socket.framesOfType("layout-snapshot")[0]!.layouts;
+        expect(
+          layouts.map((layout) => [layout.semanticWindowId, layout.panes.map((pane) => pane.pane)]),
+        ).toEqual([
+          [W1, ["pane.one", "pane.two"]],
+          [W2, ["pane.three"]],
+        ]);
+        // Only the stream's own window gets deliveries.
+        expect(
+          socket
+            .framesOfType("terminal-delivery-ready")
+            .map((frame) => frame.pane)
+            .sort(),
+        ).toEqual(["pane.one", "pane.two"]);
+      });
+
       it.each([
         ["panes of two windows", ["pane.one", "pane.three"]],
         ["only some panes of the window", ["pane.one"]],
