@@ -782,3 +782,69 @@ pub(in crate::tmux_snapshot) fn busy_owner() -> Owner {
     owner.begin(&drag);
     owner
 }
+
+/// Reader panes follow a divider drag's preview on every frame, as their
+/// cards do, not the grid tmux has yet to answer with.
+#[gpui::test]
+fn reader_panes_follow_a_divider_preview(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::pane_cards::{PAD, render::painted};
+    use crate::tmux_snapshot::reader::{Published, Status};
+    let (sender, _receiver) = mpsc::sync_channel(64);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let mut view = make_view(window, cx, sender);
+        view.browser_state = state(Axis::Cols);
+        view.browser_state.resize_gesture_supported = true;
+        for (pane, generation) in [("a", 1), ("b", 2)] {
+            view.browser_state.readers.insert(
+                pane.into(),
+                Arc::new(Published {
+                    name: format!("{pane}.md"),
+                    folder: "docs".into(),
+                    status: Status::Ready,
+                    doc: Some(Arc::new(bezel_markdown::parse("# Notes\n\nbody\n"))),
+                    lossy: false,
+                    generation,
+                }),
+            );
+        }
+        view.frame = view.browser_state.frame.clone();
+        view.painted_frame = view.frame.clone();
+        view
+    });
+    cx.simulate_resize(size(px(900.), px(600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let width = view.read_with(cx, |view, _| view.input_cell_width.unwrap());
+    let card = |id: &str| {
+        painted::cards()
+            .into_iter()
+            .find(|(card, _)| card == id)
+            .unwrap()
+            .1
+    };
+    let start = view.read_with(cx, |v, _| v.test_cell_point(5.5, 2.));
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    for step in 1..=3 {
+        let moved = start + point(px(step as f32 * width), px(0.));
+        cx.simulate_mouse_move(moved, Some(MouseButton::Left), Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(view.read_with(cx, |v, _| v.divider_content_preview().is_some()));
+        let (a, b) = (card("a"), card("b"));
+        let reader_a = cx.debug_bounds("reader:a").expect("reader a paints");
+        let reader_b = cx.debug_bounds("reader:b").expect("reader b paints");
+        // Layout rounds an edge to the device pixel; a lag is whole cells.
+        let near = |x: Pixels, y: Pixels| (x - y).abs() <= px(0.5);
+        assert!(
+            near(reader_a.right(), a.right() - px(PAD)),
+            "step {step}: {reader_a:?} in {a:?}"
+        );
+        assert!(
+            near(reader_b.left(), b.left() + px(PAD)),
+            "step {step}: {reader_b:?} in {b:?}"
+        );
+        assert!(
+            near(reader_b.right(), b.right() - px(PAD)),
+            "step {step}: {reader_b:?} in {b:?}"
+        );
+    }
+}
