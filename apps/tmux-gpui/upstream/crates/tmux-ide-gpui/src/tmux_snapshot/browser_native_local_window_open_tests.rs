@@ -3,6 +3,8 @@
 use super::*;
 use herdr_client::tmux_daemon::InventoryWindow;
 
+const MIXED: &str = "mixed";
+
 fn win(id: &str, active: bool, range: std::ops::Range<usize>) -> InventoryWindow {
     InventoryWindow {
         id: id.into(),
@@ -160,8 +162,10 @@ fn an_agent_open_issues_the_agents_window() {
     assert_eq!((issued_panes.len(), selected.as_str()), (10, "pane.p0"));
 }
 
-/// Home counts the largest window when the daemon reports it: a session of
-/// 38 panes whose windows fit opens, and its row does not say "too many".
+/// Home judges by windows when the daemon reports the largest one: a session
+/// whose windows all fit opens plainly; one with a window too large still
+/// opens, with a note, since another window may fit; one whose only window
+/// is too large is refused (lead, 17 Nov).
 #[test]
 fn home_counts_the_largest_window_not_the_session() {
     let (mut local, events) = fixture();
@@ -173,6 +177,10 @@ fn home_counts_the_largest_window_not_the_session() {
             _ => 3,
         });
     }
+    catalog.sessions[0].sessions.push(Session {
+        largest_window_pane_count: Some(30),
+        ..session(MIXED, 38, Some(2))
+    });
     local.receive_catalog(catalog, false).unwrap();
     drain(&events);
     let label = |local: &Local, name: &str| {
@@ -181,6 +189,10 @@ fn home_counts_the_largest_window_not_the_session() {
     };
     assert_eq!(label(&local, HUGE), "38 panes");
     assert_eq!(label(&local, BIG), "25 panes · too many");
+    assert_eq!(
+        label(&local, MIXED),
+        "38 panes · a window has more than 24 panes"
+    );
     local.open(8, key(&local, BIG), None).unwrap();
     assert!(
         local.stage.is_none(),
@@ -194,6 +206,42 @@ fn home_counts_the_largest_window_not_the_session() {
     local.open(9, key(&local, HUGE), None).unwrap();
     assert!(matches!(local.stage, Some(Stage::Open { .. })));
     assert!(local.state.home_notice.is_none());
+}
+
+#[test]
+fn a_session_with_one_window_too_large_still_opens_on_another() {
+    let (mut local, events) = fixture();
+    let mut catalog = catalog(3);
+    catalog.sessions[0].sessions.push(Session {
+        largest_window_pane_count: Some(30),
+        ..session(MIXED, 38, Some(2))
+    });
+    local.receive_catalog(catalog, false).unwrap();
+    drain(&events);
+    local.open(9, key(&local, MIXED), None).unwrap();
+    assert!(local.state.home_notice.is_none());
+    let Some(Stage::Open { target, preferred }) = local.stage.take() else {
+        panic!("a session with a window that may fit must open");
+    };
+    local
+        .completed(
+            Stage::Open { target, preferred },
+            CatalogResult::Opened {
+                workspace_name: "fixture".into(),
+                panes: panes(38),
+                windows: Some(vec![
+                    win("window.a", true, 0..30),
+                    win("window.b", false, 30..38),
+                ]),
+            },
+        )
+        .unwrap();
+    let (window, issued_panes, _) = issued(&local);
+    assert_eq!(
+        (window.as_deref(), issued_panes.len()),
+        (Some("window.b"), 8)
+    );
+    assert_eq!(local.window_notice, Some(window::OTHER_WINDOW));
 }
 
 /// A pane of another window, chosen while a window is streamed, opens the

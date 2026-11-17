@@ -460,14 +460,18 @@ pub(super) fn layout(session: &browser::fleet::Session) -> String {
             browser::TOO_MANY_PANES
         );
     }
-    match session.window_count {
+    let layout = match session.window_count {
         Some(windows) => format!(
             "{} · {}",
             crate::plural::count(windows, "window", "windows"),
             panes(session.pane_count)
         ),
         None => panes(session.pane_count),
+    };
+    if browser::window_too_large(session.pane_count, session.largest_window) {
+        return format!("{layout} · {}", browser::WINDOW_TOO_LARGE);
     }
+    layout
 }
 
 /// When a session was last active, said the way a person would.

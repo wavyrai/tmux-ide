@@ -89,7 +89,13 @@ fn fleet_rows_over_the_limit_say_they_are_too_many_to_open() {
         fleet_rows::layout(&session)
     };
     assert_eq!(windowed(60, 24), "3 windows · 60 panes");
-    assert_eq!(windowed(60, 25), "60 panes · too many");
+    // A window too large: the session may still open on another one.
+    assert_eq!(
+        windowed(60, 25),
+        "3 windows · 60 panes · a window has more than 24 panes"
+    );
+    // The largest window holds every pane: nothing fits.
+    assert_eq!(windowed(30, 30), "30 panes · too many");
 }
 
 /// #357 review, item 1: a catalog drop with a pane-limit notice on Home keeps

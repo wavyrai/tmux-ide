@@ -52,14 +52,24 @@ pub(super) const NATIVE_STREAM_MAX_PANES: u64 = herdr_client::tmux_stream::MAX_P
 /// What a session row says after its pane count when the native app cannot
 /// open that session.
 pub(super) const TOO_MANY_PANES: &str = "too many";
-/// Whether the native app opens a session: a daemon that streams one window
-/// at a time (#806) reports its largest window, and that must fit; otherwise
-/// the whole session must.
+/// What a session row adds when some window of it is too large to open, but
+/// the session may still open on another window (#806).
+pub(super) const WINDOW_TOO_LARGE: &str = "a window has more than 24 panes";
+/// Whether Home refuses a session. Without window streams the whole session
+/// must fit. A daemon that streams one window at a time (#806) reports the
+/// largest window: when it fits, every window does; when it holds every pane,
+/// no window fits. Otherwise another window may fit, and the open decides
+/// from the session's windows.
 pub(super) fn too_many_panes(pane_count: u64, largest_window: Option<u64>) -> bool {
-    largest_window
-        .filter(|count| *count > 0)
-        .unwrap_or(pane_count)
-        > NATIVE_STREAM_MAX_PANES
+    match largest_window.filter(|count| *count > 0) {
+        None => pane_count > NATIVE_STREAM_MAX_PANES,
+        Some(largest) => largest > NATIVE_STREAM_MAX_PANES && largest >= pane_count,
+    }
+}
+/// Whether a session Home opens has a window too large to show (#806).
+pub(super) fn window_too_large(pane_count: u64, largest_window: Option<u64>) -> bool {
+    !too_many_panes(pane_count, largest_window)
+        && largest_window.is_some_and(|largest| largest > NATIVE_STREAM_MAX_PANES)
 }
 impl Choice {
     pub(super) fn pane_count_label(&self) -> Option<String> {
@@ -67,6 +77,8 @@ impl Choice {
             let panes = format!("{count} {}", if count == 1 { "pane" } else { "panes" });
             if too_many_panes(count, self.largest_window) {
                 format!("{panes} · {TOO_MANY_PANES}")
+            } else if window_too_large(count, self.largest_window) {
+                format!("{panes} · {WINDOW_TOO_LARGE}")
             } else {
                 panes
             }
