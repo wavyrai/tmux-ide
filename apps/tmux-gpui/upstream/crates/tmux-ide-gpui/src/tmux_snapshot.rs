@@ -27,6 +27,7 @@ mod composition;
 mod connection;
 mod controls;
 mod copy;
+mod cursor_motion;
 mod decode;
 pub(crate) mod design;
 mod developer_mode;
@@ -386,6 +387,7 @@ fn show_owned(
                         sidebar_hidden: false,
                         sidebar_keyboard: Default::default(),
                         developer_mode: Default::default(),
+                        cursor_motion: Default::default(),
                         terminal_font: terminal_font::Settings::pending(),
                         resize_gesture: Default::default(),
                         last_resize: None,
@@ -486,6 +488,7 @@ struct SnapshotView {
     sidebar_hidden: bool,
     sidebar_keyboard: browser_ui::SidebarKeyboard,
     developer_mode: developer_mode::Settings,
+    cursor_motion: cursor_motion::Setting,
     terminal_font: terminal_font::Settings,
     resize_gesture: divider::Owner,
     last_resize: Option<(u64, u16, u16)>,
@@ -646,6 +649,7 @@ impl SnapshotView {
                             return;
                         }
                         entity.update(cx, |view, cx| {
+                            view.glide_cursor(&painter, &frame, &resize_preview, window, cx);
                             if view.browsing
                                 // Platform text delivery is not input authority. Keep it
                                 // installed across focus loss so the first returning commit

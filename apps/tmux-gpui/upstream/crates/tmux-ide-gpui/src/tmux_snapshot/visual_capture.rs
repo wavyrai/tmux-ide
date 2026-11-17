@@ -261,6 +261,7 @@ fn capture_view(
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
+        cursor_motion: Default::default(),
         terminal_font: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,

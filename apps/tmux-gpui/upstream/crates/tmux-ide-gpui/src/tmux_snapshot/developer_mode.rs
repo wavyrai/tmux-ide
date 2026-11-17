@@ -1,4 +1,5 @@
 //! Local presentation preference; never changes daemon or terminal authority.
+//! Its file format and atomic write also keep the cursor animation setting.
 use super::SnapshotView;
 use gpui::Context;
 use serde::{Deserialize, Serialize};
@@ -9,9 +10,9 @@ use std::{
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Saved {
+pub(super) struct Saved {
     version: u8,
-    enabled: bool,
+    pub enabled: bool,
 }
 #[derive(Default)]
 pub(super) struct Settings {
@@ -23,38 +24,47 @@ pub(super) struct Settings {
     path: Option<PathBuf>,
 }
 fn path() -> Option<PathBuf> {
+    config_path("gpui-developer.json")
+}
+/// A preferences file in tmux-ide's own configuration folder.
+pub(super) fn config_path(name: &str) -> Option<PathBuf> {
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".config")))
         .filter(|p| p.is_absolute())
-        .map(|p| p.join("tmux-ide/gpui-developer.json"))
+        .map(|p| p.join("tmux-ide").join(name))
 }
-fn read(path: &Path) -> io::Result<Saved> {
+pub(super) fn read(path: &Path) -> io::Result<Saved> {
     if !std::fs::metadata(path)?.is_file() {
-        return Err(io::Error::other("developer preferences must be a file"));
+        return Err(io::Error::other("preferences must be a file"));
     }
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
         .take(1025)
         .read_to_end(&mut bytes)?;
     if bytes.len() > 1024 {
-        return Err(io::Error::other("developer preferences exceed limit"));
+        return Err(io::Error::other("preferences exceed limit"));
     }
     let saved: Saved = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     if saved.version != 1 {
-        return Err(io::Error::other(
-            "unsupported developer preferences version",
-        ));
+        return Err(io::Error::other("unsupported preferences version"));
     }
     Ok(saved)
 }
-fn write(path: &Path, enabled: bool) -> io::Result<()> {
+pub(super) fn write(path: &Path, enabled: bool) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::other("missing preferences parent"))?;
     std::fs::create_dir_all(parent)?;
-    let temporary = parent.join(format!(".gpui-developer-{}.tmp", std::process::id()));
+    let stem = path
+        .file_stem()
+        .ok_or_else(|| io::Error::other("missing preferences name"))?;
+    let temporary = parent.join(format!(
+        ".{}-{}.tmp",
+        stem.to_string_lossy(),
+        std::process::id()
+    ));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -101,6 +111,7 @@ impl Settings {
 }
 impl SnapshotView {
     pub(super) fn load_developer_mode(&mut self, cx: &mut Context<Self>) {
+        self.load_cursor_motion(cx);
         if self.developer_mode.started {
             return;
         }

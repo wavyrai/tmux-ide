@@ -4,6 +4,7 @@ use super::{Row, Target, browser};
 pub(in crate::tmux_snapshot) enum Action {
     Fonts,
     DeveloperMode(bool),
+    CursorMotion(bool),
     CopyDiagnostics,
     Shortcuts,
     Help,
@@ -37,13 +38,14 @@ pub(super) fn command_rows_with_sidebar(
     query: &str,
     hidden: bool,
 ) -> Vec<Row> {
-    command_rows_with_settings(state, query, hidden, false)
+    command_rows_with_settings(state, query, hidden, false, true)
 }
 pub(super) fn command_rows_with_settings(
     state: &browser::State,
     query: &str,
     hidden: bool,
     developer_mode: bool,
+    cursor_motion: bool,
 ) -> Vec<Row> {
     let query: String = query.chars().take(256).collect::<String>().to_lowercase();
     let mut rows: Vec<Row> = [
@@ -62,6 +64,14 @@ pub(super) fn command_rows_with_settings(
                 "Disable Developer mode"
             } else {
                 "Enable Developer mode"
+            },
+        ),
+        (
+            Action::CursorMotion(!cursor_motion),
+            if cursor_motion {
+                "Turn off cursor animation"
+            } else {
+                "Turn on cursor animation"
             },
         ),
         (Action::CopyDiagnostics, "Copy diagnostics"),

@@ -534,6 +534,7 @@ impl SnapshotView {
                     "",
                     self.sidebar_hidden,
                     self.developer_mode.enabled,
+                    self.cursor_motion.enabled,
                 )
             } else if mode == Mode::Theme {
                 theme_rows(&self.browser_state, "")
@@ -599,6 +600,7 @@ impl SnapshotView {
                 picker.search.read(cx).text(),
                 self.sidebar_hidden,
                 self.developer_mode.enabled,
+                self.cursor_motion.enabled,
             )
         } else if picker.mode == Mode::Theme {
             theme_rows(&self.browser_state, picker.search.read(cx).text())
@@ -711,6 +713,7 @@ impl SnapshotView {
             Target::Command(
                 Action::ToggleSidebar
                     | Action::DeveloperMode(_)
+                    | Action::CursorMotion(_)
                     | Action::CopyDiagnostics
                     | Action::Shortcuts
                     | Action::Help
@@ -730,6 +733,8 @@ impl SnapshotView {
         }
         if matches!(&target, Target::Command(Action::DeveloperMode(_)))
             && (!self.developer_mode.ready || self.developer_mode.saving)
+            || matches!(&target, Target::Command(Action::CursorMotion(_)))
+                && (!self.cursor_motion.ready || self.cursor_motion.saving)
         {
             return;
         }
@@ -739,6 +744,10 @@ impl SnapshotView {
                 Action::CopyDiagnostics => self.copy_diagnostics(window, cx),
                 Action::DeveloperMode(enabled) => {
                     self.set_developer_mode(enabled, cx);
+                    self.open_picker_mode(Mode::Commands, window, cx);
+                }
+                Action::CursorMotion(enabled) => {
+                    self.set_cursor_motion(enabled, cx);
                     self.open_picker_mode(Mode::Commands, window, cx);
                 }
                 Action::Fonts => self.open_picker_mode(Mode::Font, window, cx),
