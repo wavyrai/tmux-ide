@@ -17,7 +17,7 @@ struct Owned {
     fleet: Option<background_fleet::Handle>,
 }
 impl Owner {
-    pub(super) fn observation_source(&self) -> Result<CatalogSource, Error> {
+    pub(in crate::tmux_snapshot) fn observation_source(&self) -> Result<CatalogSource, Error> {
         let owned = self
             .0
             .lock()

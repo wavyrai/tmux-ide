@@ -350,6 +350,11 @@ impl SnapshotView {
             super::renderer_probe::runtime::rejected();
             return;
         }
+        // Typing into a pane makes a copy from it the user's doing (remote copy).
+        if terminal && let Some(pane) = self.browser_state.selected_pane.as_deref() {
+            let now = cx.background_executor().now();
+            self.remote_copy.note_input(pane, now);
+        }
         if terminal && self.pending_input.is_some() {
             self.hold_pending_input(input, cx);
             return;

@@ -256,6 +256,7 @@ impl Local {
             });
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
         state.window_stream = (self.active.as_ref()).is_some_and(|route| route.window.is_some());
+        state.machine_label.clone_from(&self.machine_label);
         state.act = home_recovery::act(self.home.fault(), &state);
         // Shown on Home only, and only while the list that reported it is
         // live: a terminal names its own service, which may be another

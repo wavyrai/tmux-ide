@@ -33,6 +33,11 @@ pub use catalog_events::{
     CatalogEventEffect, CatalogEventError, CatalogEventIdentity, CatalogEvents,
 };
 pub use catalog_watch::{CatalogWatchError, CatalogWatchWorker};
+mod remote_bridge;
+mod remote_bridge_wire;
+pub mod remote_clipboard;
+pub use remote_bridge::{BridgeEnd, RemoteBridgeError, RemoteBridgeWorker};
+pub use remote_bridge_wire::{BridgeEvent, MAX_TEXT_BYTES as REMOTE_CLIPBOARD_MAX_BYTES};
 mod create_pane;
 mod create_session;
 mod local_session;

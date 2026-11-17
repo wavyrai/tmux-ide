@@ -148,6 +148,7 @@ pub(super) fn fixture_view(
         fit_settle: Default::default(),
         window_size: Default::default(),
         images_lost: Default::default(),
+        remote_copy: Default::default(),
         marked: String::new(),
         marked_selection: None,
         input_geometry: Some((

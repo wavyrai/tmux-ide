@@ -61,6 +61,7 @@ mod pointer;
 mod presence;
 mod reader;
 mod reconnect_retry;
+mod remote_copy;
 mod renderer_probe;
 mod roster_counts;
 mod selection;
@@ -286,6 +287,7 @@ fn show_owned(
         cx.on_action(move |_: &crate::Quit, cx| {
             request_native_quit(action_owner.clone(), action_closing.clone(), cx);
         });
+        let copy_owner = owner.clone();
         let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
         let result = cx.open_window(
             WindowOptions {
@@ -392,6 +394,7 @@ fn show_owned(
                         fit_settle: Default::default(),
                         window_size: Default::default(),
                         images_lost: Default::default(),
+                        remote_copy: remote_copy::RemoteCopy::new(copy_owner.clone()),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -492,6 +495,7 @@ struct SnapshotView {
     fit_settle: geometry::FitSettle,
     window_size: window_size_notice::Watch,
     images_lost: images_lost_notice::Watch,
+    remote_copy: remote_copy::RemoteCopy,
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
