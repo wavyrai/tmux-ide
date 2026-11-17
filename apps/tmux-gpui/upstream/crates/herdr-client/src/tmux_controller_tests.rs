@@ -326,6 +326,8 @@ fn paste_facade_waits_for_exact_ack_before_each_suffix() {
 #[path = "tmux_controller_pixel_tests.rs"]
 mod pixels;
 
+#[path = "tmux_controller_history_tests.rs"]
+mod history_tests;
 #[path = "tmux_controller_projection_tests.rs"]
 mod projection;
 

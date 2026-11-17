@@ -1,3 +1,5 @@
+#[path = "tmux_controller_history.rs"]
+mod history;
 #[path = "tmux_controller_pixels.rs"]
 mod pixels;
 #[path = "tmux_controller_projection.rs"]
@@ -76,6 +78,9 @@ pub struct Controller {
     cell_pixels: Option<CellPixels>,
     sent_cell_pixels: Option<CellPixels>,
     materializing: BTreeMap<String, (String, String)>,
+    /// Capability 122: the last history request per pane, by its incarnation
+    /// and unloaded rows, so one is in flight per pane.
+    history_requests: BTreeMap<String, history::Asked>,
     /// From the stream's start until input is first ready: what a (re)connect
     /// costs. Reported once (`input_report`).
     opened: std::time::Instant,
@@ -151,6 +156,7 @@ impl Controller {
             cell_pixels: None,
             sent_cell_pixels: None,
             materializing: BTreeMap::new(),
+            history_requests: BTreeMap::new(),
             opened: std::time::Instant::now(),
             received: BTreeMap::new(),
             reported: false,
@@ -167,6 +173,7 @@ impl Controller {
         self.cached_window = None;
         self.current.clear();
         self.materializing.clear();
+        self.history_requests.clear();
         self.viewport = None;
         self.inflight_viewport = None;
         self.cell_pixels = None;
@@ -463,7 +470,7 @@ impl Controller {
             if update
                 .snapshot
                 .as_ref()
-                .is_none_or(|s| s.history.is_complete())
+                .is_none_or(|s| !s.history.is_deferred())
             {
                 self.materializing.remove(pane);
             }

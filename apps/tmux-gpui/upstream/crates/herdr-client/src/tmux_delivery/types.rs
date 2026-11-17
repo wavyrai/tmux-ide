@@ -166,6 +166,11 @@ impl History {
             Self::Deferred(_) => false,
         }
     }
+    /// A projection's history (111/112): the canonical rows are not here at
+    /// all, unlike a partial history, which holds the newest rows.
+    pub fn is_deferred(&self) -> bool {
+        matches!(self, Self::Deferred(_))
+    }
     /// History rows not held: older than every held row.
     pub fn unloaded_rows(&self) -> usize {
         match self {

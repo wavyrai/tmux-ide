@@ -167,6 +167,31 @@ pub struct HistoryRequest {
     pub unloaded_rows: usize,
     pub max_rows: usize,
 }
+impl HistoryRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        workspace: &str,
+        pane: &str,
+        generation: &str,
+        incarnation: &str,
+        delivery_nonce: &str,
+        canonical_revision: u64,
+        unloaded_rows: usize,
+        max_rows: usize,
+    ) -> Self {
+        Self {
+            kind: "terminal.delivery.history-request",
+            workspace_name: workspace.into(),
+            semantic_pane_id: pane.into(),
+            generation: generation.into(),
+            incarnation: incarnation.into(),
+            delivery_nonce: delivery_nonce.into(),
+            canonical_revision,
+            unloaded_rows,
+            max_rows,
+        }
+    }
+}
 /// The most rows one history request may ask for.
 pub const HISTORY_CHUNK_MAX_ROWS: usize = 2000;
 
@@ -343,17 +368,16 @@ impl Receiver {
         if partial.unloaded.rows == 0 {
             return None;
         }
-        Some(HistoryRequest {
-            kind: "terminal.delivery.history-request",
-            workspace_name: self.workspace.clone(),
-            semantic_pane_id: self.pane.clone(),
-            generation: self.negotiated.generation.clone(),
-            incarnation: self.incarnation.clone()?,
-            delivery_nonce: self.negotiated.delivery_nonce.clone(),
-            canonical_revision: self.revision?,
-            unloaded_rows: partial.unloaded.rows,
+        Some(HistoryRequest::new(
+            &self.workspace,
+            &self.pane,
+            &self.negotiated.generation,
+            self.incarnation.as_deref()?,
+            &self.negotiated.delivery_nonce,
+            self.revision?,
+            partial.unloaded.rows,
             max_rows,
-        })
+        ))
     }
     pub fn changed_rows(&self) -> &[usize] {
         &self.changed_rows

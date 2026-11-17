@@ -125,6 +125,18 @@ fn issue_body(
     }
     Ok(body.to_string())
 }
+/// Capability 122, history on demand: a seed carries the screen and the
+/// newest 200 history rows, and the app asks for older rows as it needs
+/// them. Only a daemon that knows it (2.9.26) also takes an offer of more
+/// than nine numbers (#433); every other daemon gets the offer unchanged.
+fn with_partial_history(mut versions: Vec<u32>, product_version: Option<&str>) -> Vec<u32> {
+    if release_at_least(product_version, PARTIAL_HISTORY_SINCE)
+        && versions.len() < MAX_OFFERED_VERSIONS_2_9_26
+    {
+        versions.push(PARTIAL_HISTORY);
+    }
+    versions
+}
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
     let Some(version) = product_version else {
@@ -156,6 +168,11 @@ const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 25];
 /// The first daemon release with window-scoped streams (#806). Not yet set
 /// by a release: the PM confirms it when the daemon side ships.
 const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
+/// Capability 122 and the bound of 16 offered numbers ship together (PM:
+/// history on demand in 2.9.26).
+const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 26];
+const PARTIAL_HISTORY: u32 = 122;
+const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;
@@ -238,6 +255,7 @@ impl ServerClient {
             selection.mode == ViewerMode::Interactive,
             knows_topology_bundle(daemon_version.as_deref()),
         );
+        let versions = with_partial_history(versions, daemon_version.as_deref());
         let body = issue_body(
             &request_id,
             &scope.generation,

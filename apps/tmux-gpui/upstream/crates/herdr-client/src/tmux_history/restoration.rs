@@ -115,7 +115,7 @@ impl Restoration {
             self.frames.clear();
             return;
         };
-        if !snapshot.history.is_complete() {
+        if snapshot.history.is_deferred() {
             self.retire();
             return;
         }
@@ -135,11 +135,13 @@ impl Restoration {
                 cols: snapshot.cols,
                 rows: snapshot.rows,
                 alternate: snapshot.modes.alternate_screen,
-                start: snapshot
-                    .history
-                    .materialized()
-                    .map_or(0, |rows| rows.len())
-                    .saturating_sub(history.len()),
+                // Indexes count the whole history, unloaded rows first.
+                start: snapshot.history.unloaded_rows()
+                    + snapshot
+                        .history
+                        .materialized()
+                        .map_or(0, |rows| rows.len())
+                        .saturating_sub(history.len()),
                 history,
                 bytes,
             });

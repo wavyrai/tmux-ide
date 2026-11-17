@@ -274,3 +274,39 @@ fn an_invalid_window_id_cannot_reach_the_owner() {
     s.window = Some("window.two".into());
     assert!(s.validate().is_ok());
 }
+
+/// Capability 122 goes only to a daemon release that has it, which also takes
+/// a tenth number; older or unknown daemons keep the same offer of at most
+/// nine numbers.
+#[test]
+fn history_on_demand_is_offered_only_from_2_9_26() {
+    for (graphics, local, surfaces, interactive) in [
+        (true, true, true, true),
+        (true, false, false, true),
+        (false, false, false, false),
+    ] {
+        let base = |version: &str| {
+            offered_versions(
+                graphics,
+                local,
+                surfaces,
+                interactive,
+                knows_topology_bundle(Some(version)),
+            )
+        };
+        for knowing in ["2.9.26", "2.10.0", "3.0.0"] {
+            let offer = with_partial_history(base(knowing), Some(knowing));
+            assert_eq!(offer.last(), Some(&122), "{knowing}: {offer:?}");
+            assert_eq!(offer[..offer.len() - 1], base(knowing)[..]);
+            assert!(offer.len() <= 16);
+        }
+        for older in ["2.9.25", "2.9.26-rc.1", "bad"] {
+            let offer = with_partial_history(base(older), Some(older));
+            assert!(
+                !offer.contains(&122) && offer.len() <= 9,
+                "{older}: {offer:?}"
+            );
+        }
+        assert!(!with_partial_history(base("2.9.25"), None).contains(&122));
+    }
+}

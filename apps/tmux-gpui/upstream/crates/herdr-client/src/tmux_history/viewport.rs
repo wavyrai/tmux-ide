@@ -82,11 +82,12 @@ impl Viewport {
         };
         self.anchor = self.history.get(self.history.len() - self.offset).cloned();
     }
+    /// The anchor's index in the whole history: a partial history's unloaded
+    /// rows come first.
     pub fn capture_index(&self) -> Option<usize> {
-        unique_index(
-            self.current.as_ref()?.history.materialized()?,
-            self.anchor.as_ref()?,
-        )
+        let history = &self.current.as_ref()?.history;
+        unique_index(history.materialized()?, self.anchor.as_ref()?)
+            .map(|index| history.unloaded_rows() + index)
     }
     pub fn restore_row(&mut self, row: &Arc<Row>) -> bool {
         let Some(index) = unique_index(&self.history, row) else {
