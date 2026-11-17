@@ -46,7 +46,9 @@ fn a_history_request_is_scoped_and_one_is_in_flight_per_pane() {
     assert!(!c.materialize_history("left").unwrap());
     let owns = c.owns(Authority::Input);
     assert!(c.request_history("left", now).unwrap());
-    assert!(c.request_history("left", now).unwrap(), "still in flight");
+    let soon = now + Duration::from_secs(1);
+    assert!(c.request_history("left", soon).unwrap(), "still in flight");
+    assert_eq!(c.history_requests["left"].at, now, "not sent again");
     let wire = observed.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(
         wire,

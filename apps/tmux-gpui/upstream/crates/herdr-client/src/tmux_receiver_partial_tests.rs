@@ -212,6 +212,14 @@ fn partial_history_refuses_what_does_not_verify() {
             deliver(&mut r, encoding, &steps[0], &e).is_err(),
             "{encoding} complete"
         );
+        // A partial envelope without its commitment.
+        let mut r = receiver(encoding);
+        let mut e = envelope(encoding, &steps[0], &transaction());
+        e.as_object_mut().unwrap().remove("historyUnloaded");
+        assert!(
+            deliver(&mut r, encoding, &steps[0], &e).is_err(),
+            "{encoding} bare"
+        );
         let mut plain = receiver(encoding);
         plain.negotiated.partial_history = None;
         let e = envelope(encoding, &steps[0], &transaction());
