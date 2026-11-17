@@ -59,12 +59,11 @@ impl Render for SidebarView {
         // Hover washes ask their painter for the frames of their fade: that
         // must be this view, or those frames would replay it.
         let painter = bezel_motion::Painter::of(cx);
-        let frame = Frame {
-            assistive: window.is_a11y_active(),
-            text: (
-                f32::from(window.rem_size()).to_bits(),
-                window.scale_factor().to_bits(),
-            ),
+        let frame = sidebar::window::Frame {
+            rem: window.rem_size(),
+            viewport: window.viewport_size().height,
+            every: window.is_a11y_active(),
+            reveal: None,
         };
         self.parent
             .update(cx, |view, cx| {
@@ -239,7 +238,7 @@ impl SnapshotView {
         &mut self,
         owner: EntityId,
         painter: bezel_motion::Painter,
-        frame: Frame,
+        frame: sidebar::window::Frame,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         self.agent_animation.begin_render(owner);
@@ -293,23 +292,15 @@ impl SnapshotView {
             })
             .collect();
         let list = self.sidebar_keyboard.scroll.clone();
-        let context = digest(|hash| {
-            (
-                frame.text,
-                format!("{:?}", theme),
-                f32::from(list.bounds().size.width).to_bits(),
-            )
-                .hash(hash)
-        });
         let keyboard_row = self.sidebar_keyboard.selected.clone();
-        let plan = self
-            .sidebar_view
-            .rows
-            .plan(&shapes, context, &list, frame.assistive, |index| {
-                rows[index].selected
-                    || (rows[index].target.is_some() && rows[index].target == keyboard_row)
-            });
-        let windowed = plan.iter().any(Option::is_some);
+        let frame = sidebar::window::Frame {
+            reveal: self.sidebar_keyboard.revealing.take(),
+            ..frame
+        };
+        let plan = self.sidebar_view.rows.plan(&shapes, frame, &list, |index| {
+            rows[index].selected
+                || (rows[index].target.is_some() && rows[index].target == keyboard_row)
+        });
         for (index, (row, placeholder)) in rows.into_iter().zip(plan).enumerate() {
             if let Some(space) = placeholder {
                 sidebar = sidebar.child(sidebar::window::placeholder(space));
@@ -421,21 +412,8 @@ impl SnapshotView {
                     .fill(),
             )
             .child(self.sidebar_footer(cx))
-            .child(
-                self.sidebar_view
-                    .rows
-                    .measure(shapes, &list, windowed, owner),
-            )
+            .child(self.sidebar_view.rows.measure(shapes, &list, owner))
     }
-}
-
-/// What the sidebar's render reads of the window.
-#[derive(Clone, Copy)]
-pub(in crate::tmux_snapshot) struct Frame {
-    /// Assistive technology reads the window: every row is built.
-    assistive: bool,
-    /// The rem size and scale factor, which the rows' text is laid out at.
-    text: (u32, u32),
 }
 
 /// A digest of everything a row draws, and whether its agents resolve: the

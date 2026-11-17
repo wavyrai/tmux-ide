@@ -13,8 +13,19 @@
 //! A row whose content changes (a summary added, a new kind, a new label)
 //! has a new shape, so it is built and measured again. A row never measured
 //! is built, and so is every row after it on that frame, since where they
-//! sit is not known. Every size is forgotten when the text or the list's
-//! width can have changed.
+//! sit is not known. Every size is forgotten when the rem size changes:
+//! the rows' horizontal padding is in rems, so an activity summary can wrap
+//! onto another line. Nothing else that sets a row's height can change
+//! without its shape changing: the list's width is the fixed `SIDEBAR_WIDTH`
+//! (its scrollbar overlays the rows), the rows' text sizes and leading are
+//! points from the type ladder, the theme sets only colors, and layout is in
+//! points at any scale factor.
+//!
+//! A render plans against where the list will be when it is laid out. A
+//! reveal (`scroll_to_item`) moves the list in prepaint, after the render,
+//! so the render plans around the row revealed. A window grown since the
+//! last layout grows the list with it, so the render plans for the taller
+//! list.
 //!
 //! The selected row and the keyboard's row stay built wherever they are.
 //! While assistive technology reads the window every row is built: VoiceOver
@@ -41,76 +52,133 @@ pub(in crate::tmux_snapshot) struct RowWindow(Rc<RefCell<Inner>>);
 #[derive(Default)]
 struct Inner {
     sizes: HashMap<u64, Space>,
-    /// What the sizes were measured under: the theme, the rem size, the
-    /// scale factor and the list's width.
-    context: Option<u64>,
+    /// The rem size the sizes were measured at.
+    rem: Option<Pixels>,
+    /// The window's viewport height when the list was last laid out.
+    viewport: Option<Pixels>,
+    /// What the last render planned against.
+    planned: Option<Planned>,
 }
 
 /// What a render planned against: the list's visible height and offset.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Planned {
     height: Pixels,
     offset: Pixels,
 }
 
+/// What the sidebar's render knows of its frame.
+#[derive(Clone, Copy)]
+pub(in crate::tmux_snapshot) struct Frame {
+    /// The window's rem size.
+    pub rem: Pixels,
+    /// The window's viewport height.
+    pub viewport: Pixels,
+    /// Assistive technology reads the window: every row is built.
+    pub every: bool,
+    /// The list child a reveal scrolls to on this frame's layout.
+    pub reveal: Option<usize>,
+}
+
+/// The list as last laid out, in its unscrolled coordinates from its top:
+/// where the first row's lead begins (the Home row's bottom), its visible
+/// height and its scroll offset (zero or less).
+#[derive(Clone, Copy)]
+pub(in crate::tmux_snapshot) struct View {
+    pub start: Option<Pixels>,
+    pub height: Pixels,
+    pub offset: Pixels,
+}
+
+impl View {
+    fn of(list: &ScrollHandle) -> Self {
+        let view = list.bounds();
+        Self {
+            start: list
+                .bounds_for_item(0)
+                .map(|home| home.bottom() - view.top()),
+            height: view.size.height,
+            offset: list.offset().y,
+        }
+    }
+}
+
 impl RowWindow {
     /// For each row (in list order, after the Home row), `None` to build it
-    /// or the space of the placeholder that stands for it. `every` builds
-    /// every row (assistive technology); `keep` says which rows stay built.
+    /// or the space of the placeholder that stands for it. `keep` says which
+    /// rows stay built.
     pub(in crate::tmux_snapshot) fn plan(
         &self,
         shapes: &[u64],
-        context: u64,
+        frame: Frame,
         list: &ScrollHandle,
-        every: bool,
+        keep: impl Fn(usize) -> bool,
+    ) -> Vec<Option<Space>> {
+        self.plan_at(shapes, frame, View::of(list), keep)
+    }
+
+    pub(in crate::tmux_snapshot) fn plan_at(
+        &self,
+        shapes: &[u64],
+        frame: Frame,
+        view: View,
         keep: impl Fn(usize) -> bool,
     ) -> Vec<Option<Space>> {
         let mut inner = self.0.borrow_mut();
-        if inner.context.replace(context) != Some(context) {
+        if inner.rem.replace(frame.rem) != Some(frame.rem) {
             inner.sizes.clear();
         }
-        if every {
+        inner.planned = None;
+        if frame.every {
             return vec![None; shapes.len()];
         }
-        let view = list.bounds();
-        let start = list
-            .bounds_for_item(0)
-            .map(|home| home.bottom() - view.top());
+        // The list fills the window's height: it grows as the window does.
+        let grown = inner
+            .viewport
+            .map_or(px(0.), |then| (frame.viewport - then).max(px(0.)));
+        let height = view.height + grown;
         let spaces: Vec<_> = shapes
             .iter()
             .map(|shape| inner.sizes.get(shape).copied())
             .collect();
-        plan(&spaces, start, view.size.height, list.offset().y, keep)
+        let Some(offset) = revealed(&spaces, view.start, height, view.offset, frame.reveal) else {
+            return vec![None; shapes.len()];
+        };
+        let rows = plan(&spaces, view.start, height, offset, keep);
+        // With every row built, no part of the list can come into view
+        // unbuilt.
+        inner.planned = rows
+            .iter()
+            .any(Option::is_some)
+            .then_some(Planned { height, offset });
+        rows
     }
 
     /// An element with no size, laid out after the list, that measures each
     /// row as laid out on this frame. When the list's visible part is not
-    /// the one the render planned for (a resize, a jump), `owner` renders
-    /// again on the next frame, so rows that came into view are built.
+    /// the one the render planned for, `owner` renders again on the next
+    /// frame, so rows that came into view are built.
     pub(in crate::tmux_snapshot) fn measure(
         &self,
         shapes: Vec<u64>,
         list: &ScrollHandle,
-        windowed: bool,
         owner: EntityId,
     ) -> AnyElement {
         let window_rows = self.clone();
         let list = list.clone();
-        let planned = Planned {
-            height: list.bounds().size.height,
-            offset: list.offset().y,
-        };
         canvas(
             move |_, window, _| {
                 let bounds: Vec<_> = (0..=shapes.len())
                     .map_while(|index| list.bounds_for_item(index))
                     .collect();
-                learn(&mut window_rows.0.borrow_mut().sizes, &shapes, &bounds);
+                let mut inner = window_rows.0.borrow_mut();
+                learn(&mut inner.sizes, &shapes, &bounds);
+                inner.viewport = Some(window.viewport_size().height);
                 let now = Planned {
                     height: list.bounds().size.height,
                     offset: list.offset().y,
                 };
-                if windowed && moved(planned, now) {
+                if inner.planned.is_some_and(|planned| moved(planned, now)) {
                     window.on_next_frame(move |_, cx| cx.notify(owner));
                 }
             },
@@ -126,6 +194,51 @@ fn moved(planned: Planned, now: Planned) -> bool {
     (planned.height - now.height).abs() > px(0.5) || (planned.offset - now.offset).abs() > px(0.5)
 }
 
+/// Where each row sits in the list's unscrolled coordinates (its top and
+/// its space), from `start`, while every row before it has been measured.
+fn places(spaces: &[Option<Space>], start: Pixels) -> Vec<Option<(Pixels, Space)>> {
+    let mut at = Some(start);
+    spaces
+        .iter()
+        .map(|space| {
+            let place = at.zip(*space).map(|(at, space)| (at + space.lead, space));
+            at = place.map(|(top, space)| top + space.height);
+            place
+        })
+        .collect()
+}
+
+/// The offset the list has once `reveal` (a list child: 0 is the Home row)
+/// is applied, as gpui's `scroll_to_item` moves it: the least distance that
+/// shows the whole child, or its top if it is taller than the list. `None`
+/// when where the child sits is not known, as after a row never measured.
+pub(in crate::tmux_snapshot) fn revealed(
+    spaces: &[Option<Space>],
+    start: Option<Pixels>,
+    height: Pixels,
+    offset: Pixels,
+    reveal: Option<usize>,
+) -> Option<Pixels> {
+    let (Some(child), Some(start)) = (reveal, start) else {
+        return Some(offset);
+    };
+    let (top, bottom) = match child.checked_sub(1) {
+        None => (px(0.), start),
+        Some(row) if row >= spaces.len() => return Some(offset),
+        Some(row) => {
+            let (top, space) = places(spaces, start)[row]?;
+            (top, top + space.height)
+        }
+    };
+    Some(if bottom - top > height || top + offset < px(0.) {
+        -top
+    } else if bottom + offset > height {
+        height - bottom
+    } else {
+        offset
+    })
+}
+
 /// The rows to build. `spaces` are the remembered sizes (`None`: never
 /// measured), `start` where the first row's lead begins in the list's
 /// unscrolled coordinates (the Home row's bottom), `height` the list's
@@ -137,24 +250,18 @@ pub(in crate::tmux_snapshot) fn plan(
     offset: Pixels,
     keep: impl Fn(usize) -> bool,
 ) -> Vec<Option<Space>> {
-    let (Some(mut at), true) = (start, height > px(0.)) else {
+    let (Some(start), true) = (start, height > px(0.)) else {
         return vec![None; spaces.len()];
     };
     let margin = height / 4.;
     let from = px(0.) - offset - margin;
     let to = px(0.) - offset + height + margin;
-    let mut known = true;
-    spaces
-        .iter()
+    places(spaces, start)
+        .into_iter()
         .enumerate()
-        .map(|(index, space)| {
-            let Some(space) = space.filter(|_| known) else {
-                known = false;
-                return None;
-            };
-            let top = at + space.lead;
-            at = top + space.height;
-            let far = at < from || top > to;
+        .map(|(index, place)| {
+            let (top, space) = place?;
+            let far = top + space.height < from || top > to;
             (far && !keep(index)).then_some(space)
         })
         .collect()

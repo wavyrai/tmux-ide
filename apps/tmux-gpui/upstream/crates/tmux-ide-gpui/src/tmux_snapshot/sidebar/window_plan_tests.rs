@@ -111,3 +111,126 @@ fn a_row_changed_in_any_way_has_a_new_shape() {
     assert_ne!(row_shape(&base(), true, false), shape);
     assert_ne!(row_shape(&base(), false, true), shape);
 }
+
+fn frame(rem: f32) -> Frame {
+    Frame {
+        rem: px(rem),
+        viewport: px(700.),
+        every: false,
+        reveal: None,
+    }
+}
+
+const AT_TOP: View = View {
+    start: Some(px(0.)),
+    height: px(320.),
+    offset: px(0.),
+};
+
+/// The Home row ending at 0, then `count` rows of 30 pt, 2 pt apart.
+fn laid_out(count: usize) -> Vec<Bounds<Pixels>> {
+    (0..=count)
+        .map(|index| {
+            let top = px(32. * index as f32 - 30.);
+            Bounds::new(point(px(0.), top), size(px(200.), px(30.)))
+        })
+        .collect()
+}
+
+fn remembering(window: &RowWindow, shapes: &[u64], rem: f32) {
+    window.plan_at(shapes, frame(rem), AT_TOP, |_| false);
+    learn(
+        &mut window.0.borrow_mut().sizes,
+        shapes,
+        &laid_out(shapes.len()),
+    );
+}
+
+/// The sizes were measured at one rem size; at another an activity summary
+/// may wrap differently, so every row is built and measured again.
+#[test]
+fn a_new_rem_size_forgets_every_size() {
+    let shapes: Vec<u64> = (0..40).collect();
+    let window = RowWindow::default();
+    remembering(&window, &shapes, 16.);
+    let same = window.plan_at(&shapes, frame(16.), AT_TOP, |_| false);
+    assert_eq!(built(&same), (0..=12).collect::<Vec<_>>());
+    let changed = window.plan_at(&shapes, frame(20.), AT_TOP, |_| false);
+    assert_eq!(built(&changed).len(), 40, "no size is known at 20 pt rems");
+}
+
+/// A row revealed is scrolled to by the least distance, in prepaint; the
+/// rows are planned around where the list lands.
+#[test]
+fn a_reveal_plans_around_where_the_list_lands() {
+    let spaces = vec![row(2., 30.); 100];
+    // Row 99 (child 100) spans 3170..3200: at its bottom the list is
+    // scrolled by 3200 - 320.
+    let end = revealed(&spaces, Some(px(0.)), px(320.), px(0.), Some(100));
+    assert_eq!(end, Some(px(-2880.)));
+    // Row 0 above a list scrolled away brings its top to the list's top.
+    let home = revealed(&spaces, Some(px(0.)), px(320.), px(-2880.), Some(1));
+    assert_eq!(home, Some(px(-2.)));
+    // A row already shown does not move the list; neither does no reveal.
+    let shown = revealed(&spaces, Some(px(0.)), px(320.), px(0.), Some(5));
+    assert_eq!(shown, Some(px(0.)));
+    assert_eq!(
+        revealed(&spaces, Some(px(0.)), px(320.), px(-50.), None),
+        Some(px(-50.))
+    );
+    // The Home row (child 0) brings the list to its top.
+    let top = revealed(&spaces, Some(px(40.)), px(320.), px(-900.), Some(0));
+    assert_eq!(top, Some(px(0.)));
+    // A row taller than the list shows its top.
+    let tall = vec![row(2., 400.); 3];
+    let at = revealed(&tall, Some(px(0.)), px(320.), px(0.), Some(2));
+    assert_eq!(at, Some(px(-404.)));
+}
+
+#[test]
+fn a_reveal_past_a_row_never_measured_builds_every_row() {
+    let mut spaces = vec![row(2., 30.); 100];
+    spaces[50] = None;
+    assert_eq!(
+        revealed(&spaces, Some(px(0.)), px(320.), px(0.), Some(80)),
+        None
+    );
+    let window = RowWindow::default();
+    let shapes: Vec<u64> = (0..100).collect();
+    remembering(&window, &shapes[..40], 16.);
+    let reveal = Frame {
+        reveal: Some(80),
+        ..frame(16.)
+    };
+    assert_eq!(
+        built(&window.plan_at(&shapes, reveal, AT_TOP, |_| false)).len(),
+        100
+    );
+}
+
+#[test]
+fn the_plan_follows_the_reveal_and_a_grown_window() {
+    let shapes: Vec<u64> = (0..100).collect();
+    let window = RowWindow::default();
+    window.plan_at(&shapes, frame(16.), AT_TOP, |_| false);
+    {
+        let mut inner = window.0.borrow_mut();
+        learn(&mut inner.sizes, &shapes, &laid_out(100));
+        inner.viewport = Some(px(700.));
+    }
+    let end = Frame {
+        reveal: Some(100),
+        ..frame(16.)
+    };
+    // Scrolled by 2880 pt: rows 90..=99 show, and 87..=99 reach within the
+    // margin.
+    let rows = window.plan_at(&shapes, end, AT_TOP, |_| false);
+    assert_eq!(built(&rows), (87..100).collect::<Vec<_>>());
+    // The window grew by 320 pt, and the list with it: 640 pt plus 160.
+    let grown = Frame {
+        viewport: px(1020.),
+        ..frame(16.)
+    };
+    let rows = window.plan_at(&shapes, grown, AT_TOP, |_| false);
+    assert_eq!(built(&rows), (0..=24).collect::<Vec<_>>());
+}

@@ -13,8 +13,18 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     reveal: reveal::Reveal,
     pub(in crate::tmux_snapshot::browser_ui) request: u64,
     displayed: Vec<Option<Target>>,
+    /// The list child a reveal asked the list to scroll to, until the
+    /// sidebar's next render plans its rows around it (`sidebar::window`).
+    pub(in crate::tmux_snapshot::browser_ui) revealing: Option<usize>,
 }
 impl Keyboard {
+    /// Scrolls the list to `child` on the next layout. gpui applies it in
+    /// prepaint, after the render has planned which rows to build, so the
+    /// render plans around `child` instead of the current offset.
+    fn reveal(&mut self, child: usize) {
+        self.scroll.scroll_to_item(child);
+        self.revealing = Some(child);
+    }
     /// The list's scroll handle, for tests outside the sidebar.
     #[cfg(test)]
     pub(in crate::tmux_snapshot) fn scroll_for_tests(&self) -> &ScrollHandle {
@@ -133,7 +143,7 @@ impl SnapshotView {
         if next != old
             && let Some(index) = next
         {
-            state.scroll.scroll_to_item(index + 1);
+            state.reveal(index + 1);
         }
     }
     pub(in crate::tmux_snapshot) fn sidebar_keyboard_key(
@@ -173,7 +183,7 @@ impl SnapshotView {
                         id.as_ref()
                             .is_some_and(|id| Some(id) == state.selected.as_ref())
                     }) {
-                        state.scroll.scroll_to_item(index + 1);
+                        state.reveal(index + 1);
                     }
                     cx.notify();
                 } else if self.browser_state.surface == browser::Surface::Home
@@ -327,7 +337,7 @@ impl SnapshotView {
             id.as_ref()
                 .is_some_and(|id| Some(id) == state.selected.as_ref())
         }) {
-            state.scroll.scroll_to_item(index + 1);
+            state.reveal(index + 1);
         }
         cx.notify();
         true

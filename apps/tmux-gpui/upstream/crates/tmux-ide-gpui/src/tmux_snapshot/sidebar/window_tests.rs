@@ -185,3 +185,111 @@ fn the_keyboard_reveals_a_far_row_and_it_is_built(cx: &mut TestAppContext) {
     fresh(cx);
     assert!(built(cx, 99), "and stays built while it is the keyboard's");
 }
+
+/// The rows whose laid-out bounds, scrolled as painted, meet the list.
+fn shown(view: &Entity<SnapshotView>, cx: &mut VisualTestContext) -> Vec<usize> {
+    let list = cx.debug_bounds("session-list").unwrap();
+    view.read_with(cx, |view, _| {
+        let scroll = &view.sidebar_keyboard.scroll;
+        let y = scroll.offset().y;
+        (1..scroll.children_count())
+            .filter_map(|child| scroll.bounds_for_item(child).map(|b| (child - 1, b)))
+            .filter(|(_, b)| b.top() + y < list.bottom() && b.bottom() + y > list.top())
+            .map(|(row, _)| row)
+            .collect()
+    })
+}
+
+/// The rows shown that are placeholders, after `what`.
+fn unbuilt_shown(view: &Entity<SnapshotView>, cx: &mut VisualTestContext, what: &str) -> String {
+    let shown = shown(view, cx);
+    assert!(!shown.is_empty(), "{what}: no row shown");
+    let unbuilt: Vec<usize> = shown
+        .iter()
+        .copied()
+        .filter(|row| !built(cx, *row))
+        .collect();
+    if unbuilt.is_empty() {
+        return String::new();
+    }
+    format!("{what}: rows {shown:?} shown, {unbuilt:?} placeholders\n")
+}
+
+/// A key that moves the list far draws the rows it brings into view on the
+/// frame the key draws: the list scrolls in prepaint, after the render, so
+/// the render plans around the keyboard's row, not the list's old offset.
+#[gpui::test]
+fn the_frame_a_keystroke_draws_builds_every_row_shown(cx: &mut TestAppContext) {
+    let (view, cx, receiver) = open(cx, 100);
+    view.update(cx, |view, _| view.input_interrupted = true);
+    crate::tmux_snapshot::fit_test_support::settle(&view, cx, &receiver);
+    let mut failures = String::new();
+    for keys in ["ctrl-g pagedown", "pagedown", "end", "pageup", "home"] {
+        // Draws one frame, as the key does in the app; nothing draws after.
+        cx.simulate_keystrokes(keys);
+        failures += &unbuilt_shown(&view, cx, keys);
+    }
+    assert!(shown(&view, cx).contains(&0), "home reached the first row");
+    assert!(failures.is_empty(), "{failures}");
+}
+
+/// With reduced motion a new selection far down is revealed at once, in the
+/// same prepaint: that frame draws the rows around it built. The reveal is
+/// not planned around: the selected flag is part of a row's shape, so every
+/// row from the earlier of the old and the new selection on is unmeasured and
+/// built, and the rows above it lie above the list once it is revealed.
+#[gpui::test]
+fn a_reduced_motion_reveal_draws_its_rows_built(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    cx.update(|_, cx| cx.set_reduce_motion(true));
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| {
+            view.browser_state.selected_session = Some("s70".into())
+        });
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    assert!(shown(&view, cx).contains(&70), "the selection is revealed");
+    let failures = unbuilt_shown(&view, cx, "reveal");
+    assert!(failures.is_empty(), "{failures}");
+}
+
+/// A new rem size can rewrap an activity summary: every remembered size is
+/// forgotten, so every row is built and measured again.
+#[gpui::test]
+fn a_new_rem_size_builds_every_row_again(cx: &mut TestAppContext) {
+    let (_view, cx, _receiver) = open(cx, 100);
+    assert!(!built(cx, 90));
+    cx.update(|window, cx| {
+        window.set_rem_size(px(20.));
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+    let unbuilt: Vec<usize> = (0..100).filter(|row| !built(cx, *row)).collect();
+    assert!(unbuilt.is_empty(), "rows not built: {unbuilt:?}");
+    fresh(cx);
+    assert!(
+        !built(cx, 90),
+        "measured at 20 pt, far rows are placeholders"
+    );
+}
+
+/// A taller window grows the list with it: the frame the resize draws plans
+/// for the taller list.
+///
+/// Not tested here: the re-plan `RowWindow::measure` asks for on the next
+/// frame when the list's visible part is not the one planned for (a window
+/// grown in a way the list does not follow, or a scroll applied in prepaint
+/// that the render did not know of). It runs from `on_next_frame`, which
+/// this harness does not run: `window.draw` skips next-frame callbacks, and
+/// the test window's frame request is private to gpui.
+#[gpui::test]
+fn a_taller_window_draws_its_new_rows_built(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = open(cx, 100);
+    let before = shown(&view, cx).len();
+    cx.simulate_resize(size(px(1000.), px(1600.)));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(shown(&view, cx).len() > 2 * before, "the list grew");
+    let failures = unbuilt_shown(&view, cx, "resize");
+    assert!(failures.is_empty(), "{failures}");
+}
