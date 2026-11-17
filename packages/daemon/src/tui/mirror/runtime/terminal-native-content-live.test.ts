@@ -1798,7 +1798,11 @@ describe.skipIf(!available)("native history reader continuity", () => {
           expect(
             nativeSizes.some((size, index) => index > 0 && size < nativeSizes[index - 1]!),
           ).toBe(true);
-          expect(seedCount).toBeGreaterThan(initialSeeds);
+          // tmux collected history at its limit. The replica collects the
+          // same rows (#430) and follows with history trims, so the readers'
+          // continuity holds without a reseed; a reseed here would be the
+          // whole-history capture that remote clients paid for each time.
+          expect(seedCount).toBe(initialSeeds);
         }
         returnCopyLive();
         expect(copyAdapter.paneSelectionSnapshot(paneId)).toBe(snapshot());

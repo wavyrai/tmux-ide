@@ -34,7 +34,6 @@ pub(super) enum Error {
 }
 #[derive(Debug)]
 enum Control {
-    Bytes(String),
     Paste(String),
     Mouse(PointerEvent),
     Wheel(tmux_pointer::WheelEvent),
@@ -236,7 +235,7 @@ impl InputOwner {
                 if !herdr_client::tmux_control::valid_input_bytes(&hex) {
                     return Err(Error::Unsupported);
                 }
-                Work::Barrier(Control::Bytes(hex))
+                Work::Input(Input::Bytes(hex))
             }
             keys::Input::Resize { .. } => return Err(Error::Unsupported),
         };
@@ -366,14 +365,21 @@ impl InputOwner {
         now: u64,
     ) -> Result<(), Error> {
         match d.work {
-            Work::Input(input) => {
-                let sequence = c.input(&d.scope.pane, &d.scope.lifetime, input, now)?;
-                self.scheduler()?
-                    .bind_input(d.ticket, &d.scope.pane, sequence)?;
-            }
-            Work::Barrier(Control::Bytes(hex)) => {
-                self.reports(c, p, d.ticket, d.scope, vec![Input::Bytes(hex)], now)?
-            }
+            Work::Input(input) => match c.input(&d.scope.pane, &d.scope.lifetime, input, now) {
+                Ok(sequence) => self
+                    .scheduler()?
+                    .bind_input(d.ticket, &d.scope.pane, sequence)?,
+                // A daemon without raw byte input: the key is dropped, as before.
+                Err(herdr_client::tmux_controller::Error::Control(
+                    herdr_client::tmux_control::Error::Capability,
+                )) => {
+                    let next = self.scheduler()?.cancel_unsent_input(d.ticket)?;
+                    if let Some(dispatch) = next.next {
+                        self.dispatch(c, p, dispatch, now)?;
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            },
             Work::Barrier(Control::Paste(text)) => {
                 let snapshot = c
                     .committed(&d.scope.pane)

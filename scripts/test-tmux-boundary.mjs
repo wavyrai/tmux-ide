@@ -53,6 +53,7 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/mirror/native-physical-cell-oracle-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/mirror/canonical-resize-publication-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/session-runtime/terminal-hidden-viewer-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/session-runtime/xterm-history-collection-live.test.ts"],
   ...(expectedNative === "1"
     ? [
         [

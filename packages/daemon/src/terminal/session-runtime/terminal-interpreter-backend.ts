@@ -41,6 +41,12 @@ export interface TerminalInterpreterBackend {
   setAuthoritativeModes(modes: MirrorObservedTerminalModes): void;
   /** A pre-existing saved buffer became active without authoritative backing. */
   requiresNativeReseed(): boolean;
+  /**
+   * From now on, collect history at the limit the way tmux does. Off while a
+   * capture is replayed: tmux's captured history (which can exceed a lowered
+   * limit) is replayed as it is.
+   */
+  startHistoryCollection?(): void;
   modes(): TerminalReplicaModes;
   dirtyRange(): { readonly start: number; readonly end: number } | undefined;
   project(

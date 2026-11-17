@@ -82,6 +82,19 @@ describe("pane-stream lease contracts", () => {
     ).toEqual(protocolVersions);
   });
 
+  it("takes an optional window for a stream of one window (#806)", () => {
+    expect(
+      PaneStreamLeaseRequestSchemaZ.parse({
+        ...leaseRequest(),
+        semanticWindowId: "window.mirror.w1",
+      }).semanticWindowId,
+    ).toBe("window.mirror.w1");
+    expect(PaneStreamLeaseRequestSchemaZ.parse(leaseRequest()).semanticWindowId).toBeUndefined();
+    expect(
+      PaneStreamLeaseRequestSchemaZ.safeParse({ ...leaseRequest(), semanticWindowId: "" }).success,
+    ).toBe(false);
+  });
+
   it("rejects a viewport — mirror streams do not size the source", () => {
     expect(
       PaneStreamLeaseRequestSchemaZ.safeParse({

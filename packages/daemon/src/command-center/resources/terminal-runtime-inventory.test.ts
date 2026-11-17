@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer, request } from "node:http";
+import { projectTerminalRuntimeInventoryV2 } from "./terminal-runtime-inventory.ts";
 import { getRequestListener } from "@hono/node-server";
 
 import { TerminalRuntimeInventoryResourceV1SchemaZ } from "@tmux-ide/contracts";
@@ -176,5 +177,69 @@ describe("terminal runtime inventory resource", () => {
       headers: { Authorization: "Bearer owner-secret" },
     });
     expect(response.status).toBe(503);
+  });
+});
+
+describe("terminal runtime inventory version 2 (#806)", () => {
+  const pane = (
+    windowId: string,
+    runtimePaneId: string,
+    semanticPaneId: string | null,
+    windowStamp: string | null,
+    windowPaneCount: number,
+    active = false,
+  ) => ({
+    windowId,
+    runtimePaneId,
+    windowPaneCount,
+    semanticPaneId,
+    windowStamp,
+    index: 0,
+    title: "t",
+    currentCommand: "zsh",
+    active,
+    role: null,
+    name: null,
+    type: null,
+    missionStamp: null,
+  });
+  const windowed: NativeTerminalRuntimeSessionSnapshot = {
+    ...session,
+    panes: [
+      pane("@1", "%1", "pane.one", "window.one", 2),
+      pane("@1", "%2", "pane.two", "window.one", 2),
+      pane("@2", "%3", "pane.three", "window.two", 1, true),
+      // A two-pane window with an unstamped pane: its panes are unavailable.
+      pane("@3", "%4", "pane.four", "window.three", 2),
+      pane("@3", "%5", "pane.five", null, 2),
+      // A stamped window with one pane unavailable (no pane stamp): not issuable as a window.
+      pane("@5", "%7", "pane.seven", "window.five", 2),
+      pane("@5", "%8", null, "window.five", 2),
+      // A single-pane window without a window stamp: available, but no window to name.
+      pane("@4", "%6", "pane.six", null, 1),
+    ],
+  };
+
+  it("lists each verified window with its available panes, in tmux order", () => {
+    const projected = projectTerminalRuntimeInventoryV2(windowed, 3);
+    expect(projected.semanticPaneIds).toEqual([
+      "pane.one",
+      "pane.seven",
+      "pane.six",
+      "pane.three",
+      "pane.two",
+    ]);
+    expect(projected.windows).toEqual([
+      { semanticWindowId: "window.one", active: false, semanticPaneIds: ["pane.one", "pane.two"] },
+      { semanticWindowId: "window.two", active: true, semanticPaneIds: ["pane.three"] },
+    ]);
+    expect(JSON.stringify(projected)).not.toMatch(/@\d|%\d/u);
+  });
+
+  it("names no window when the session has a catalog issue", () => {
+    expect(
+      projectTerminalRuntimeInventoryV2({ ...windowed, catalogIssue: "missing-semantic-stamp" }, 0)
+        .windows,
+    ).toEqual([]);
   });
 });

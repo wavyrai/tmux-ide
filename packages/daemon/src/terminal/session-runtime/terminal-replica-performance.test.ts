@@ -107,7 +107,9 @@ describe("terminal replica performance invariants", () => {
     expect(after.historyRowsRead - before.historyRowsRead).toBeLessThanOrEqual(1);
     expect(updates.at(-1)?.type).toBe("terminal.patch");
     if (updates.at(-1)?.type === "terminal.patch") {
-      expect(updates.at(-1)?.patch.historyDelta).toMatchObject({ trim: 1 });
+      // At its limit (20) tmux collects the oldest tenth before the scroll
+      // (grid_collect_history), so two rows go, not one.
+      expect(updates.at(-1)?.patch.historyDelta).toMatchObject({ trim: 2 });
       expect(updates.at(-1)?.patch.history).toBeUndefined();
     }
   });
