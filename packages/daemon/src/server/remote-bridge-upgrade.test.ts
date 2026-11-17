@@ -217,6 +217,35 @@ describe("remote bridge upgrade", () => {
     }
   });
 
+  it("refuses a hello sent as a binary frame", async () => {
+    const fixture = await start();
+    const { ws } = await connect(fixture);
+    const closed = closeCode(ws);
+    ws.send(Buffer.from(JSON.stringify({ type: "hello", version: 1 })), { binary: true });
+    expect(await closed).toBe(1008);
+  });
+
+  it("refuses a hello once the daemon generation is retired", async () => {
+    const fixture = await start();
+    const { ws, frames } = await connect(fixture);
+    fixture.current.value = false;
+    const closed = closeCode(ws);
+    ws.send(JSON.stringify({ type: "hello", version: 1 }));
+    expect(await closed).toBe(1008);
+    expect(frames).toEqual([]);
+  });
+
+  it("keeps a bridge open past the hello deadline once hello arrived", async () => {
+    const fixture = await start({ helloTimeoutMs: 50 });
+    const { ws, frames } = await connect(fixture);
+    ws.send(JSON.stringify({ type: "hello", version: 1 }));
+    await waitFor(() => frames.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    fixture.hub.publish(write("p1", "still here"));
+    await waitFor(() => frames.length === 2);
+  });
+
   it("closes an oversized client frame", async () => {
     const fixture = await start();
     const { ws } = await connect(fixture);

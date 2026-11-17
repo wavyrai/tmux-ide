@@ -54,7 +54,19 @@ describe("parseOsc52", () => {
   });
 
   it("refuses payloads that are not base64", () => {
-    for (const payload of ["aGk=x", "a", "aG=k", "a b=", "aGk=\n", "é", "aGk===", "aGk=aGk="])
+    for (const payload of [
+      "aGk=x",
+      "a",
+      "aG=k",
+      "a b=",
+      "aGk=\n",
+      "é",
+      "aGk===",
+      "aGk=aGk=",
+      "aG=",
+      "aGk==",
+      "aG===",
+    ])
       expect(parseOsc52(`c;${payload}`), payload).toEqual({ kind: "invalid" });
   });
 

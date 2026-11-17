@@ -66,6 +66,46 @@ describe("RemoteClipboardHub", () => {
       expect(times[i]! - times[i - 1]!).toBeGreaterThanOrEqual(REMOTE_CLIPBOARD_WINDOW_MS);
   });
 
+  it("sends a held write when its window ends, not a full window after it was held", () => {
+    const hub = new RemoteClipboardHub();
+    const seen: string[] = [];
+    hub.subscribe((event) => seen.push(event.type === "clipboard.write" ? event.text : ""));
+    hub.publish(write("p1", "a"));
+    vi.advanceTimersByTime(200);
+    hub.publish(write("p1", "b"));
+    vi.advanceTimersByTime(REMOTE_CLIPBOARD_WINDOW_MS - 200);
+    expect(seen).toEqual(["a", "b"]);
+  });
+
+  it("keeps order when the window's timer runs late", () => {
+    let clock = 0;
+    const hub = new RemoteClipboardHub(() => clock);
+    const seen: string[] = [];
+    hub.subscribe((event) => seen.push(event.type === "clipboard.write" ? event.text : ""));
+    hub.publish(write("p1", "a"));
+    hub.publish(write("p1", "b"));
+    // The clock passes the window but the held write's timer has not run yet.
+    clock += REMOTE_CLIPBOARD_WINDOW_MS * 4;
+    hub.publish(write("p1", "c"));
+    expect(seen).toEqual(["a"]);
+    vi.runOnlyPendingTimers();
+    expect(seen).toEqual(["a", "c"]);
+  });
+
+  it("never forgets a pane that still holds a write", () => {
+    let clock = 0;
+    const hub = new RemoteClipboardHub(() => clock);
+    const seen: string[] = [];
+    hub.subscribe((event) => seen.push(event.type === "clipboard.write" ? event.text : ""));
+    hub.publish(write("held", "a"));
+    hub.publish(write("held", "b"));
+    for (let i = 0; i < 300; i += 1) hub.publish(write(`p${i}`, "x"));
+    clock += REMOTE_CLIPBOARD_WINDOW_MS * 4;
+    hub.publish(write("trigger", "x"));
+    vi.runOnlyPendingTimers();
+    expect(seen.filter((text) => text !== "x")).toEqual(["a", "b"]);
+  });
+
   it("delivers the flood's last write", () => {
     const hub = new RemoteClipboardHub();
     const seen: string[] = [];

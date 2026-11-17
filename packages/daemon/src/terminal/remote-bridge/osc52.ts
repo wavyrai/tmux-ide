@@ -33,7 +33,6 @@ export function parseOsc52(data: string): Osc52Parse {
   if (payload === "?") return { kind: "query" };
   if (!SELECTION.test(selection)) return { kind: "ignored" };
   if (selection !== "" && !selection.includes("c")) return { kind: "ignored" };
-  if (payload === "") return { kind: "ignored" };
 
   const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
   const body = payload.length - padding;

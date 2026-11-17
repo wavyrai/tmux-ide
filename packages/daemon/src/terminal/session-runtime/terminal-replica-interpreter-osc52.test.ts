@@ -65,6 +65,18 @@ describe("TerminalReplicaInterpreter OSC 52", () => {
     }
   });
 
+  it("reports from the first parser, before any reseed", async () => {
+    const { interpreter, events, write } = create();
+    try {
+      await write(`\x1b]52;c;${b64("first")}\x07`);
+      expect(events.map((event) => event.type === "clipboard.write" && event.text)).toEqual([
+        "first",
+      ]);
+    } finally {
+      await interpreter.enqueue({ type: "close", reason: "pane-closed" });
+    }
+  });
+
   it("joins a sequence split across output chunks, including inside the payload", async () => {
     const { interpreter, events, reseed, write } = create();
     try {
