@@ -97,6 +97,19 @@ continues to use the system clipboard. Running the app itself inside an SSH shel
 uses the terminal's OSC 52 clipboard route; see
 [Selection and links](/docs/app-surfaces#selection-and-links).
 
+In the native Mac app, a program in a pane can copy to your Mac clipboard with
+the standard OSC 52 sequence (for example vim's `"+y`), on this Mac and on a
+remote machine alike. The copy lands by itself only when that pane has focus
+and you typed into it in the last 2 seconds. Otherwise the pane's header shows
+"Copy 2 KB from my-server?" and the text is copied when you click it.
+
+- A program can never read your Mac clipboard. The daemon ignores OSC 52
+  requests to read it and sends no answer.
+- Copies over 1 MB are refused, and the pane says so.
+- Copies to the primary selection are ignored, and so are yanks in tmux's own
+  copy mode.
+- With a daemon that predates this, nothing changes.
+
 ## Save and manage machines
 
 Save an SSH target so the app connects to it on every run. Each command
