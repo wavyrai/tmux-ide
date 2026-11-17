@@ -418,3 +418,36 @@ fn a_key_that_arrives_with_no_stream_marks_the_held_frame() {
     assert!(super::key(&stale, Some(&active), &mut hold, &mut changed));
     assert_eq!(hold.lost_input(), Some(true));
 }
+
+/// Command keys pipeline behind text (no wait for ACKs). When the stream
+/// fails with them in flight and more keys queued, every one of them is
+/// reported as not sent, and none is left to replay onto the new stream.
+#[test]
+fn a_lost_stream_reports_pipelined_command_keys_and_drops_the_queue() {
+    let (mut active, state, _observed, peer) = super::super::selection_tests::fixture(true);
+    let state = live(&state);
+    for input in [
+        Input::Text("ls".into()),
+        Input::Key("Enter".into()),
+        Input::Key("C-c".into()),
+        Input::Text("x".into()),
+    ] {
+        active.input("left", None, input, 1).unwrap();
+    }
+    assert!(active.input.busy(), "the keys never left");
+    assert!(
+        !active.input.waiting(),
+        "a command key waited for earlier ACKs instead of pipelining"
+    );
+    let mut pending = queue(vec![key("y"), key("z")]);
+    let mut hold = Hold::default();
+    stream_lost(&active, &mut pending, &mut hold, &state, 1, &closed());
+    assert_eq!(inputs(&pending), 0, "queued keys would replay");
+    assert_eq!(
+        hold.lost_input(),
+        Some(true),
+        "pipelined keys were lost silently"
+    );
+    active.controller.retire();
+    peer.join().unwrap();
+}
