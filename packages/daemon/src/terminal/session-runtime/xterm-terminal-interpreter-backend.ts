@@ -23,6 +23,9 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   readonly #terminal: Terminal;
   readonly #rowCache = new WeakMap<object, CachedRow>();
   #scrollEpoch = 0;
+  readonly #historyLimit: number;
+  #collecting = false;
+  #lastYbase: number | null = null;
   #lastScrollEpoch = 0;
   #lastViewportY = 0;
   #lastBufferType = "normal";
@@ -36,11 +39,17 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #scrollOnClear: boolean | undefined;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
+    const historyLimit = options.historyLimit ?? options.scrollback;
+    this.#historyLimit = historyLimit;
     this.#terminal = new Terminal({
       cols: options.cols,
       rows: options.rows,
-      scrollback: options.scrollback,
-      tmuxHistoryLimit: options.historyLimit ?? options.scrollback,
+      // One row of headroom over what the replica may hold (the limit, or a
+      // larger captured history): xterm must not recycle the row a scroll
+      // adds before #collectHistory sees it.
+      scrollback:
+        historyLimit > 0 ? Math.max(options.scrollback, historyLimit) + 1 : options.scrollback,
+      tmuxHistoryLimit: historyLimit,
       allowProposedApi: true,
     });
     this.#terminal.loadAddon(new Unicode11Addon());
@@ -81,7 +90,9 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     this.#terminal.onScroll(() => {
       // tmux retains normal history while alternate rows scroll independently.
       // Neither captured nor live alternate scrolling may trim that history.
-      if (this.#terminal.buffer.active.type === "normal") this.#scrollEpoch += 1;
+      if (this.#terminal.buffer.active.type !== "normal") return;
+      this.#scrollEpoch += 1;
+      this.#collectHistory();
     });
     const core = (
       this.#terminal as unknown as {
@@ -92,6 +103,59 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       this.#terminal.dispose();
       throw new Error("Unsupported @tmux-ide/xterm-headless private API shape");
     }
+  }
+
+  /**
+   * tmux at its history-limit collects the oldest tenth of history before a
+   * scroll would pass it (grid_collect_history), so its history_size moves
+   * between 0.9 and 1.0 of the limit. Recycling one row at a time instead kept
+   * the replica at the limit, and the owner's history-size check then reseeded
+   * the whole pane each time its output paused. The projection reports the
+   * collection as an ordinary history trim.
+   */
+  startHistoryCollection(): void {
+    this.#collecting = true;
+    this.#lastYbase = this.#normalBuffer()?.ybase ?? null;
+  }
+
+  #normalBuffer() {
+    return (
+      this.#terminal as unknown as {
+        _core?: {
+          buffers?: {
+            normal?: {
+              ybase: number;
+              ydisp: number;
+              lines: { trimStart(count: number): void };
+            };
+          };
+        };
+      }
+    )._core?.buffers?.normal;
+  }
+
+  #collectHistory(): void {
+    const buffer = this.#normalBuffer();
+    if (!buffer) return;
+    const before = this.#lastYbase;
+    const limit = this.#historyLimit;
+    // Only a plain one-row scroll from at or above the limit is collected
+    // here. ED2 collects before its own scrolls (one-column.patch), and any
+    // other change (reset, resize, a capped ring) is left alone: a history
+    // that still differs from tmux is caught by the owner's size check.
+    if (
+      this.#collecting &&
+      limit > 0 &&
+      before !== null &&
+      before >= limit &&
+      buffer.ybase === before + 1
+    ) {
+      const trim = Math.min(buffer.ybase, Math.max(1, Math.floor(limit / 10)));
+      buffer.lines.trimStart(trim);
+      buffer.ybase -= trim;
+      buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+    }
+    this.#lastYbase = buffer.ybase;
   }
 
   get cols(): number {
