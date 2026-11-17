@@ -240,3 +240,48 @@ fn queued_ticks_fold_into_the_waiting_wheel_step_only_from_the_front() {
         assert_eq!(owner.waiting_wheel_lines_for_tests(), Some(-1));
     }
 }
+/// Text for another input target (an editor or browser field) or from an
+/// earlier request never joins a queued key: it would be sent to the wrong
+/// place or outlive the request it was typed for.
+#[test]
+fn text_never_joins_across_input_target_or_request() {
+    for change in ["target", "request"] {
+        let mut pending = std::collections::VecDeque::new();
+        queue(&mut pending, text("a"));
+        let mut next = text("b");
+        if let Command::Input {
+            input_target,
+            request,
+            ..
+        } = &mut next
+        {
+            if change == "target" {
+                *input_target = Some("target".into());
+            } else {
+                *request = 5;
+            }
+        }
+        queue(&mut pending, next);
+        assert_eq!(pending.len(), 2, "text joined across a different {change}");
+        assert_eq!(text_of(&pending[0]), "a");
+        assert_eq!(text_of(&pending[1]), "b");
+    }
+}
+/// The fold keeps one step within ±128 lines: route_wheel ignores a step
+/// outside it, so an over-fold would drop the whole scroll. A tick that
+/// would cross the bound stays queued, as its own step.
+#[test]
+fn a_tick_that_would_pass_128_lines_stays_queued() {
+    let mut owner = InputOwner::with_waiting_wheel_for_tests("pane");
+    let mut pending: std::collections::VecDeque<Command> = [
+        wheel(-120, 5, false),
+        wheel(-8, 5, false),
+        wheel(-1, 5, false),
+    ]
+    .into();
+    fold_into_waiting(&mut pending, &mut owner, 4);
+    // -1 (waiting) - 120 - 7 would be -128; -120 - 8 more is -129.
+    assert_eq!(owner.waiting_wheel_lines_for_tests(), Some(-121));
+    assert_eq!(pending.len(), 2);
+    assert_eq!(lines(&pending[0]), -8);
+}
