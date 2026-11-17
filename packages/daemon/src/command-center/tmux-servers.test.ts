@@ -412,6 +412,52 @@ it("uses enriched agent discovery for scoped shells so fleet statuses match pane
   }
 });
 
+it("serves inventory version 2 with windows only when asked (#806)", async () => {
+  const f = await fixture();
+  const owner = f.ownersCreated[0]!;
+  const pane = (windowId: string, id: string, stamp: string, count: number, active: boolean) => ({
+    windowId,
+    runtimePaneId: `%${id.length}${windowId.slice(1)}`,
+    windowPaneCount: count,
+    semanticPaneId: id,
+    windowStamp: stamp,
+    index: 0,
+    title: "t",
+    currentCommand: "zsh",
+    active,
+    role: null,
+    name: null,
+    type: null,
+    missionStamp: null,
+  });
+  owner.discover.mockResolvedValue({
+    workspaceName: "same",
+    name: "same",
+    runtimeSessionId: "$4",
+    catalogIssue: null,
+    dir: "/private/project",
+    panes: [
+      pane("@1", "pane.a", "window.one", 2, false),
+      pane("@1", "pane.bb", "window.one", 2, false),
+      pane("@2", "pane.ccc", "window.two", 1, true),
+    ],
+  });
+  try {
+    const v1 = await (await f.request(f.scope(f.a) + "/inventory/same")).json();
+    expect(v1.version).toBe(1);
+    expect(v1.resource).not.toHaveProperty("windows");
+    const v2 = await (await f.request(f.scope(f.a) + "/inventory/same?version=2")).json();
+    expect(v2.version).toBe(2);
+    expect(v2.resource.semanticPaneIds).toEqual(["pane.a", "pane.bb", "pane.ccc"]);
+    expect(v2.resource.windows).toEqual([
+      { semanticWindowId: "window.one", active: false, semanticPaneIds: ["pane.a", "pane.bb"] },
+      { semanticWindowId: "window.two", active: true, semanticPaneIds: ["pane.ccc"] },
+    ]);
+  } finally {
+    await f.manager.dispose();
+  }
+});
+
 describe("split layout reads", () => {
   const target = {
     liveSessionId: `live-session.${"a".repeat(20)}`,
