@@ -42,6 +42,8 @@ pub struct OpenedAgent {
     pub workspace_name: String,
     pub panes: Vec<String>,
     pub selected: String,
+    /// #806: the verified windows, from a daemon that streams one window.
+    pub windows: Option<Vec<super::InventoryWindow>>,
 }
 impl ServerClient {
     pub fn open_observed_agent(&self, selection: &AgentSelection) -> Result<OpenedAgent, Error> {
@@ -72,14 +74,15 @@ impl ServerClient {
             return Err(Error::ServerChanged);
         }
         verify()?;
-        let panes = self.workspace_panes(&selection.live_session_id, &workspace)?;
-        if !panes.contains(pane) {
+        let inventory = self.workspace_inventory(&selection.live_session_id, &workspace)?;
+        if !inventory.panes.contains(pane) {
             return Err(Error::ServerChanged);
         }
         Ok(OpenedAgent {
             workspace_name: workspace,
-            panes,
+            panes: inventory.panes,
             selected: pane.clone(),
+            windows: inventory.windows,
         })
     }
 }

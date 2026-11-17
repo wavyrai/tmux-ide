@@ -45,6 +45,7 @@ fn prepare(view: &mut SnapshotView) {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         })
         .collect();
 }

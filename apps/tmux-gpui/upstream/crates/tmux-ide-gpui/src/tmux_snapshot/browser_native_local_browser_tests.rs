@@ -18,6 +18,8 @@ fn fixture() -> Local {
             live: format!("live-session.{}", "b".repeat(20)),
         },
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     };
     Local {
         machine_id: "local".into(),
@@ -35,6 +37,7 @@ fn fixture() -> Local {
                 pane_count: None,
                 window_id: Some("window-a".into()),
                 window_label: None,
+                largest_window: None,
                 browser_icon: None,
                 display_name_source: None,
             }],
@@ -43,6 +46,7 @@ fn fixture() -> Local {
         targets: BTreeMap::new(),
         stage: None,
         submitted: false,
+        window_notice: None,
         active: Some(route),
         split: split::Reader::new(path.clone()).unwrap(),
         foreground: true,

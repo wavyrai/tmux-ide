@@ -21,6 +21,7 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         })
         .collect();
     local.active = Some(Route {
@@ -31,6 +32,8 @@ fn attached() -> (Local, mpsc::Receiver<Incoming>) {
             live: "live".into(),
         },
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     });
     (local, events)
 }

@@ -15,6 +15,7 @@ fn title_uses_selected_identity_and_keeps_readiness_independent() {
                 browser_icon: None,
                 display_name_source: None,
                 window_label: None,
+                largest_window: None,
             },
             Choice {
                 id: "b".into(),
@@ -24,6 +25,7 @@ fn title_uses_selected_identity_and_keeps_readiness_independent() {
                 browser_icon: None,
                 display_name_source: None,
                 window_label: None,
+                largest_window: None,
             },
         ],
         ..Default::default()
@@ -49,6 +51,7 @@ fn display_label_is_bounded_unicode_safe_and_control_free() {
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         }],
         ..Default::default()
     };
@@ -92,6 +95,7 @@ fn header_state(rects: &[(&str, u16, u16, u16, u16)]) -> State {
                 browser_icon: None,
                 display_name_source: None,
                 window_label: None,
+                largest_window: None,
             })
             .collect(),
         regions: rects
@@ -241,5 +245,6 @@ fn choice(id: &str, label: &str) -> Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }
 }

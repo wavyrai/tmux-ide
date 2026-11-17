@@ -39,6 +39,7 @@ fn rejects_foreign_overlapping_and_out_of_frame_targets() -> anyhow::Result<()> 
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         },
         Choice {
             id: "b".into(),
@@ -48,6 +49,7 @@ fn rejects_foreign_overlapping_and_out_of_frame_targets() -> anyhow::Result<()> 
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         },
     ];
     let mut regions = vec![Region {

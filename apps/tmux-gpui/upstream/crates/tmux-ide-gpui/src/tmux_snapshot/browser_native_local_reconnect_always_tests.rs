@@ -103,6 +103,8 @@ fn a_live_stream_in_an_inactive_window_ends_the_reconnecting_badge() {
             request: 7,
             target,
             workspace: "fixture".into(),
+            window: None,
+            notice: None,
         });
     };
     route(&mut local);
@@ -182,6 +184,7 @@ pub(super) fn rediscovering() -> (Local, mpsc::Receiver<Incoming>) {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }];
     local.reconnect_start().unwrap();
     local.reconnect_tick().unwrap();
@@ -264,6 +267,8 @@ fn a_flapping_stream_continues_the_backoff_and_a_settled_one_starts_over() {
             request: 7,
             target: target.clone(),
             workspace: "fixture".into(),
+            window: None,
+            notice: None,
         });
         local
             .command(Command::NativeTerminalReady {
@@ -515,6 +520,8 @@ fn a_refresh_in_an_inactive_window_reads_the_panes_again_within_the_recovery() {
         request: 7,
         target,
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     });
     let refresh = |id: &str, request| Command::NativeTerminalRefresh {
         id: id.into(),

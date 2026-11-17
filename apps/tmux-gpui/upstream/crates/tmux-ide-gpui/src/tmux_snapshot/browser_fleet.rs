@@ -68,6 +68,10 @@ pub(in crate::tmux_snapshot) struct Session {
     /// The session's windows, when the daemon reports them (#705).
     #[serde(default)]
     pub window_count: Option<u64>,
+    /// #806: the pane count of its largest window, when the daemon knows it.
+    /// A stream carries one window, so this decides whether it opens.
+    #[serde(default)]
+    pub largest_window: Option<u64>,
     /// tmux's last activity on the session, in epoch seconds.
     #[serde(default)]
     pub last_activity: Option<i64>,

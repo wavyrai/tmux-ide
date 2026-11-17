@@ -31,6 +31,11 @@ pub struct Session {
     pub last_activity: Option<i64>,
     #[serde(default)]
     pub favicon: Option<Favicon>,
+    /// Version 3 only (#806): the pane count of the session's largest
+    /// verified window. A stream carries one window, so this, not
+    /// `pane_count`, says whether the session opens.
+    #[serde(default)]
+    pub largest_window_pane_count: Option<u32>,
 }
 /// A project's favicon as the daemon found it: the raw file, base64-encoded.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -109,10 +114,26 @@ impl ServerClient {
             Ok(())
         }
     }
+    /// The daemon's product version, when it is the local one. A remote
+    /// daemon's version is not known, so it gets no feature gated on one.
+    pub(super) fn product_version(&self) -> Option<String> {
+        match &self.daemon {
+            super::owner::Owner::Local(local) => Some(local.product_version().to_owned()),
+            #[cfg(unix)]
+            super::owner::Owner::Remote(_) => None,
+        }
+    }
+    /// Whether this daemon streams one window (#806).
+    pub(super) fn window_streams(&self) -> bool {
+        super::capability::knows_window_streams(self.product_version().as_deref())
+    }
     pub fn sessions(&self) -> Result<Vec<Session>, Error> {
         self.assert_current()?;
+        // The daemon answers only the exact version it is asked for, else
+        // version 1: ask for 3 only where it exists.
+        let version = if self.window_streams() { 3 } else { 2 };
         let path = format!(
-            "api/v1/tmux-servers/{}/{}/sessions?version=2",
+            "api/v1/tmux-servers/{}/{}/sessions?version={version}",
             self.scope.server_id, self.scope.generation
         );
         let result = self.daemon.get_resource(&path);
@@ -127,9 +148,10 @@ fn parse(bytes: &[u8], scope: &ServerScope) -> Result<Vec<Session>, Error> {
     let resource: Resource = serde_json::from_slice(bytes).map_err(|_| Error::ResourceFormat)?;
     // An older daemon ignores `?version=2` and answers version 1, which has
     // none of the version 2 fields.
-    let v2 = match resource.version {
-        1 => false,
-        2 => true,
+    let (v2, v3) = match resource.version {
+        1 => (false, false),
+        2 => (true, false),
+        3 => (true, true),
         _ => return Err(Error::ResourceFormat),
     };
     if resource.sessions.len() > 4096 {
@@ -157,6 +179,10 @@ fn parse(bytes: &[u8], scope: &ServerScope) -> Result<Vec<Session>, Error> {
                     || entry.last_activity.is_some()
                     || entry.favicon.is_some()))
             || entry.window_count == Some(0)
+            || v3 != entry.largest_window_pane_count.is_some()
+            || entry
+                .largest_window_pane_count
+                .is_some_and(|largest| largest > entry.pane_count)
         {
             return Err(Error::ResourceFormat);
         }

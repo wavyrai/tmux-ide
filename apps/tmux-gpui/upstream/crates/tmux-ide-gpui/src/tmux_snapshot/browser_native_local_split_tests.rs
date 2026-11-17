@@ -14,6 +14,8 @@ fn route() -> Route {
             live: format!("live-session.{}", "a".repeat(20)),
         },
         workspace: "test".into(),
+        window: None,
+        notice: None,
     }
 }
 fn request(reader: &mut Reader, route: &Route, sequence: u64) -> Option<SplitResponse> {

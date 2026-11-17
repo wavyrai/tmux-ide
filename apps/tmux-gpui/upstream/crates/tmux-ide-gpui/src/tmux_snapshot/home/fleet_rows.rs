@@ -453,7 +453,7 @@ fn agents_column() -> Div {
 /// session over the native pane limit shows its pane count and that it can't
 /// be opened here; selecting it says what to do instead.
 pub(super) fn layout(session: &browser::fleet::Session) -> String {
-    if session.pane_count > browser::NATIVE_STREAM_MAX_PANES {
+    if browser::too_many_panes(session.pane_count, session.largest_window) {
         return format!(
             "{} · {}",
             panes(session.pane_count),

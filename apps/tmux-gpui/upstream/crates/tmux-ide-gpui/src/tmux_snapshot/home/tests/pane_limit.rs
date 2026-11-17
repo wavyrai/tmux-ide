@@ -11,6 +11,7 @@ fn session(id: &str, label: &str, panes: u64) -> browser::Choice {
         label: label.into(),
         window_id: None,
         window_label: None,
+        largest_window: None,
         browser_icon: None,
         display_name_source: None,
     }
@@ -80,6 +81,15 @@ fn fleet_rows_over_the_limit_say_they_are_too_many_to_open() {
     assert_eq!(fleet_rows::layout(&row(24, 3)), "3 windows · 24 panes");
     assert_eq!(fleet_rows::layout(&row(25, 3)), "25 panes · too many");
     assert_eq!(fleet_rows::layout(&row(38, 38)), "38 panes · too many");
+    // #806: a daemon that streams one window reports the largest one; the
+    // session opens when that fits, whatever its total.
+    let windowed = |panes: u64, largest: u64| {
+        let mut session = row(panes, 3);
+        session.largest_window = Some(largest);
+        fleet_rows::layout(&session)
+    };
+    assert_eq!(windowed(60, 24), "3 windows · 60 panes");
+    assert_eq!(windowed(60, 25), "60 panes · too many");
 }
 
 /// #357 review, item 1: a catalog drop with a pane-limit notice on Home keeps

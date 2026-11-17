@@ -23,6 +23,8 @@ fn leased(local: &mut Local) {
         request: 7,
         target,
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     });
 }
 /// The stream came back and was ready, after `tries` tries.
@@ -268,6 +270,7 @@ fn a_session_whose_panes_closed_ends_on_the_first_catalog_without_it() {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }];
     local.command(interrupted(Cause::PanesClosed)).unwrap();
     local.reconnect_tick().unwrap();

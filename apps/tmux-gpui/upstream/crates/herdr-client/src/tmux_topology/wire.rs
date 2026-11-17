@@ -113,7 +113,7 @@ pub(super) struct LayoutSnapshot {
     pub window_links: WindowLinks,
 }
 
-pub(super) fn identity(value: &str) -> bool {
+pub(crate) fn identity(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value.as_bytes()[0].is_ascii_alphanumeric()

@@ -25,6 +25,10 @@ pub(super) struct Choice {
     pub label: String,
     pub window_id: Option<String>,
     pub window_label: Option<String>,
+    /// #806: the pane count of a session's largest window, which decides
+    /// whether it opens (a stream carries one window). `None` when unknown.
+    #[serde(default)]
+    pub largest_window: Option<u64>,
     #[serde(default)]
     pub browser_icon: Option<String>,
     /// Where the daemon's pane name came from. A pane named after its process
@@ -48,11 +52,20 @@ pub(super) const NATIVE_STREAM_MAX_PANES: u64 = herdr_client::tmux_stream::MAX_P
 /// What a session row says after its pane count when the native app cannot
 /// open that session.
 pub(super) const TOO_MANY_PANES: &str = "too many";
+/// Whether the native app opens a session: a daemon that streams one window
+/// at a time (#806) reports its largest window, and that must fit; otherwise
+/// the whole session must.
+pub(super) fn too_many_panes(pane_count: u64, largest_window: Option<u64>) -> bool {
+    largest_window
+        .filter(|count| *count > 0)
+        .unwrap_or(pane_count)
+        > NATIVE_STREAM_MAX_PANES
+}
 impl Choice {
     pub(super) fn pane_count_label(&self) -> Option<String> {
         self.pane_count.map(|count| {
             let panes = format!("{count} {}", if count == 1 { "pane" } else { "panes" });
-            if count > NATIVE_STREAM_MAX_PANES {
+            if too_many_panes(count, self.largest_window) {
                 format!("{panes} · {TOO_MANY_PANES}")
             } else {
                 panes

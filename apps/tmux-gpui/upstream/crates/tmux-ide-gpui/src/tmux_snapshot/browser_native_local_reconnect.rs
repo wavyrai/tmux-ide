@@ -21,6 +21,7 @@ struct Rebind {
     workspace: String,
     panes: Vec<String>,
     selected: String,
+    window: Option<String>,
 }
 /// The stop an unrecoverable stream identity ends in, for the act-needed card (r3).
 pub(super) const GAVE_UP: &str = "Couldn't reconnect. Refresh sessions to try again.";
@@ -247,6 +248,7 @@ impl Local {
                 workspace: route.workspace.clone(),
                 panes: panes.clone(),
                 selected,
+                window: route.window.clone(),
             });
         let label = (self.state.sessions.iter())
             .find(|choice| choice.id == route.target.live)
@@ -430,6 +432,7 @@ impl Local {
                 workspace: rebind.workspace,
                 panes: rebind.panes,
                 selected: rebind.selected,
+                window: rebind.window,
             });
             self.submitted = false;
             self.recovery = Some(recovery);

@@ -36,6 +36,7 @@ fn catalog(instance: &str) -> FleetCatalog {
         window_count: Some(1),
         last_activity: None,
         favicon: None,
+        largest_window_pane_count: None,
     };
     FleetCatalog {
         service_version: None,
@@ -70,6 +71,8 @@ fn attached(local: &mut Local) {
         request: 0,
         target,
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     });
     local.state.workspace_agents = Some(workspace_roster());
     local.state.home_agents = Some(roster());

@@ -5,6 +5,7 @@ pub use presentation::{CopyRegion, Presentation, PresentedWindow, Region, Window
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) use wire::identity as valid_identity;
 pub use wire::{
     BorderStatus, DisplayNameSource, Layout, LayoutPane, ModeKeys, ReaderBadge, WindowLink,
     WindowLinks,

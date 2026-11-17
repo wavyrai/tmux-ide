@@ -1,0 +1,197 @@
+//! #806: a session over the limit opens one window when the daemon names its
+//! windows; Home counts the largest window, not the session.
+use super::*;
+use herdr_client::tmux_daemon::InventoryWindow;
+
+fn win(id: &str, active: bool, range: std::ops::Range<usize>) -> InventoryWindow {
+    InventoryWindow {
+        id: id.into(),
+        active,
+        panes: range.map(|i| format!("pane.p{i}")).collect(),
+    }
+}
+fn opened(local: &mut Local, windows: Option<Vec<InventoryWindow>>, preferred: Option<&str>) {
+    local
+        .open(4, key(local, SMALL), preferred.map(Into::into))
+        .unwrap();
+    let Some(Stage::Open { target, .. }) = local.stage.take() else {
+        panic!("open missing");
+    };
+    local
+        .completed(
+            Stage::Open {
+                target,
+                preferred: preferred.map(Into::into),
+            },
+            CatalogResult::Opened {
+                workspace_name: "fixture".into(),
+                panes: panes(30),
+                windows,
+            },
+        )
+        .unwrap();
+}
+fn issued(local: &Local) -> (Option<String>, Vec<String>, String) {
+    let Some(Stage::Issue {
+        window,
+        panes,
+        selected,
+        ..
+    }) = &local.stage
+    else {
+        panic!("expected an issue, got Home");
+    };
+    (window.clone(), panes.clone(), selected.clone())
+}
+
+#[test]
+fn a_large_session_issues_its_active_window_only() {
+    let (mut local, _events) = loaded(3);
+    let windows = vec![win("window.a", false, 0..20), win("window.b", true, 20..30)];
+    opened(&mut local, Some(windows.clone()), None);
+    let (window, issued_panes, selected) = issued(&local);
+    assert_eq!(window.as_deref(), Some("window.b"));
+    assert_eq!(issued_panes, windows[1].panes);
+    assert_eq!(selected, "pane.p20");
+    assert_eq!(local.window_notice, None);
+    // The issue request names that window.
+    let CatalogAction::Issue { selection, .. } = local.stage.as_ref().unwrap().action() else {
+        panic!("expected an issue action");
+    };
+    assert_eq!(selection.window.as_deref(), Some("window.b"));
+    assert_eq!(selection.visible_panes, windows[1].panes);
+}
+
+#[test]
+fn a_selected_pane_opens_its_window_and_a_passed_over_window_says_so() {
+    let (mut local, _events) = loaded(3);
+    let windows = vec![win("window.a", false, 0..20), win("window.b", true, 20..30)];
+    opened(&mut local, Some(windows), Some("pane.p3"));
+    let (window, _, selected) = issued(&local);
+    assert_eq!(
+        (window.as_deref(), selected.as_str()),
+        (Some("window.a"), "pane.p3")
+    );
+    assert_eq!(local.window_notice, None);
+
+    let (mut local, _events) = loaded(3);
+    let windows = vec![win("window.a", false, 0..5), win("window.b", true, 5..30)];
+    opened(&mut local, Some(windows), None);
+    let (window, _, _) = issued(&local);
+    assert_eq!(window.as_deref(), Some("window.a"));
+    assert_eq!(local.window_notice, Some(window::OTHER_WINDOW));
+}
+
+#[test]
+fn a_session_that_fits_is_issued_whole_and_names_no_window() {
+    let (mut local, _events) = loaded(3);
+    local.open(4, key(&local, SMALL), None).unwrap();
+    let stage = local.stage.take().unwrap();
+    local
+        .completed(
+            stage,
+            CatalogResult::Opened {
+                workspace_name: "fixture".into(),
+                panes: panes(12),
+                windows: Some(vec![win("window.a", true, 0..12)]),
+            },
+        )
+        .unwrap();
+    let (window, issued_panes, _) = issued(&local);
+    assert_eq!((window, issued_panes.len()), (None, 12));
+}
+
+#[test]
+fn no_window_that_fits_returns_home_naming_the_largest_window() {
+    let (mut local, events) = loaded(3);
+    local.open(4, key(&local, SMALL), None).unwrap();
+    let stage = local.stage.take().unwrap();
+    local
+        .completed(
+            stage,
+            CatalogResult::Opened {
+                workspace_name: "fixture".into(),
+                panes: panes(55),
+                windows: Some(vec![
+                    win("window.a", true, 0..25),
+                    win("window.b", false, 25..55),
+                ]),
+            },
+        )
+        .unwrap();
+    drain(&events);
+    assert!(matches!(local.stage, Some(Stage::Servers)));
+    let notice = local.state.home_notice.as_deref().unwrap();
+    assert!(
+        notice.starts_with(
+            "The largest window of “small” has 30 panes. This app opens windows with up to 24."
+        ),
+        "{notice}"
+    );
+}
+
+#[test]
+fn an_agent_open_issues_the_agents_window() {
+    let (mut local, _events) = loaded(3);
+    local.open(5, key(&local, SMALL), None).unwrap();
+    let Some(Stage::Open { target, .. }) = local.stage.take() else {
+        panic!("open missing");
+    };
+    let selection = selection(&local, &target);
+    local
+        .completed(
+            Stage::AgentOpen {
+                target,
+                selection: Box::new(selection),
+            },
+            CatalogResult::AgentOpened(OpenedAgent {
+                workspace_name: "fixture".into(),
+                panes: panes(30),
+                selected: "pane.p0".into(),
+                windows: Some(vec![
+                    win("window.a", false, 0..10),
+                    win("window.b", true, 10..30),
+                ]),
+            }),
+        )
+        .unwrap();
+    let (window, issued_panes, selected) = issued(&local);
+    assert_eq!(window.as_deref(), Some("window.a"));
+    assert_eq!((issued_panes.len(), selected.as_str()), (10, "pane.p0"));
+}
+
+/// Home counts the largest window when the daemon reports it: a session of
+/// 38 panes whose windows fit opens, and its row does not say "too many".
+#[test]
+fn home_counts_the_largest_window_not_the_session() {
+    let (mut local, events) = fixture();
+    let mut catalog = catalog(3);
+    for session in &mut catalog.sessions[0].sessions {
+        session.largest_window_pane_count = Some(match session.session_name.as_str() {
+            BIG => 25,
+            HUGE => 1,
+            _ => 3,
+        });
+    }
+    local.receive_catalog(catalog, false).unwrap();
+    drain(&events);
+    let label = |local: &Local, name: &str| {
+        let choice = local.state.sessions.iter().find(|c| c.label == name);
+        choice.unwrap().pane_count_label().unwrap()
+    };
+    assert_eq!(label(&local, HUGE), "38 panes");
+    assert_eq!(label(&local, BIG), "25 panes · too many");
+    local.open(8, key(&local, BIG), None).unwrap();
+    assert!(
+        local.stage.is_none(),
+        "a too-large window must not reach the daemon"
+    );
+    let notice = local.state.home_notice.as_deref().unwrap();
+    assert!(
+        notice.starts_with("The largest window of “big” has 25 panes."),
+        "{notice}"
+    );
+    local.open(9, key(&local, HUGE), None).unwrap();
+    assert!(matches!(local.stage, Some(Stage::Open { .. })));
+    assert!(local.state.home_notice.is_none());
+}

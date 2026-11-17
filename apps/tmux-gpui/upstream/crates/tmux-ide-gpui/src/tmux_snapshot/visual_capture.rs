@@ -95,6 +95,7 @@ fn session(id: &str, label: &str) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: None,
+        largest_window: None,
     }
 }
 
@@ -107,6 +108,7 @@ fn pane(id: &str, window: &str, label: &str) -> browser::Choice {
         browser_icon: None,
         display_name_source: None,
         window_label: Some(label.into()),
+        largest_window: None,
     }
 }
 

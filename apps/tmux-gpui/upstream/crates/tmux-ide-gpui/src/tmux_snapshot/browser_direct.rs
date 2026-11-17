@@ -347,6 +347,7 @@ impl NativePresentation {
                     browser_icon: None,
                     display_name_source: None,
                     window_label: None,
+                    largest_window: None,
                 });
             }
         }

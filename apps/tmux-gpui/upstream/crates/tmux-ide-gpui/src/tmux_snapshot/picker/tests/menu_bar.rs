@@ -33,6 +33,7 @@ fn layout(view: &mut SnapshotView, surface: browser::Surface) {
         browser_icon: None,
         display_name_source: None,
         window_label: Some(window.into()),
+        largest_window: None,
     };
     view.browser_state.panes = vec![
         choice("pane-one", "window-1"),

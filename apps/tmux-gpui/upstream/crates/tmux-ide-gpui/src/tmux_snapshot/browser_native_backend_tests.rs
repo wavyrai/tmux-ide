@@ -188,6 +188,7 @@ fn browser_controls_are_read_while_input_is_not_ready() {
         label: id.into(),
         window_id: Some("window".into()),
         window_label: None,
+        largest_window: None,
         browser_icon: icon.map(str::to_owned),
         display_name_source: None,
     };

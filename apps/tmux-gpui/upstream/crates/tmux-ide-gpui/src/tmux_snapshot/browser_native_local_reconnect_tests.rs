@@ -27,11 +27,14 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             targets: BTreeMap::new(),
             stage: None,
             submitted: false,
+            window_notice: None,
             active: Some(Route {
                 id: "old-route".into(),
                 request: 7,
                 target,
                 workspace: "fixture".into(),
+                window: None,
+                notice: None,
             }),
             split: split::Reader::new(path.clone()).unwrap(),
             foreground: true,
@@ -679,6 +682,7 @@ pub(in crate::tmux_snapshot) fn attached() -> (Local, mpsc::Receiver<Incoming>) 
             browser_icon: None,
             display_name_source: None,
             window_label: None,
+            largest_window: None,
         })
         .collect();
     (local, events)
@@ -710,6 +714,7 @@ fn the_same_daemon_gets_one_lease_for_the_same_session_without_a_home_reset() {
         workspace,
         panes,
         selected,
+        ..
     }) = &local.stage
     else {
         panic!("expected a lease request, not rediscovery");
@@ -781,6 +786,8 @@ fn a_ready_stream_ends_the_reconnecting_badge() {
         request: 7,
         target,
         workspace: "fixture".into(),
+        window: None,
+        notice: None,
     });
     local
         .command(Command::NativeTerminalReady {
@@ -908,6 +915,8 @@ fn a_repeated_drop_continues_the_backoff() {
             request: 7,
             target: target.clone(),
             workspace: "fixture".into(),
+            window: None,
+            notice: None,
         });
     }
     assert_eq!(delays, [0, 250, 500, 1000]);

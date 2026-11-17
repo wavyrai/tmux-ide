@@ -102,6 +102,7 @@ fn surface_source_requests_only_read_only_binary_cells() {
         selected_pane: "pane.first".into(),
         visible_panes: vec!["pane.first".into()],
         mode: ViewerMode::Interactive,
+        window: None,
     };
     assert!(matches!(
         client.issue_surface_source(&selection),

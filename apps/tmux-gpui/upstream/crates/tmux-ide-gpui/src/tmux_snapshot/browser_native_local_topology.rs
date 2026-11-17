@@ -100,6 +100,7 @@ impl Local {
                     browser_icon: row.browser_icon.clone(),
                     display_name_source: row.display_name_source.map(name_source),
                     window_label: Some(label(window.window_name.as_deref(), "Window")),
+                    largest_window: None,
                 });
             }
         }
@@ -114,6 +115,7 @@ impl Local {
                     browser_icon: None,
                     display_name_source: None,
                     window_label: None,
+                    largest_window: None,
                 });
             }
         }
@@ -161,6 +163,7 @@ impl Local {
                     browser_icon: None,
                     display_name_source: None,
                     window_label: None,
+                    largest_window: None,
                 });
             }
         }
