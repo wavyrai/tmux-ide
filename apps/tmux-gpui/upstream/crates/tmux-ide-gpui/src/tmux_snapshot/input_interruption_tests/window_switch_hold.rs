@@ -195,3 +195,40 @@ fn a_switch_that_lands_on_another_pane_latches_at_once(cx: &mut TestAppContext) 
         })
     });
 }
+
+/// REVIEW: the worker publishes the "Switching window…" preview (retained,
+/// no input) between the click and the new stream. Keys typed while it shows
+/// must be held for the chosen pane too, with the ones typed before it.
+#[gpui::test]
+fn review_keys_typed_while_the_switch_preview_shows_reach_the_chosen_pane(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(32);
+    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            ready(view, true);
+            view.select(Selection::Pane(FAR.into()), window, cx);
+            receiver.try_iter().for_each(drop);
+            view.replace_text_in_range(None, "one", window, cx);
+            let mut preview = view.browser_state.clone();
+            preview.request = view.browser_request;
+            preview.retained_preview = true;
+            preview.input_ready = false;
+            preview.input_targets.clear();
+            preview.status = "Switching window…".into();
+            view.apply_browser_state(Some(preview), cx);
+            view.replace_text_in_range(None, "two", window, cx);
+            assert!(
+                !view.input_interrupted,
+                "a key during the preview was refused"
+            );
+            let state = switched(view, FAR);
+            view.apply_browser_state(Some(state), cx);
+            let token = Some("b".repeat(64));
+            assert_eq!(
+                sent(&receiver),
+                vec![(FAR.into(), token.clone()), (FAR.into(), token)]
+            );
+        })
+    });
+}
