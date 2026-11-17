@@ -95,6 +95,8 @@ const BACKGROUND_CADENCE_MS = 100;
  * to about this much plus one delivery. Daemon policy only: nothing on the wire.
  */
 export const TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES = 256 * 1024;
+/** No pane is held longer than this: it is then sent behind whatever is in flight. */
+export const TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
 
 export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
@@ -264,6 +266,9 @@ interface ClientState {
   backgroundTimer: SessionRuntimeTimer | null;
   /** Waiting for its connection's other panes to be acknowledged. */
   budgetHeld: boolean;
+  /** When the current hold began (it ends by TERMINAL_DELIVERY_CONNECTION_HOLD_MS). */
+  budgetHeldSince: number | null;
+  budgetTimer: SessionRuntimeTimer | null;
 }
 
 type SeedEncodingOutcome = { readonly bytes: Uint8Array } | { readonly error: unknown };
@@ -406,6 +411,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   #deliveryLifecycleOrdinal = 0;
   #deliveryStatusOrdinal = 0;
   #closed = false;
+  readonly #holdMs: number;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -414,9 +420,12 @@ export class SessionRuntimeTerminalDeliveryHub {
     options: {
       readonly scheduler?: SessionRuntimeScheduler;
       readonly observability?: SessionRuntimeObservability;
+      /** Tests only: the longest a pane waits for its connection's bulk. */
+      readonly connectionHoldMs?: number;
     } = {},
   ) {
     this.#ownerForPane = ownerForPane;
+    this.#holdMs = options.connectionHoldMs ?? TERMINAL_DELIVERY_CONNECTION_HOLD_MS;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
     this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
   }
@@ -501,6 +510,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         sourceClosedFlight: null,
         backgroundTimer: null,
         budgetHeld: false,
+        budgetHeldSince: null,
+        budgetTimer: null,
       };
       this.#clients.set(key, client);
       client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
@@ -1094,6 +1105,11 @@ export class SessionRuntimeTerminalDeliveryHub {
 
   #overBudget(client: ClientState): boolean {
     if (this.#priority.get(client.clientId) === client.paneId) return false;
+    if (
+      client.budgetHeldSince !== null &&
+      this.#scheduler.nowMs() - client.budgetHeldSince >= this.#holdMs
+    )
+      return false;
     let bytes = 0;
     for (const other of this.#clients.values())
       if (other !== client && other.clientId === client.clientId && other.inFlight)
@@ -1168,8 +1184,18 @@ export class SessionRuntimeTerminalDeliveryHub {
       return;
     if (!completed && this.#overBudget(client)) {
       client.budgetHeld = true;
+      client.budgetHeldSince ??= this.#scheduler.nowMs();
+      client.budgetTimer ??= this.#scheduler.timer(() => {
+        client.budgetTimer = null;
+        if (client.closed || !client.budgetHeld) return;
+        client.budgetHeld = false;
+        this.#schedule(client);
+      }, this.#holdMs);
       return;
     }
+    client.budgetHeldSince = null;
+    client.budgetTimer?.cancel();
+    client.budgetTimer = null;
     const traceStarted =
       completed?.traceStarted ??
       (this.#observability.enabled ? this.#observability.nowMicros() : 0);
@@ -2190,6 +2216,8 @@ export class SessionRuntimeTerminalDeliveryHub {
     if (client.lifecycleOpenRecorded)
       this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
     client.backgroundTimer?.cancel();
+    client.budgetTimer?.cancel();
+    client.budgetTimer = null;
     client.outgoing.length = 0;
     this.#clients.delete(client.key);
     if (![...this.#clients.values()].some((other) => other.clientId === client.clientId))

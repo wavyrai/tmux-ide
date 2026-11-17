@@ -16,6 +16,7 @@ import {
 } from "@tmux-ide/core";
 import {
   SessionRuntimeTerminalDeliveryHub,
+  TERMINAL_DELIVERY_CONNECTION_HOLD_MS,
   TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
   type TerminalDeliverySourceOwner,
 } from "./terminal-delivery-hub.ts";
@@ -87,12 +88,17 @@ const deliveredPanes = (messages: TerminalDeliveryServerMessage[]) =>
     .map((m) => m.semanticPaneId);
 
 describe("one connection's unacknowledged delivery bytes", () => {
-  async function setup() {
+  async function setup(connectionHoldMs = 60_000) {
     const owners = new Map([
       ["pane-a", new Owner("pane-a")],
       ["pane-b", new Owner("pane-b")],
     ]);
-    const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", (pane) => owners.get(pane)!);
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "w",
+      (pane) => owners.get(pane)!,
+      { connectionHoldMs },
+    );
     const messages: TerminalDeliveryServerMessage[] = [];
     const offer = { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false };
     const sink = (m: TerminalDeliveryServerMessage) => {
@@ -160,6 +166,70 @@ describe("one connection's unacknowledged delivery bytes", () => {
       await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-a"]));
     } finally {
       await a.close();
+      await hub.close();
+    }
+  });
+
+  const bulkEnvelope = (messages: TerminalDeliveryServerMessage[]) =>
+    messages.find(
+      (m): m is TerminalDeliveryEnvelope =>
+        m.type === "terminal.delivery" && m.semanticPaneId === "pane-b",
+    )!;
+
+  it.each(["nack", "fault"] as const)(
+    "releases a held pane when the bulk is answered by a %s",
+    async (answer) => {
+      const { owners, hub, messages, a, b } = await setup();
+      try {
+        owners.get("pane-b")!.emit(0, "b");
+        await settle();
+        await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b"]));
+        owners.get("pane-a")!.emit(0, "a");
+        await quiet();
+        expect(deliveredPanes(messages)).toEqual(["pane-b"]);
+        const e = bulkEnvelope(messages);
+        if (answer === "nack")
+          b.nack({
+            type: "terminal.delivery.nack",
+            workspaceName: e.workspaceName,
+            semanticPaneId: e.semanticPaneId,
+            generation: e.generation,
+            incarnation: e.incarnation,
+            deliveryNonce: e.deliveryNonce,
+            transactionId: e.transactionId,
+            reason: "decode-failed",
+            appliedRevision: -1,
+          });
+        // An ACK naming another transaction is a protocol fault for pane-b.
+        else b.ack({ ...ackFor(b, "pane-b", messages), transactionId: crypto.randomUUID() });
+        await settle();
+        await vi.waitFor(() => expect(deliveredPanes(messages)).toContain("pane-a"));
+      } finally {
+        await a.close();
+        await b.close();
+        await hub.close();
+      }
+    },
+  );
+
+  it("never holds a pane longer than the bound while bulk keeps coming", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+    const { owners, hub, messages, a, b } = await setup(TERMINAL_DELIVERY_CONNECTION_HOLD_MS);
+    try {
+      b.prioritize!();
+      owners.get("pane-b")!.emit(0, "b");
+      await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b"]));
+      owners.get("pane-a")!.emit(0, "a");
+      // pane-b (typed into) stays unacknowledged: without a bound pane-a
+      // would wait for as long as pane-b's bulk does.
+      await vi.advanceTimersByTimeAsync(TERMINAL_DELIVERY_CONNECTION_HOLD_MS - 10);
+      expect(deliveredPanes(messages)).toEqual(["pane-b"]);
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.waitFor(() => expect(deliveredPanes(messages)).toEqual(["pane-b", "pane-a"]));
+    } finally {
+      vi.useRealTimers();
+      await a.close();
+      await b.close();
       await hub.close();
     }
   });
