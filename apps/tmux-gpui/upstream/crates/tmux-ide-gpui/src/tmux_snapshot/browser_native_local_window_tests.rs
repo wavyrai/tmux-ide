@@ -64,3 +64,19 @@ fn no_fitting_window_or_no_windows_leaves_the_limit_to_refuse() {
     assert_eq!(scope(&all(&windows), Some(&windows), None), None);
     assert_eq!(scope(&all(&windows), None, None), None);
 }
+
+/// The wanted window too large and the active one fitting: the active one,
+/// even when another fitting window comes first in tmux order.
+#[test]
+fn the_active_window_comes_before_the_first_that_fits() {
+    let windows = [
+        window("first", false, 3),
+        window("wanted", false, 25),
+        window("active", true, 5),
+    ];
+    let scoped = scope(&all(&windows), Some(&windows), Some("pane.wanted.0")).unwrap();
+    assert_eq!(
+        (scoped.window.as_str(), scoped.notice),
+        ("active", Some(OTHER_WINDOW))
+    );
+}
