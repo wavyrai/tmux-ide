@@ -2,7 +2,6 @@
 //! PM, 17 Nov: panes of windows that are not on screen are marked `hidden`, so
 //! the daemon sends them nothing until their window is shown again.
 use super::super::tests::fixture;
-use super::*;
 use serde_json::{Value, json};
 use std::time::Duration;
 
