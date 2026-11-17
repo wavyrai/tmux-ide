@@ -135,6 +135,76 @@ describe("one connection's unacknowledged delivery bytes", () => {
     }
   });
 
+  it("holds a history frame (capability 122) behind another pane's unacknowledged bulk", async () => {
+    const owners = new Map([
+      ["pane-a", new Owner("pane-a")],
+      ["pane-b", new Owner("pane-b")],
+    ]);
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "w",
+      (pane) => owners.get(pane)!,
+      {
+        connectionHoldMs: 60_000,
+        connectionCongestedMs: 0,
+      },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const sink = (m: TerminalDeliveryServerMessage) => {
+      messages.push(m);
+    };
+    const a = await hub.open(
+      "client",
+      "pane-a",
+      { protocolVersions: [1, 122], encodings: ["semantic-compact-v1"], richPlacements: false },
+      sink,
+    );
+    const b = await hub.open(
+      "client",
+      "pane-b",
+      { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+      sink,
+    );
+    try {
+      owners.get("pane-a")!.emit(0, "a");
+      await quiet();
+      const seed = messages.find(
+        (m): m is TerminalDeliveryEnvelope =>
+          m.type === "terminal.delivery" && m.semanticPaneId === "pane-a",
+      )!;
+      expect(seed.historyUnloaded!.rows).toBe(200);
+      a.ack(ackFor(a, "pane-a", messages));
+      owners.get("pane-b")!.emit(0, "b");
+      await quiet();
+      expect(deliveredPanes(messages)).toEqual(["pane-a", "pane-b"]);
+      a.historyRequest!({
+        type: "terminal.delivery.history-request",
+        workspaceName: "w",
+        semanticPaneId: "pane-a",
+        generation,
+        incarnation: seed.incarnation,
+        deliveryNonce: seed.deliveryNonce,
+        canonicalRevision: 0,
+        unloadedRows: 200,
+        maxRows: 200,
+      });
+      await quiet();
+      // pane-b's bulk is still unacknowledged: the history waits behind it.
+      expect(deliveredPanes(messages)).toEqual(["pane-a", "pane-b"]);
+      b.ack(ackFor(b, "pane-b", messages));
+      await vi.waitFor(() =>
+        expect(deliveredPanes(messages)).toEqual(["pane-a", "pane-b", "pane-a"]),
+      );
+      expect(messages.filter((m) => m.type === "terminal.delivery").at(-1)).toMatchObject({
+        frame: "history",
+      });
+    } finally {
+      await a.close();
+      await b.close();
+      await hub.close();
+    }
+  });
+
   it("never holds the pane the client types into", async () => {
     const { owners, hub, messages, a, b } = await setup();
     try {

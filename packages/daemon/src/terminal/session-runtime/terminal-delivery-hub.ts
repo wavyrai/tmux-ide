@@ -1224,6 +1224,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   ): void {
     const pane = this.#panes.get(client.paneId);
     if (!completed && pane && this.#historyDue(client)) {
+      // History counts against the connection's byte budget like any delivery.
+      if (this.#holdForBudget(client)) return;
       this.#deliverHistory(client, pane);
       return;
     }
@@ -1240,20 +1242,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       (!completed && target.update.revision !== client.latestRevision)
     )
       return;
-    if (!completed && this.#overBudget(client)) {
-      client.budgetHeld = true;
-      client.budgetHeldSince ??= this.#scheduler.nowMs();
-      client.budgetTimer ??= this.#scheduler.timer(() => {
-        client.budgetTimer = null;
-        if (client.closed || !client.budgetHeld) return;
-        client.budgetHeld = false;
-        this.#schedule(client);
-      }, this.#holdMs);
-      return;
-    }
-    client.budgetHeldSince = null;
-    client.budgetTimer?.cancel();
-    client.budgetTimer = null;
+    if (!completed && this.#holdForBudget(client)) return;
     const traceStarted =
       completed?.traceStarted ??
       (this.#observability.enabled ? this.#observability.nowMicros() : 0);
@@ -2126,6 +2115,25 @@ export class SessionRuntimeTerminalDeliveryHub {
       historyUnloaded: terminalHistoryPrefixCommitment(full.history, unloadedRows),
       historyRows: { unloaded: unloadedRows, loaded: full.history.length - unloadedRows },
     };
+  }
+
+  /** Hold the client while its connection's other panes are congested; true if held. */
+  #holdForBudget(client: ClientState): boolean {
+    if (this.#overBudget(client)) {
+      client.budgetHeld = true;
+      client.budgetHeldSince ??= this.#scheduler.nowMs();
+      client.budgetTimer ??= this.#scheduler.timer(() => {
+        client.budgetTimer = null;
+        if (client.closed || !client.budgetHeld) return;
+        client.budgetHeld = false;
+        this.#schedule(client);
+      }, this.#holdMs);
+      return true;
+    }
+    client.budgetHeldSince = null;
+    client.budgetTimer?.cancel();
+    client.budgetTimer = null;
+    return false;
   }
 
   /** Capability 122: a history frame goes next if asked for and no newer output waits (or one just went). */
