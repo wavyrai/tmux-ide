@@ -14,6 +14,13 @@ pub(in crate::tmux_snapshot) struct Keyboard {
     pub(in crate::tmux_snapshot::browser_ui) request: u64,
     displayed: Vec<Option<Target>>,
 }
+impl Keyboard {
+    /// The list's scroll handle, for tests outside the sidebar.
+    #[cfg(test)]
+    pub(in crate::tmux_snapshot) fn scroll_for_tests(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+}
 pub(in crate::tmux_snapshot::browser_ui) fn focus_shortcut(key: &Keystroke) -> bool {
     key.key == "g"
         && key.modifiers.control
