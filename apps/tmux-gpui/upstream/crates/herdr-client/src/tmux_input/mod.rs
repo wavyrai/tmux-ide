@@ -254,6 +254,23 @@ impl<T> Scheduler<T> {
             InputResult::Retired => self.fail(ticket, Completion::Retired),
         }
     }
+    /// Release an input reservation that never reached the wire (the
+    /// controller refused it before sending, e.g. bytes without the
+    /// capability). A bound or unknown ticket retires the scheduler.
+    pub fn cancel_unsent_input(&mut self, ticket: Ticket) -> Result<Update<T>, Error> {
+        if self.retired {
+            return Err(Error::Retired);
+        }
+        if !self
+            .pending
+            .get(&ticket)
+            .is_some_and(|p| p.input && p.correlation.is_none())
+        {
+            self.retired = true;
+            return Err(Error::Correlation);
+        }
+        Ok(self.finish(ticket))
+    }
     pub fn complete_barrier(&mut self, ticket: Ticket, success: bool) -> Result<Update<T>, Error> {
         if self.retired {
             return Err(Error::Retired);
@@ -328,27 +345,12 @@ impl<T> Scheduler<T> {
         }
     }
 }
+/// Every bounded input pipelines in the shared window of eight: the daemon
+/// applies text, keys and bytes of one stream in arrival order (one input
+/// FIFO per session), and a failed input retires everything behind it. Only
+/// barriers (paste, pointer, presence, semantic and control work) wait.
 fn pipeline<T>(work: &Work<T>) -> bool {
-    match work {
-        Work::Input(Input::Text(data)) => !data.chars().any(char::is_control),
-        Work::Input(Input::Key(data)) => matches!(
-            data.as_str(),
-            "BSpace"
-                | "DC"
-                | "Left"
-                | "Right"
-                | "Up"
-                | "Down"
-                | "Home"
-                | "End"
-                | "NPage"
-                | "PPage"
-                | "PgUp"
-                | "PgDn"
-                | "Space"
-        ),
-        Work::Input(Input::Bytes(_)) | Work::Barrier(_) => false,
-    }
+    matches!(work, Work::Input(_))
 }
 #[cfg(test)]
 mod tests;
