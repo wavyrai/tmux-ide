@@ -77,6 +77,7 @@ impl Local {
         }
         let mut choices = Vec::with_capacity(issued.len());
         let mut readers = BTreeMap::new();
+        let mut plain_browsers = BTreeSet::new();
         let mut remaining = issued;
         for window in &layouts {
             let Some(window_id) = &window.semantic_window_id else {
@@ -91,6 +92,9 @@ impl Local {
                 }
                 if let Some(reader) = &row.reader {
                     readers.insert(id.to_owned(), reader.name.clone());
+                }
+                if row.browser_kind == Some(herdr_client::tmux_topology::BrowserKind::Plain) {
+                    plain_browsers.insert(id.to_owned());
                 }
                 choices.push(Choice {
                     id: id.into(),
@@ -117,8 +121,10 @@ impl Local {
                 });
             }
         }
-        let readers_changed = readers != self.state.reader_panes;
+        let readers_changed =
+            readers != self.state.reader_panes || plain_browsers != self.state.plain_browsers;
         self.state.reader_panes = readers;
+        self.state.plain_browsers = plain_browsers;
         if choices == self.state.panes && self.state.session_catalog_complete && !readers_changed {
             return Ok(());
         }

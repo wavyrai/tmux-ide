@@ -308,3 +308,40 @@ fn an_inactive_window_follows_its_streams_pane_set() {
         assert_eq!(local.state.selected_pane.as_deref(), Some("left"));
     }
 }
+/// #718: the panes the layout calls plain browsers reach the published state,
+/// and a later layout that changes a pane's kind publishes the change.
+#[test]
+fn plain_browser_panes_reach_the_state_and_follow_their_kind() {
+    let (mut local, events) = attached();
+    let with_kind = |kind: serde_json::Value| -> Layout {
+        let mut value = serde_json::to_value(layout()).unwrap();
+        value["panes"][0]["browserKind"] = kind;
+        serde_json::from_value(value).unwrap()
+    };
+    local
+        .command(notice(&local, vec![with_kind("plain".into())]))
+        .unwrap();
+    assert!(events.try_recv().is_ok());
+    assert_eq!(
+        local.state.plain_browsers.iter().collect::<Vec<_>>(),
+        ["right"]
+    );
+    // The browser published its controls: native now, not plain.
+    local
+        .command(notice(&local, vec![with_kind("native".into())]))
+        .unwrap();
+    assert!(events.try_recv().is_ok(), "the change was not published");
+    assert!(local.state.plain_browsers.is_empty());
+    local
+        .command(notice(&local, vec![with_kind("plain".into())]))
+        .unwrap();
+    assert!(events.try_recv().is_ok());
+    // The browser exited: no kind.
+    local
+        .command(notice(&local, vec![with_kind(serde_json::Value::Null)]))
+        .unwrap();
+    assert!(events.try_recv().is_ok(), "the change was not published");
+    assert!(local.state.plain_browsers.is_empty());
+    local.command(notice(&local, vec![layout()])).unwrap();
+    assert!(events.try_recv().is_err());
+}

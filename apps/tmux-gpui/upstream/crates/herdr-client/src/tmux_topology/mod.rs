@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, BTreeSet};
 pub use wire::{
-    BorderStatus, DisplayNameSource, Layout, LayoutPane, ModeKeys, ReaderBadge, WindowLink,
-    WindowLinks,
+    BorderStatus, BrowserKind, DisplayNameSource, Layout, LayoutPane, ModeKeys, ReaderBadge,
+    WindowLink, WindowLinks,
 };
 
 #[derive(Debug, thiserror::Error)]

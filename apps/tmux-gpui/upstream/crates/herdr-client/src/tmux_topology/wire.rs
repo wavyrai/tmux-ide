@@ -42,12 +42,37 @@ pub struct LayoutPane {
         skip_serializing_if = "Option::is_none"
     )]
     pub reader: Option<ReaderBadge>,
+    /// Which browser runs in the pane (#718), sent only under capability
+    /// 123; `None` for any other pane. A kind this app does not know reads
+    /// as none, and the layout still stands.
+    #[serde(
+        default,
+        deserialize_with = "BrowserKind::lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub browser_kind: Option<BrowserKind>,
     pub display_name_source: Option<DisplayNameSource>,
     pub left: usize,
     pub top: usize,
     pub width: usize,
     pub height: usize,
     pub active: bool,
+}
+/// A browser pane's kind (#718): `Native` publishes the header's controls,
+/// `Plain` is a terminal browser without them.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowserKind {
+    Native,
+    Plain,
+}
+impl BrowserKind {
+    fn lenient<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Self>, D::Error> {
+        let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+        Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

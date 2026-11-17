@@ -427,3 +427,39 @@ fn reader_badges_carry_a_bounded_file_name() {
         );
     }
 }
+
+/// #718: with capability 123 each layout pane says what kind of browser runs
+/// there: "native" (header controls), "plain" (none), or null (not a
+/// browser). A value this app does not know reads as no kind, and the layout
+/// still stands.
+#[test]
+fn layout_panes_carry_the_browser_kind() {
+    let mut frame = frames()
+        .into_iter()
+        .find(|frame| frame["type"] == "layout-snapshot")
+        .unwrap();
+    frame["layouts"][0]["panes"][0]["browserKind"] = json!("plain");
+    let mut state = topology(&frame);
+    assert_eq!(
+        state.layouts()["window-a"].panes[0].browser_kind,
+        Some(BrowserKind::Plain)
+    );
+    for (value, kind) in [
+        (json!("native"), Some(BrowserKind::Native)),
+        (json!(null), None),
+        (json!("fancy"), None),
+        (json!(7), None),
+        (json!({"kind": "plain"}), None),
+    ] {
+        frame["topologyEpoch"] = json!(frame["topologyEpoch"].as_u64().unwrap() + 1);
+        frame["layouts"][0]["panes"][0]["browserKind"] = value.clone();
+        state
+            .apply_control(&to_raw_value(&frame).unwrap())
+            .unwrap_or_else(|error| panic!("{value}: {error}"));
+        assert_eq!(
+            state.layouts()["window-a"].panes[0].browser_kind,
+            kind,
+            "{value}"
+        );
+    }
+}
