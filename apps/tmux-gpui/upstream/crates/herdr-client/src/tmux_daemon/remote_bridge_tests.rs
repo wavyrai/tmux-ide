@@ -354,3 +354,60 @@ fn a_ready_for_another_version_fails_the_lane() {
     );
     server.join().unwrap();
 }
+
+/// Cross-checks this lane against a real daemon. Needs a private daemon and
+/// tmux server (never the owner's): its daemon.json, the tmux binary, the -S
+/// socket and a pane target that runs a shell.
+#[test]
+#[ignore = "needs a private daemon: TMUX_IDE_BRIDGE_LIVE_{RECORD,TMUX,SOCKET,TARGET}"]
+fn a_live_daemon_reports_a_copy() {
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} unset"));
+    let (tmux, socket, target) = (
+        var("TMUX_IDE_BRIDGE_LIVE_TMUX"),
+        var("TMUX_IDE_BRIDGE_LIVE_SOCKET"),
+        var("TMUX_IDE_BRIDGE_LIVE_TARGET"),
+    );
+    assert!(!socket.starts_with("/private/tmp/tmux-") && !socket.starts_with("/tmp/tmux-"));
+    let source = CatalogSource::Local(var("TMUX_IDE_BRIDGE_LIVE_RECORD").into());
+    let worker = RemoteBridgeWorker::spawn(source, || {}).unwrap();
+    until(|| worker.live().then_some(()));
+    let send = |keys: &[&str]| {
+        let status = std::process::Command::new(&tmux)
+            .args(["-S", &socket, "send-keys", "-t", &target])
+            .args(keys)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    let mut latencies = Vec::new();
+    for run in 0..5 {
+        let text = format!("live-{run}");
+        send(&[
+            "-l",
+            &format!("printf '\\033]52;c;%s\\007' \"$(printf {text} | base64)\""),
+        ]);
+        let start = Instant::now();
+        send(&["Enter"]);
+        let event = until(|| worker.take_events().into_iter().next());
+        latencies.push(start.elapsed());
+        match event {
+            BridgeEvent::Clipboard { text: got, .. } => assert_eq!(got, text),
+            other => panic!("unexpected {other:?}"),
+        }
+        thread::sleep(Duration::from_millis(300));
+    }
+    eprintln!("live bridge Enter-to-event latencies: {latencies:?}");
+    assert!(worker.take_end().is_none());
+}
+
+/// A released daemon without the bridge: the lane ends as unsupported and
+/// never upgrades. Needs a private daemon's daemon.json.
+#[test]
+#[ignore = "needs a private older daemon: TMUX_IDE_BRIDGE_LIVE_RECORD"]
+fn a_live_older_daemon_gets_no_lane() {
+    let record = std::env::var("TMUX_IDE_BRIDGE_LIVE_RECORD").unwrap();
+    let worker = RemoteBridgeWorker::spawn(CatalogSource::Local(record.into()), || {}).unwrap();
+    let end = until(|| worker.take_end());
+    assert!(matches!(end, BridgeEnd::Unsupported), "{end:?}");
+    assert!(!worker.live());
+}
