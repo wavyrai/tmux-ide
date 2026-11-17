@@ -127,11 +127,12 @@ fn issue_body(
 }
 /// Capability 122, history on demand: a seed carries the screen and the
 /// newest 200 history rows, and the app asks for older rows as it needs
-/// them. Only a daemon that knows it (2.9.26) also takes an offer of more
-/// than nine numbers (#433); every other daemon gets the offer unchanged.
+/// them. Only a daemon that knows it (2.9.27) gets it; its offer has more
+/// than nine numbers, which a daemon takes from 2.9.26 (#433). Every other
+/// daemon gets the offer unchanged.
 fn with_partial_history(mut versions: Vec<u32>, product_version: Option<&str>) -> Vec<u32> {
     if release_at_least(product_version, PARTIAL_HISTORY_SINCE)
-        && versions.len() < MAX_OFFERED_VERSIONS_2_9_26
+        && versions.len() < MAX_OFFERED_VERSIONS_SINCE_2_9_26
     {
         versions.push(PARTIAL_HISTORY);
     }
@@ -168,11 +169,12 @@ const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 25];
 /// The first daemon release with window-scoped streams (#806). Not yet set
 /// by a release: the PM confirms it when the daemon side ships.
 const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
-/// Capability 122 and the bound of 16 offered numbers ship together (PM:
-/// history on demand in 2.9.26).
-const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 26];
+/// Capability 122, history on demand (#435). 2.9.26 shipped without it, so a
+/// released 2.9.26 daemon must not be offered it (lead, 17 Nov).
+const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 27];
 const PARTIAL_HISTORY: u32 = 122;
-const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
+/// The bound on offered numbers from 2.9.26 (#433).
+const MAX_OFFERED_VERSIONS_SINCE_2_9_26: usize = 16;
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;

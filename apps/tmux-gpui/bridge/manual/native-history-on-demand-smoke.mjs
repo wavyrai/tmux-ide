@@ -1,6 +1,6 @@
 // Live (capability 122): a pane with ~2000 rows of history against an owned
 // scratch tmux server and daemon (never the developer's). The daemon must be
-// a release with history on demand (productVersion >= 2.9.26): pass its
+// a release with history on demand (productVersion >= 2.9.27): pass its
 // bin/cli.js as SMOKE_CLI.
 //
 //   SMOKE_CLI=/abs/bin/cli.js node --import tsx native-history-on-demand-smoke.mjs ABS_GUI_TEST_BINARY

@@ -275,11 +275,11 @@ fn an_invalid_window_id_cannot_reach_the_owner() {
     assert!(s.validate().is_ok());
 }
 
-/// Capability 122 goes only to a daemon release that has it, which also takes
-/// a tenth number; older or unknown daemons keep the same offer of at most
-/// nine numbers.
+/// Capability 122 goes only to a daemon release that has it (2.9.27: the
+/// released 2.9.26 lacks #435); older or unknown daemons keep the same offer
+/// of at most nine numbers.
 #[test]
-fn history_on_demand_is_offered_only_from_2_9_26() {
+fn history_on_demand_is_offered_only_from_2_9_27() {
     for (graphics, local, surfaces, interactive) in [
         (true, true, true, true),
         (true, false, false, true),
@@ -294,13 +294,13 @@ fn history_on_demand_is_offered_only_from_2_9_26() {
                 knows_topology_bundle(Some(version)),
             )
         };
-        for knowing in ["2.9.26", "2.10.0", "3.0.0"] {
+        for knowing in ["2.9.27", "2.10.0", "3.0.0"] {
             let offer = with_partial_history(base(knowing), Some(knowing));
             assert_eq!(offer.last(), Some(&122), "{knowing}: {offer:?}");
             assert_eq!(offer[..offer.len() - 1], base(knowing)[..]);
             assert!(offer.len() <= 16);
         }
-        for older in ["2.9.25", "2.9.26-rc.1", "bad"] {
+        for older in ["2.9.25", "2.9.26", "2.9.27-rc.1", "bad"] {
             let offer = with_partial_history(base(older), Some(older));
             assert!(
                 !offer.contains(&122) && offer.len() <= 9,
