@@ -278,6 +278,9 @@ class FakeMirror implements PaneStreamMirror {
   /** Errors the next layout subscriptions throw, one each, before any works. */
   layoutFailures: Error[] = [];
 
+  /** A pane's window when it is not the default one (#806 window-scoped streams). */
+  windowOf = new Map<string, string>();
+
   constructor(panes: string[]) {
     this.panes = panes;
   }
@@ -289,7 +292,7 @@ class FakeMirror implements PaneStreamMirror {
       session,
       panes: this.panes.map((semanticPaneId) => ({
         semanticPaneId,
-        semanticWindowId: "window.mirror.w1",
+        semanticWindowId: this.windowOf.get(semanticPaneId) ?? "window.mirror.w1",
         role: null,
         paneType: null,
         currentCommand: "sh",
@@ -662,6 +665,7 @@ async function connect(
     protocolVersions?: number[];
     allowStartupClose?: boolean;
     diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
+    semanticWindowId?: string;
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -671,6 +675,7 @@ async function connect(
       workspaceName: "workspace.alpha",
       panes: options.panes ?? ["pane.editor", "pane.shell"],
       viewerMode: options.viewerMode ?? "read-only",
+      ...(options.semanticWindowId ? { semanticWindowId: options.semanticWindowId } : {}),
       ...(options.semanticDelivery
         ? {
             terminalDelivery: {
@@ -2962,6 +2967,234 @@ describe("PaneStreamAdmissionCoordinator", () => {
       ]);
       expect(opened).not.toContain("pane.gone");
       expect(socket.closed).toBeNull();
+    });
+
+    describe("a stream issued for one window (#806)", () => {
+      const W1 = "window.mirror.w1";
+      const W2 = "window.mirror.w2";
+      let epoch = 100;
+      /** The session now has these windows and panes; its inventory and layout say so. */
+      const windows = (h: ReturnType<typeof harness>, panesByWindow: Record<string, string[]>) => {
+        h.mirror.panes = Object.values(panesByWindow).flat();
+        h.mirror.windowOf = new Map(
+          Object.entries(panesByWindow).flatMap(([window, panes]) =>
+            panes.map((pane) => [pane, window] as const),
+          ),
+        );
+        const layouts = Object.entries(panesByWindow).map(([window, panes], index) =>
+          authoritativeLayout(panes, { window, current: index === 0 }),
+        );
+        return layouts;
+      };
+      const publish = (h: ReturnType<typeof harness>, panesByWindow: Record<string, string[]>) => {
+        const layouts = windows(h, panesByWindow);
+        epoch += 1;
+        h.mirror.authorityHandlers[0]?.({
+          session: SESSION,
+          runtimeSessionId: "$1",
+          topologyEpoch: epoch,
+          layouts,
+        });
+      };
+      async function openWindow(
+        panesByWindow: Record<string, string[]>,
+        window = W1,
+        protocolVersions: number[] = IN_PLACE,
+      ) {
+        const all = Object.values(panesByWindow).flat();
+        const { h, opened, closed } = topologyHarness(all);
+        h.mirror.initialLayouts = windows(h, panesByWindow);
+        const { socket } = await connect(h, {
+          panes: panesByWindow[window]!,
+          semanticDelivery: true,
+          protocolVersions,
+          semanticWindowId: window,
+        });
+        await vi.waitFor(() =>
+          expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(
+            panesByWindow[window]!.length,
+          ),
+        );
+        return { h, opened, closed, socket };
+      }
+
+      it("is issued for exactly the panes of that window", async () => {
+        const { socket } = await openWindow({
+          [W1]: ["pane.one", "pane.two"],
+          [W2]: ["pane.three"],
+        });
+        expect(socket.framesOfType("ready")[0]).toMatchObject({ panes: ["pane.one", "pane.two"] });
+        expect(socket.closed).toBeNull();
+      });
+
+      it.each([
+        ["panes of two windows", ["pane.one", "pane.three"]],
+        ["only some panes of the window", ["pane.one"]],
+        ["a pane the session does not have", ["pane.one", "pane.two", "pane.nine"]],
+      ])("is refused for %s", async (_name, panes) => {
+        const { h } = topologyHarness(["pane.one", "pane.two", "pane.three"]);
+        windows(h, { [W1]: ["pane.one", "pane.two"], [W2]: ["pane.three"] });
+        await expect(
+          h.coordinator.issue(
+            {
+              protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+              workspaceName: "workspace.alpha",
+              panes,
+              viewerMode: "read-only",
+              semanticWindowId: W1,
+            },
+            {
+              requestId: freshRequestId(),
+              projectIdentity: "workspace.alpha",
+              sessionName: SESSION,
+              rendererOrigin: ORIGIN,
+              hostClientId: "test-host:window",
+            },
+          ),
+        ).rejects.toMatchObject({ code: "pane-not-found" });
+      });
+
+      it("adds a pane split in its window, and only that one", async () => {
+        const { h, socket } = await openWindow({ [W1]: ["pane.one"], [W2]: ["pane.three"] });
+        publish(h, { [W1]: ["pane.one", "pane.two"], [W2]: ["pane.three", "pane.four"] });
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        expect(socket.framesOfType("topology")[0]).toMatchObject({
+          panes: ["pane.one", "pane.two"],
+          removed: [],
+          added: ["pane.two"],
+        });
+        expect(h.grantAmendments).toEqual([{ added: ["pane.two"], removed: [] }]);
+        await vi.waitFor(() =>
+          expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2),
+        );
+        expect(socket.closed).toBeNull();
+      });
+
+      it("takes a pane moved into its window and lets go of one moved out", async () => {
+        const { h, socket } = await openWindow({
+          [W1]: ["pane.one", "pane.two"],
+          [W2]: ["pane.three"],
+        });
+        publish(h, { [W1]: ["pane.one", "pane.three"], [W2]: ["pane.two"] });
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        expect(socket.framesOfType("topology")[0]).toMatchObject({
+          panes: ["pane.one", "pane.three"],
+          removed: ["pane.two"],
+          added: ["pane.three"],
+        });
+        expect(h.grantAmendments).toEqual([
+          { added: ["pane.three"], removed: [] },
+          { added: [], removed: ["pane.two"] },
+        ]);
+        expect(socket.closed).toBeNull();
+      });
+
+      it("never grants a pane of another window", async () => {
+        const { h, opened, socket } = await openWindow({
+          [W1]: ["pane.one"],
+          [W2]: ["pane.three"],
+        });
+        publish(h, { [W1]: ["pane.one"], [W2]: ["pane.three", "pane.four", "pane.five"] });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one"]);
+        expect(socket.framesOfType("topology").flatMap((frame) => frame.added)).toEqual([]);
+        expect(socket.closed).toBeNull();
+      });
+
+      it("grants nothing a fresh issue for that window would not", async () => {
+        const { h, socket } = await openWindow({
+          [W1]: ["pane.one", "pane.two"],
+          [W2]: ["pane.three"],
+        });
+        publish(h, { [W1]: ["pane.one", "pane.three"], [W2]: ["pane.two", "pane.four"] });
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        const followed = socket.framesOfType("topology")[0]!.panes;
+        // The same window, issued afresh now, is exactly the followed set...
+        await expect(
+          h.coordinator.issue(
+            {
+              protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+              workspaceName: "workspace.alpha",
+              panes: followed,
+              viewerMode: "read-only",
+              semanticWindowId: W1,
+            },
+            {
+              requestId: freshRequestId(),
+              projectIdentity: "workspace.alpha",
+              sessionName: SESSION,
+              rendererOrigin: ORIGIN,
+              hostClientId: "test-host:fresh",
+            },
+          ),
+        ).resolves.toBeTruthy();
+        // ...and every pane the grant ever gained is in it.
+        for (const pane of h.grantAmendments.flatMap((entry) => entry.added))
+          expect(followed).toContain(pane);
+      });
+
+      it("takes no pane the inventory places in the window while the layout does not show it there", async () => {
+        const { h, opened } = await openWindow({
+          [W1]: ["pane.one"],
+          [W2]: ["pane.three", "pane.four"],
+        });
+        // A pane appears (so the change is followed), and the inventory now puts
+        // pane.three in W1 while the layout still shows it in W2.
+        windows(h, { [W1]: ["pane.one", "pane.three"], [W2]: ["pane.four", "pane.five"] });
+        epoch += 1;
+        h.mirror.authorityHandlers[0]?.({
+          session: SESSION,
+          runtimeSessionId: "$1",
+          topologyEpoch: epoch,
+          layouts: [
+            authoritativeLayout(["pane.one"], { window: W1, current: true }),
+            authoritativeLayout(["pane.three", "pane.four", "pane.five"], {
+              window: W2,
+              current: false,
+            }),
+          ],
+        });
+        await new Promise((resolve) => setTimeout(resolve, PANE_STREAM_TOPOLOGY_SETTLE_MS + 100));
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one"]);
+      });
+
+      it("takes nothing from an inventory of another runtime session", async () => {
+        const { h, opened, socket } = await openWindow({
+          [W1]: ["pane.one"],
+          [W2]: ["pane.three"],
+        });
+        h.mirror.runtimeSessionId = "$9";
+        publish(h, { [W1]: ["pane.one", "pane.two"], [W2]: ["pane.three"] });
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+        );
+        expect(h.grantAmendments).toEqual([]);
+        expect(opened).toEqual(["pane.one"]);
+      });
+
+      it("closes as before when its window is gone", async () => {
+        const { h, socket } = await openWindow({ [W1]: ["pane.one"], [W2]: ["pane.three"] });
+        publish(h, { [W2]: ["pane.three"] });
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+        );
+        expect(h.grantAmendments).toEqual([]);
+      });
+
+      it("follows nothing for a client without the capability", async () => {
+        const { h, socket } = await openWindow(
+          { [W1]: ["pane.one"], [W2]: ["pane.three"] },
+          W1,
+          [1],
+        );
+        publish(h, { [W1]: ["pane.one", "pane.two"], [W2]: ["pane.three"] });
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+        );
+        expect(h.grantAmendments).toEqual([]);
+      });
     });
 
     it("leaves a stream that leased only some panes with those panes", async () => {

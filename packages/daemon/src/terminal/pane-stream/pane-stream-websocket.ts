@@ -636,6 +636,23 @@ export class PaneStreamAdmissionCoordinator {
           );
         }
       }
+      // #806: a stream for one window is issued for exactly that window's
+      // panes, as the trusted inventory places them now.
+      if (request.semanticWindowId !== undefined) {
+        const windowPanes = new Set(
+          described.panes
+            .filter((pane) => pane.semanticWindowId === request.semanticWindowId)
+            .map((pane) => pane.semanticPaneId),
+        );
+        if (
+          windowPanes.size !== request.panes.length ||
+          request.panes.some((pane) => !windowPanes.has(pane))
+        )
+          throw new PaneStreamAdmissionError(
+            "pane-not-found",
+            "The panes are not exactly the panes of that window of the workspace session.",
+          );
+      }
 
       const issued = await this.#leaseManager.issue(request, {
         requestId,
@@ -2622,7 +2639,10 @@ export class PaneStreamLiveConnection {
       return;
     }
     const frames = this.#validateInitialLayout(snapshot.layouts, this.#semanticExpectedPaneIds);
-    if (!frames && this.#topologyInPlace) {
+    // #806: a pane can also move between windows while the session keeps its
+    // panes; for a stream of one window that changes its pane set.
+    const windowChanged = frames !== null && this.#windowPaneSetChanged(snapshot);
+    if ((!frames || windowChanged) && this.#topologyInPlace) {
       // The layout does not fit the pane set this stream knows. With
       // capability 119 that is a change to follow, not a reason to close.
       void this.#reconcileTopology(snapshot);
@@ -2630,6 +2650,7 @@ export class PaneStreamLiveConnection {
     }
     if (
       !frames ||
+      windowChanged ||
       !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
         type: "layout-snapshot",
         topologyEpoch: snapshot.topologyEpoch,
@@ -2655,6 +2676,20 @@ export class PaneStreamLiveConnection {
       layouts: frames,
       windowLinks: snapshot.windowLinks,
     });
+  }
+
+  /** #806: the layout no longer shows this stream's window with exactly its panes. */
+  #windowPaneSetChanged(snapshot: MirrorLayoutAuthoritySnapshot): boolean {
+    const window = this.#descriptor.semanticWindowId;
+    if (window === null) return false;
+    const live = [...this.#panes.values()]
+      .filter((channel) => !channel.closed)
+      .map((channel) => channel.semanticPaneId);
+    const shown = snapshot.layouts.find((event) => event.semanticWindowId === window);
+    if (!shown) return true;
+    const panes = shown.panes.map((pane) => pane.semanticPaneId ?? "");
+    if (shown.zoomed) return panes.length !== 1 || !live.includes(panes[0]!);
+    return panes.length !== live.length || panes.some((pane) => !live.includes(pane));
   }
 
   /** The same session and runtime, a newer epoch, a layout a stream can carry. */
@@ -2782,12 +2817,41 @@ export class PaneStreamLiveConnection {
       }).success
     )
       return this.#topologyFailed("layout snapshot invalid");
+    // #806: a stream issued for one window follows that window's panes, as the
+    // trusted inventory places them, and the same layout must show that window
+    // with exactly those panes (a zoomed window shows one of them).
+    const window = this.#descriptor.semanticWindowId;
+    let windowPanes: string[] | null = null;
+    if (window !== null) {
+      windowPanes = [
+        ...new Set(
+          described.panes
+            .filter((pane) => pane.semanticWindowId === window)
+            .map((pane) => pane.semanticPaneId),
+        ),
+      ].sort();
+      if (windowPanes.length === 0) return this.#topologyFailed("the stream's window is gone");
+      const shown = snapshot.layouts.find((event) => event.semanticWindowId === window);
+      const shownPanes = (shown?.panes ?? []).map((pane) => pane.semanticPaneId ?? "");
+      if (
+        !shown ||
+        (shown.zoomed
+          ? shownPanes.length !== 1 || !windowPanes.includes(shownPanes[0]!)
+          : shownPanes.length !== windowPanes.length ||
+            shownPanes.some((pane) => !windowPanes!.includes(pane)))
+      )
+        return "stale";
+    }
+    const followed = windowPanes ?? next;
     const live = [...this.#panes.values()].filter((channel) => !channel.closed);
-    const removed = live.filter((channel) => !next.includes(channel.semanticPaneId));
-    // A stream issued for the whole session follows it; one issued for some
-    // panes keeps exactly those.
+    const removed = live.filter((channel) => !followed.includes(channel.semanticPaneId));
+    // A stream issued for the whole session follows it, and one issued for a
+    // window follows that window; one issued for some panes keeps exactly those.
     const liveIds = new Set(live.map((channel) => channel.semanticPaneId));
-    const added = this.#leasesWholeSession ? next.filter((pane) => !liveIds.has(pane)) : [];
+    const added =
+      windowPanes !== null || this.#leasesWholeSession
+        ? followed.filter((pane) => !liveIds.has(pane))
+        : [];
     if (added.length > 0 && !inventoryIsThisSession)
       return this.#topologyFailed("inventory cannot prove the runtime session");
     const remaining = live.length - removed.length + added.length;
