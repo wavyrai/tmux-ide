@@ -7395,7 +7395,7 @@ var init_causal_cell = __esm({
 
 // packages/contracts/src/terminal-delivery.ts
 import { z as z48 } from "zod";
-var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
+var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
     "use strict";
@@ -7408,6 +7408,7 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION = /* @__PURE__ */ (() => 109)();
     TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION = /* @__PURE__ */ (() => 110)();
     TERMINAL_DELIVERY_PROTOCOL_VERSION = /* @__PURE__ */ (() => 1)();
+    TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = /* @__PURE__ */ (() => 16)();
     TERMINAL_DELIVERY_CHUNK_BYTES = /* @__PURE__ */ (() => 256 * 1024)();
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
     TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = /* @__PURE__ */ (() => 16 * 1024 * 1024)();
@@ -7419,8 +7420,9 @@ var init_terminal_delivery = __esm({
       "ansi-raw-v1"
     ]))();
     TerminalDeliveryOfferSchemaZ = /* @__PURE__ */ (() => z48.object({
-      // Interactive binary/graphics offers use eight slots; native surfaces add one.
-      protocolVersions: z48.array(z48.number().int().positive()).min(1).max(9),
+      // Released daemons before 2.9.26 refuse more than nine numbers, so a client
+      // offers a tenth only to a daemon whose productVersion is 2.9.26 or later.
+      protocolVersions: z48.array(z48.number().int().positive()).min(1).max(TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS),
       encodings: z48.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
       richPlacements: z48.boolean()
     }).strict().superRefine((value, context) => {
@@ -7700,6 +7702,7 @@ __export(tmux_server_scope_exports, {
   TmuxServerSessionTargetSchemaZ: () => TmuxServerSessionTargetSchemaZ,
   TmuxServerSessionsResourceSchemaZ: () => TmuxServerSessionsResourceSchemaZ,
   TmuxServerSessionsResourceV2SchemaZ: () => TmuxServerSessionsResourceV2SchemaZ,
+  TmuxServerSessionsResourceV3SchemaZ: () => TmuxServerSessionsResourceV3SchemaZ,
   TmuxServerWindowTargetSchemaZ: () => TmuxServerWindowTargetSchemaZ,
   TmuxServersResourceSchemaZ: () => TmuxServersResourceSchemaZ,
   isTmuxServerPaneStreamPath: () => isTmuxServerPaneStreamPath,
@@ -7738,7 +7741,7 @@ function base64DecodedLength(data) {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return data.length / 4 * 3 - padding;
 }
-var descriptorShape, TmuxServerDescriptorSchemaZ, TMUX_SERVERS_API_PATH, TmuxServersResourceSchemaZ, TmuxServerSessionTargetSchemaZ, TmuxServerWindowTargetSchemaZ, TmuxServerPaneTargetSchemaZ, TmuxServerSessionsResourceSchemaZ, TMUX_SERVER_SESSION_FAVICON_MAX_BYTES, TmuxServerSessionFaviconMimeSchemaZ, TmuxServerSessionFaviconSchemaZ, TmuxServerSessionsResourceV2SchemaZ, TmuxServerRegistrationRequestSchemaZ;
+var descriptorShape, TmuxServerDescriptorSchemaZ, TMUX_SERVERS_API_PATH, TmuxServersResourceSchemaZ, TmuxServerSessionTargetSchemaZ, TmuxServerWindowTargetSchemaZ, TmuxServerPaneTargetSchemaZ, TmuxServerSessionsResourceSchemaZ, TMUX_SERVER_SESSION_FAVICON_MAX_BYTES, TmuxServerSessionFaviconMimeSchemaZ, TmuxServerSessionFaviconSchemaZ, TmuxServerSessionsResourceV2SchemaZ, TmuxServerSessionsResourceV3SchemaZ, TmuxServerRegistrationRequestSchemaZ;
 var init_tmux_server_scope = __esm({
   "packages/contracts/src/tmux-server-scope.ts"() {
     "use strict";
@@ -7830,6 +7833,13 @@ var init_tmux_server_scope = __esm({
           lastActivity: z50.number().int().nonnegative().nullable(),
           favicon: TmuxServerSessionFaviconSchemaZ.nullable()
         }).strict()
+      )
+    }).strict())();
+    TmuxServerSessionsResourceV3SchemaZ = /* @__PURE__ */ (() => z50.object({
+      version: z50.literal(3),
+      server: TmuxServerScopeSchemaZ,
+      sessions: z50.array(
+        TmuxServerSessionsResourceV2SchemaZ.shape.sessions.element.extend({ largestWindowPaneCount: z50.number().int().min(1) }).strict()
       )
     }).strict())();
     TmuxServerRegistrationRequestSchemaZ = /* @__PURE__ */ (() => z50.object({
@@ -7940,7 +7950,7 @@ var init_terminal_graphics = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z52 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -7986,7 +7996,15 @@ var init_pane_stream = __esm({
       panes: PaneSetSchemaZ,
       viewerMode: PaneStreamViewerModeSchemaZ,
       /** Explicit semantic-v2 content/authority mode. Omission retains raw v1. */
-      terminalDelivery: TerminalDeliveryOfferSchemaZ.optional()
+      terminalDelivery: TerminalDeliveryOfferSchemaZ.optional(),
+      /**
+       * #806: a stream for one window. `panes` must be exactly that window's
+       * panes (at most PANE_STREAM_MAX_PANES), so a session with more panes in
+       * all can be viewed window by window. Under capability 119/120 the stream
+       * follows that window's pane set in place; other windows never enter.
+       * Released daemons refuse the field: send it only to a daemon that has it.
+       */
+      semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional()
     }).strict())();
     PaneStreamRedemptionTicketSchemaZ = /* @__PURE__ */ (() => z52.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u))();
     PaneStreamLoopbackWebSocketUrlSchemaZ = /* @__PURE__ */ (() => z52.url().max(2048).refine((value) => {
@@ -8033,6 +8051,7 @@ var init_pane_stream = __esm({
     PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION = /* @__PURE__ */ (() => 106)();
     PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = /* @__PURE__ */ (() => 117)();
     PANE_STREAM_READER_CAPABILITY_VERSION = /* @__PURE__ */ (() => 118)();
+    PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION = /* @__PURE__ */ (() => 123)();
     PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION = /* @__PURE__ */ (() => 119)();
     PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION = /* @__PURE__ */ (() => 120)();
     PaneStreamInputLifetimeSchemaZ = /* @__PURE__ */ (() => z52.object({
@@ -8247,6 +8266,11 @@ var init_pane_stream = __esm({
           displayName: BoundedDisplayNameSchemaZ.nullable().optional(),
           displayNameSource: PaneDisplayNameSourceSchemaZ.nullable().optional(),
           browserIcon: z52.string().regex(/^(?:[0-9a-f]{2048})?$/u).nullable().optional(),
+          /**
+           * Only with capability 123: a terminal browser with tmux-ide's
+           * native controls, a plain one without them, or null.
+           */
+          browserKind: z52.enum(["native", "plain"]).nullable().optional(),
           /** Only with capability 118: the Markdown reader's file name, never its path. */
           reader: z52.object({
             name: z52.string().min(1).max(255).refine((value) => !hasControlCharacter(value) && !value.includes("/"))
@@ -10704,7 +10728,7 @@ var init_terminal_graphics_compressed = __esm({
 
 // packages/contracts/src/terminal-runtime-inventory.ts
 import { z as z72 } from "zod";
-var TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION, TerminalRuntimeInventoryProjectionV1SchemaZ;
+var TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION, TerminalRuntimeInventoryProjectionV1SchemaZ, TerminalRuntimeInventoryWindowSchemaZ, TerminalRuntimeInventoryProjectionV2SchemaZ;
 var init_terminal_runtime_inventory = __esm({
   "packages/contracts/src/terminal-runtime-inventory.ts"() {
     "use strict";
@@ -10724,6 +10748,42 @@ var init_terminal_runtime_inventory = __esm({
         "pane ids must be sorted"
       )
     }).strict())();
+    TerminalRuntimeInventoryWindowSchemaZ = /* @__PURE__ */ (() => z72.object({
+      semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ,
+      /** tmux's current window of the session. */
+      active: z72.boolean(),
+      semanticPaneIds: z72.array(TerminalAttachmentSemanticPaneIdSchemaZ).min(1).max(256).refine((values2) => new Set(values2).size === values2.length, "pane ids must be unique")
+    }).strict())();
+    TerminalRuntimeInventoryProjectionV2SchemaZ = /* @__PURE__ */ (() => TerminalRuntimeInventoryProjectionV1SchemaZ.extend({
+      /** In tmux window order. */
+      windows: z72.array(TerminalRuntimeInventoryWindowSchemaZ).max(256)
+    }).strict().superRefine((value, ctx) => {
+      const listed = new Set(value.semanticPaneIds);
+      const seen = /* @__PURE__ */ new Set();
+      const windows = /* @__PURE__ */ new Set();
+      let active3 = 0;
+      for (const window2 of value.windows) {
+        if (windows.has(window2.semanticWindowId))
+          ctx.addIssue({ code: "custom", message: "a window is listed twice", path: ["windows"] });
+        windows.add(window2.semanticWindowId);
+        if (window2.active) active3 += 1;
+        for (const pane of window2.semanticPaneIds) {
+          if (!listed.has(pane) || seen.has(pane))
+            ctx.addIssue({
+              code: "custom",
+              message: "a window pane must be listed once and in the inventory",
+              path: ["windows"]
+            });
+          seen.add(pane);
+        }
+      }
+      if (active3 > 1)
+        ctx.addIssue({
+          code: "custom",
+          message: "at most one window is active",
+          path: ["windows"]
+        });
+    }))();
   }
 });
 
@@ -15376,7 +15436,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.25",
+      version: "2.9.26",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -28356,7 +28416,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     }
     const encoded = utf8Line.split("	");
-    if (encoded.length < 21 || encoded.length > 25) continue;
+    if (encoded.length < 21 || encoded.length > 26) continue;
     const [
       runtimePaneId = "",
       semanticPaneId3 = "",
@@ -28382,7 +28442,8 @@ function parseSessionPaneDescriptorReply(lines) {
       nameSource2 = "",
       browserIconRaw = "",
       readerRaw = "",
-      panePidRaw = ""
+      panePidRaw = "",
+      browserControl = ""
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -28401,6 +28462,7 @@ function parseSessionPaneDescriptorReply(lines) {
     }
     descriptors.push({
       browserIcon: browserIcon(browserIconRaw),
+      browserKind: terminalBrowserKind(browserControl, currentCommand),
       reader: readerOption(readerRaw, panePidRaw),
       sessionName,
       runtimePaneId,
@@ -28443,6 +28505,17 @@ function decodeControlReplyUtf8(value) {
 function positiveInteger(value, fallback) {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
+function terminalBrowserKind(control, currentCommand, alive = processAlive) {
+  if (control.length > 0 && control.length <= 4096) {
+    try {
+      const pid = JSON.parse(control)?.pid;
+      if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && alive(pid))
+        return "native";
+    } catch {
+    }
+  }
+  return /^terminal-browser?$/u.test(currentCommand) ? "plain" : null;
+}
 var SESSION_PANE_DESCRIPTOR_FORMAT, VOLATILE_DESCRIPTOR_FIELDS, SessionDescriptorDiscovery, STRICT_UTF8_DECODER;
 var init_session_descriptor_discovery = __esm({
   "packages/daemon/src/terminal/protocol/session-descriptor-discovery.ts"() {
@@ -28475,7 +28548,9 @@ var init_session_descriptor_discovery = __esm({
       "#{qa:@tmux_ide_browser_icon}",
       "#{qa:@tmux_ide_reader}",
       // The reader option belongs to the pane only when its own process set it.
-      "#{pane_pid}"
+      "#{pane_pid}",
+      // Set only by a terminal browser that has tmux-ide's native controls (#718).
+      "#{qa:@tmux_ide_browser_control}"
     ].join("	");
     VOLATILE_DESCRIPTOR_FIELDS = /* @__PURE__ */ new Set([
       4,
@@ -34650,6 +34725,9 @@ var init_session_channel = __esm({
         await this.captureAttachedSessionIdentity();
         this.io.send("refresh-client -B 'tmux-ide-browser-icon:%*:#{@tmux_ide_browser_icon}'");
         this.io.send("refresh-client -B 'tmux-ide-reader:%*:#{@tmux_ide_reader}'");
+        this.io.send(
+          "refresh-client -B 'tmux-ide-browser-kind:%*:#{@tmux_ide_browser_control}#{m:terminal-browse*,#{pane_current_command}}'"
+        );
         this.io.send("refresh-client -B 'tmux-ide-pane-borders:@*:#{pane-border-status}'");
         this.io.send("refresh-client -B 'tmux-ide-copy-keys:@*:#{mode-keys}'");
         this.io.send("refresh-client -B 'tmux-ide-pane-history:%*:#{history_size}'");
@@ -36351,7 +36429,7 @@ var init_session_channel = __esm({
       onNotify(name, rest) {
         if (name === "window-add" || name === "window-close" || name === "unlinked-window-add" || name === "unlinked-window-close" || name === "session-renamed" || name === "sessions-changed")
           this.opts.onWindowTopologyChanged?.();
-        if (name === "subscription-changed" && (rest.startsWith("tmux-ide-browser-icon ") || rest.startsWith("tmux-ide-reader "))) {
+        if (name === "subscription-changed" && (rest.startsWith("tmux-ide-browser-icon ") || rest.startsWith("tmux-ide-reader ") || rest.startsWith("tmux-ide-browser-kind "))) {
           this.scheduleSync();
           return;
         }
@@ -36672,6 +36750,7 @@ var init_session_channel = __esm({
               displayName: display?.name ?? null,
               displayNameSource: display?.source ?? null,
               browserIcon: pane?.descriptor?.browserIcon ?? null,
+              browserKind: pane?.descriptor?.browserKind ?? null,
               reader: pane?.descriptor?.reader ?? null,
               left: leaf.left,
               top: leaf.top,
@@ -62992,6 +63071,9 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #terminal;
       #rowCache = /* @__PURE__ */ new WeakMap();
       #scrollEpoch = 0;
+      #historyLimit;
+      #collecting = false;
+      #lastYbase = null;
       #lastScrollEpoch = 0;
       #lastViewportY = 0;
       #lastBufferType = "normal";
@@ -63004,11 +63086,16 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #historyProjectionInvalidated = false;
       #scrollOnClear;
       constructor(options) {
+        const historyLimit = options.historyLimit ?? options.scrollback;
+        this.#historyLimit = historyLimit;
         this.#terminal = new Terminal2({
           cols: options.cols,
           rows: options.rows,
-          scrollback: options.scrollback,
-          tmuxHistoryLimit: options.historyLimit ?? options.scrollback,
+          // One row of headroom over what the replica may hold (the limit, or a
+          // larger captured history): xterm must not recycle the row a scroll
+          // adds before #collectHistory sees it.
+          scrollback: historyLimit > 0 ? Math.max(options.scrollback, historyLimit) + 1 : options.scrollback,
+          tmuxHistoryLimit: historyLimit,
           allowProposedApi: true
         });
         this.#terminal.loadAddon(new import_addon_unicode11.Unicode11Addon());
@@ -63038,13 +63125,43 @@ var init_xterm_terminal_interpreter_backend = __esm({
           return false;
         });
         this.#terminal.onScroll(() => {
-          if (this.#terminal.buffer.active.type === "normal") this.#scrollEpoch += 1;
+          if (this.#terminal.buffer.active.type !== "normal") return;
+          this.#scrollEpoch += 1;
+          this.#collectHistory();
         });
         const core = this.#terminal._core;
         if (!core?.coreService) {
           this.#terminal.dispose();
           throw new Error("Unsupported @tmux-ide/xterm-headless private API shape");
         }
+      }
+      /**
+       * tmux at its history-limit collects the oldest tenth of history before a
+       * scroll would pass it (grid_collect_history), so its history_size moves
+       * between 0.9 and 1.0 of the limit. Recycling one row at a time instead kept
+       * the replica at the limit, and the owner's history-size check then reseeded
+       * the whole pane each time its output paused. The projection reports the
+       * collection as an ordinary history trim.
+       */
+      startHistoryCollection() {
+        this.#collecting = true;
+        this.#lastYbase = this.#normalBuffer()?.ybase ?? null;
+      }
+      #normalBuffer() {
+        return this.#terminal._core?.buffers?.normal;
+      }
+      #collectHistory() {
+        const buffer = this.#normalBuffer();
+        if (!buffer) return;
+        const before = this.#lastYbase;
+        const limit = this.#historyLimit;
+        if (this.#collecting && limit > 0 && before !== null && before >= limit && buffer.ybase === before + 1) {
+          const trim = Math.min(buffer.ybase, Math.max(1, Math.floor(limit / 10)));
+          buffer.lines.trimStart(trim);
+          buffer.ybase -= trim;
+          buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+        }
+        this.#lastYbase = buffer.ybase;
       }
       get cols() {
         return this.#terminal.cols;
@@ -64290,6 +64407,7 @@ var init_terminal_replica_interpreter = __esm({
           rows: options.rows,
           scrollback: this.#scrollback
         });
+        this.#backend.startHistoryCollection?.();
         this.#kitty = new KittyImageStore(
           options.kittyImageBudget ? { budget: options.kittyImageBudget } : {}
         );
@@ -64467,6 +64585,7 @@ var init_terminal_replica_interpreter = __esm({
             this.#admitRaw(chunk);
             this.#observeMarkerBytes(chunk);
           }
+          replacement.startHistoryCollection?.();
           const previous = this.#backend;
           this.#backend = replacement;
           this.#attachKitty(replacement);
@@ -65844,15 +65963,16 @@ function semanticPayload(baselineRevision, baseline, target, baselineIncarnation
       patch: update.patch
     };
   const snapshot3 = target.state.snapshot;
-  if (baseline && baselineIncarnation === update.incarnation && baseline.cols === snapshot3.cols && baseline.rows === snapshot3.rows && baseline.history.length <= snapshot3.history.length) {
+  const trim = baseline ? historyTrim(baseline.history, snapshot3.history) : 0;
+  if (baseline && baselineIncarnation === update.incarnation && baseline.cols === snapshot3.cols && baseline.rows === snapshot3.rows && baseline.history.length - trim <= snapshot3.history.length) {
     let comparisonCells = 0;
     const equal = (left, right) => {
       if (left === right) return true;
       comparisonCells += right.cells.length;
       return comparisonCells <= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS ? terminalReplicaRowsEqual(left, right) : null;
     };
-    for (let index = 0; index < baseline.history.length; index++)
-      if (equal(baseline.history[index], snapshot3.history[index]) !== true)
+    for (let index = trim; index < baseline.history.length; index++)
+      if (equal(baseline.history[index], snapshot3.history[index - trim]) !== true)
         return semanticSeed(target);
     const rows = [];
     for (let index = 0; index < snapshot3.grid.length; index++) {
@@ -65860,17 +65980,18 @@ function semanticPayload(baselineRevision, baseline, target, baselineIncarnation
       if (same7 === null) return semanticSeed(target);
       if (!same7) rows.push({ index, row: snapshot3.grid[index] });
     }
-    const appendedRows = snapshot3.history.length - baseline.history.length;
+    const retained = baseline.history.length - trim;
+    const appendedRows = snapshot3.history.length - retained;
     if ((rows.length + appendedRows) * snapshot3.cols >= TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS)
       return semanticSeed(target);
-    const append = snapshot3.history.slice(baseline.history.length);
+    const append = snapshot3.history.slice(retained);
     return {
       frame: "patch",
       baseRevision: baselineRevision,
       revision: update.revision,
       patch: {
         rows,
-        ...append.length ? { historyDelta: { trim: 0, append } } : {},
+        ...append.length || trim ? { historyDelta: { trim, append } } : {},
         cursor: snapshot3.cursor,
         modes: snapshot3.modes,
         placements: snapshot3.placements,
@@ -65879,6 +66000,25 @@ function semanticPayload(baselineRevision, baseline, target, baselineIncarnation
     };
   }
   return semanticSeed(target);
+}
+function historyTrim(baseline, target) {
+  const first = target[0];
+  if (first === void 0 || baseline[0] === first) return 0;
+  let candidates = 0;
+  for (let trim = 1; trim < baseline.length; trim++) {
+    if (baseline[trim] !== first) continue;
+    if (++candidates > 4) return 0;
+    const retained = baseline.length - trim;
+    if (retained > target.length) continue;
+    let same7 = true;
+    for (let index = 0; index < retained; index++)
+      if (baseline[trim + index] !== target[index]) {
+        same7 = false;
+        break;
+      }
+    if (same7) return trim;
+  }
+  return 0;
 }
 function canonicalUpdateCellCost(update) {
   if (update.type === "terminal.tombstone") return 0;
@@ -65942,7 +66082,7 @@ function logDeliveryFault(client, reason, cause) {
     workspace: client.deliveryWorkspaceName
   });
 }
-var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
+var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES, TERMINAL_DELIVERY_CONNECTION_HOLD_MS, TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
@@ -65966,6 +66106,9 @@ var init_terminal_delivery_hub = __esm({
     MAX_PENDING_CANONICAL_CELLS = 1e6;
     MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
     BACKGROUND_CADENCE_MS = 100;
+    TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES = 256 * 1024;
+    TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
+    TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS = 30;
     DeferredProjectionEncoding = class extends Error {
       constructor(payload) {
         super("Deferred projection encoding");
@@ -66017,6 +66160,8 @@ var init_terminal_delivery_hub = __esm({
         this.generation = generation;
         this.workspaceName = workspaceName;
         this.#ownerForPane = ownerForPane;
+        this.#holdMs = options.connectionHoldMs ?? TERMINAL_DELIVERY_CONNECTION_HOLD_MS;
+        this.#congestedMs = options.connectionCongestedMs ?? TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS;
         this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
         this.#observability = options.observability ?? DISABLED_SESSION_RUNTIME_OBSERVABILITY;
       }
@@ -66027,6 +66172,8 @@ var init_terminal_delivery_hub = __esm({
       #observability;
       #panes = /* @__PURE__ */ new Map();
       #clients = /* @__PURE__ */ new Map();
+      /** Per connection: the pane it last typed into. */
+      #priority = /* @__PURE__ */ new Map();
       #sourceCloseFailures = 0;
       #pendingSourceCloses = 0;
       /** Synchronous reservations held while an async pane source is starting. */
@@ -66044,6 +66191,8 @@ var init_terminal_delivery_hub = __esm({
       #deliveryLifecycleOrdinal = 0;
       #deliveryStatusOrdinal = 0;
       #closed = false;
+      #holdMs;
+      #congestedMs;
       async open(clientId, semanticPaneId3, offerInput, accept, diagnosticIdentity = Object.freeze({ clientId, surface: "direct", laneId: clientId }), deliveryWorkspaceName = this.workspaceName) {
         if (this.#closed) throw new Error("Terminal delivery hub is closed");
         const address = WorkspaceIdSchemaZ.parse(deliveryWorkspaceName);
@@ -66105,7 +66254,10 @@ var init_terminal_delivery_hub = __esm({
             captureUnavailable: false,
             lastAck: null,
             sourceClosedFlight: null,
-            backgroundTimer: null
+            backgroundTimer: null,
+            budgetHeld: false,
+            budgetHeldSince: null,
+            budgetTimer: null
           };
           this.#clients.set(key2, client);
           client.lifecycleOpenRecorded = this.#recordDeliveryLifecycle(client, pane, "open");
@@ -66118,6 +66270,11 @@ var init_terminal_delivery_hub = __esm({
             projectionReceipt: (receipt) => this.#projectionReceipt(client, receipt),
             materialize: (request3) => this.#materialize(client, request3),
             nack: (nack) => this.#nack(client, nack),
+            prioritize: () => {
+              if (client.closed) return;
+              this.#priority.set(client.clientId, client.paneId);
+              this.#releaseBudget(client.clientId);
+            },
             setVisibility: (visibilityInput) => {
               if (client.closed) return;
               client.visibility = TerminalDeliveryVisibilitySchemaZ.parse(visibilityInput);
@@ -66295,6 +66452,7 @@ var init_terminal_delivery_hub = __esm({
           this.#cancelEncoding(client);
           client.outgoing.length = 0;
           client.inFlight = null;
+          client.budgetHeld = false;
           logDeliveryFault(client, "source-closed", "source-restarted");
           this.#enqueue(client, {
             type: "terminal.delivery.fault",
@@ -66579,6 +66737,32 @@ var init_terminal_delivery_hub = __esm({
           pane.rawFloorRevision = Math.max(pane.rawFloorRevision, first[0] + 1);
         }
       }
+      #overBudget(client) {
+        if (this.#priority.get(client.clientId) === client.paneId) return false;
+        if (client.budgetHeldSince !== null && this.#scheduler.nowMs() - client.budgetHeldSince >= this.#holdMs)
+          return false;
+        const now = this.#scheduler.nowMs();
+        let bytes = 0;
+        let oldest = now;
+        for (const other of this.#clients.values())
+          if (other !== client && other.clientId === client.clientId && other.inFlight) {
+            bytes += other.inFlight.envelope.representationBytes;
+            oldest = Math.min(oldest, other.inFlight.sentAt);
+          }
+        return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES && now - oldest >= this.#congestedMs;
+      }
+      /** A pane's delivery settled or left: held panes of its connection try again, typed-into pane first. */
+      #releaseBudget(clientId) {
+        const held = [...this.#clients.values()].filter(
+          (other) => other.clientId === clientId && other.budgetHeld
+        );
+        const priority = this.#priority.get(clientId);
+        held.sort((a, b) => Number(b.paneId === priority) - Number(a.paneId === priority));
+        for (const other of held) {
+          other.budgetHeld = false;
+          this.#schedule(other);
+        }
+      }
       #schedule(client) {
         if (client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
           return;
@@ -66604,6 +66788,20 @@ var init_terminal_delivery_hub = __esm({
         const target = completed?.target ?? pane?.latest;
         if (!pane || !target || client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
           return;
+        if (!completed && this.#overBudget(client)) {
+          client.budgetHeld = true;
+          client.budgetHeldSince ??= this.#scheduler.nowMs();
+          client.budgetTimer ??= this.#scheduler.timer(() => {
+            client.budgetTimer = null;
+            if (client.closed || !client.budgetHeld) return;
+            client.budgetHeld = false;
+            this.#schedule(client);
+          }, this.#holdMs);
+          return;
+        }
+        client.budgetHeldSince = null;
+        client.budgetTimer?.cancel();
+        client.budgetTimer = null;
         const traceStarted = completed?.traceStarted ?? (this.#observability.enabled ? this.#observability.nowMicros() : 0);
         let deferred = false;
         let encodedRepresentation = null;
@@ -67172,6 +67370,7 @@ var init_terminal_delivery_hub = __esm({
         client.baselineHash = ack.canonicalStateHash;
         client.reseedRequired = false;
         client.inFlight = null;
+        this.#releaseBudget(client.clientId);
         client.lastAck = ack;
         if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
         this.#pruneAckSupersededCache(client.paneId);
@@ -67239,6 +67438,7 @@ var init_terminal_delivery_hub = __esm({
         client.lastProjectionReceipt = receipt;
         client.reseedRequired = false;
         client.inFlight = null;
+        this.#releaseBudget(client.clientId);
         if (client.latestRevision === receipt.canonicalRevision) client.latestRevision = null;
         if (client.materializeRequested)
           client.latestRevision = this.#panes.get(client.paneId)?.latest?.update.revision ?? null;
@@ -67278,6 +67478,7 @@ var init_terminal_delivery_hub = __esm({
         this.#nacks += 1;
         client.reseedRequired = true;
         client.inFlight = null;
+        this.#releaseBudget(client.clientId);
         this.#pruneCanonicalRevisions(client.paneId);
         this.#schedule(client);
         this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
@@ -67323,6 +67524,7 @@ var init_terminal_delivery_hub = __esm({
         client.outgoing.length = 0;
         if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
         client.inFlight = null;
+        this.#releaseBudget(client.clientId);
         const fault = {
           type: "terminal.delivery.fault",
           reason,
@@ -67391,8 +67593,13 @@ var init_terminal_delivery_hub = __esm({
         if (client.lifecycleOpenRecorded)
           this.#recordDeliveryLifecycle(client, this.#panes.get(client.paneId), "close");
         client.backgroundTimer?.cancel();
+        client.budgetTimer?.cancel();
+        client.budgetTimer = null;
         client.outgoing.length = 0;
         this.#clients.delete(client.key);
+        if (![...this.#clients.values()].some((other) => other.clientId === client.clientId))
+          this.#priority.delete(client.clientId);
+        else this.#releaseBudget(client.clientId);
         this.#pruneCanonicalRevisions(client.paneId);
         if ([...this.#clients.values()].some((candidate) => candidate.paneId === client.paneId)) return;
         const pane = this.#panes.get(client.paneId);
@@ -69580,6 +69787,7 @@ var init_registry2 = __esm({
           ack: (ack) => upstream.ack(ack),
           ...upstream.projectionReceipt ? { projectionReceipt: upstream.projectionReceipt } : {},
           ...upstream.materialize ? { materialize: upstream.materialize } : {},
+          ...upstream.prioritize ? { prioritize: upstream.prioritize } : {},
           nack: (nack) => upstream.nack(nack),
           setVisibility: (visibility) => upstream.setVisibility(visibility),
           close: async () => {
@@ -76093,6 +76301,7 @@ var init_lease_manager2 = __esm({
           sessionName: state.sessionName,
           runtimeSessionId: state.runtimeSessionId,
           panes: [...state.request.panes],
+          semanticWindowId: state.request.semanticWindowId ?? null,
           viewerMode: state.request.viewerMode,
           terminalDelivery: state.request.terminalDelivery ?? null,
           status: state.status,
@@ -76701,6 +76910,16 @@ var init_pane_stream_websocket = __esm({
                 `The pane ${pane} is not present in the workspace session.`
               );
             }
+          }
+          if (request3.semanticWindowId !== void 0) {
+            const windowPanes = new Set(
+              described.panes.filter((pane) => pane.semanticWindowId === request3.semanticWindowId).map((pane) => pane.semanticPaneId)
+            );
+            if (windowPanes.size !== request3.panes.length || request3.panes.some((pane) => !windowPanes.has(pane)))
+              throw new PaneStreamAdmissionError(
+                "pane-not-found",
+                "The panes are not exactly the panes of that window of the workspace session."
+              );
           }
           const issued = await this.#leaseManager.issue(request3, {
             requestId,
@@ -77471,13 +77690,13 @@ var init_pane_stream_websocket = __esm({
        * stream with 1011, and nothing was tried twice. A refusal of authority is a
        * decision, not a failure, and is never repeated. Each repeat is logged.
        */
-      async #retryOpenStep(step, run) {
+      async #retryOpenStep(step, run, final = () => false) {
         for (let attempt = 0; ; attempt += 1) {
           try {
             return await run();
           } catch (error) {
             const delayMs = this.#openRetryDelaysMs[attempt];
-            if (delayMs === void 0 || this.#closed || error instanceof SessionRuntimeControllerLeaseError)
+            if (delayMs === void 0 || this.#closed || error instanceof SessionRuntimeControllerLeaseError || final(error))
               throw error;
             logger.info("pane-stream", "stream open step failed; trying again", {
               session: this.#descriptor.sessionName,
@@ -77508,21 +77727,29 @@ var init_pane_stream_websocket = __esm({
         let stagedAuthority = null;
         let authorityMalformed = false;
         let layoutActivated = false;
+        let layoutAttempt = 0;
         try {
-          if (!this.#mirror.subscribeLayout) throw new Error("authoritative layout is unavailable");
-          const subscription = await this.#mirror.subscribeLayout(
-            this.#descriptor.sessionName,
-            () => void 0,
-            {
-              expectedSemanticPaneIds: expectedPaneIds,
-              expectedRuntimeSessionId: this.#descriptor.runtimeSessionId,
-              onAuthority: (snapshot3) => {
-                this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
-                if (snapshot3.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
-                else if (!layoutActivated) stagedAuthority = snapshot3;
-                else this.#onLayoutAuthority(snapshot3);
-              }
-            }
+          const subscribeLayout = this.#mirror.subscribeLayout?.bind(this.#mirror);
+          if (!subscribeLayout) throw new Error("authoritative layout is unavailable");
+          const subscription = await this.#retryOpenStep(
+            "semantic-layout-subscribe",
+            () => {
+              const attempt = ++layoutAttempt;
+              stagedAuthority = null;
+              authorityMalformed = false;
+              return subscribeLayout(this.#descriptor.sessionName, () => void 0, {
+                expectedSemanticPaneIds: expectedPaneIds,
+                expectedRuntimeSessionId: this.#descriptor.runtimeSessionId,
+                onAuthority: (snapshot3) => {
+                  if (attempt !== layoutAttempt) return;
+                  this.#recordDiagnosticLifecycle("pane-stream-layout-staged");
+                  if (snapshot3.layouts.length > PANE_STREAM_MAX_PANES) authorityMalformed = true;
+                  else if (!layoutActivated) stagedAuthority = snapshot3;
+                  else this.#onLayoutAuthority(snapshot3);
+                }
+              });
+            },
+            (error) => error instanceof Error && error.name === "MirrorTopologyChangedError"
           );
           if (this.#closed) {
             await subscription.close().catch(() => void 0);
@@ -78222,11 +78449,12 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         const frames = this.#validateInitialLayout(snapshot3.layouts, this.#semanticExpectedPaneIds);
-        if (!frames && this.#topologyInPlace) {
+        const windowChanged = frames !== null && this.#windowPaneSetChanged(snapshot3);
+        if ((!frames || windowChanged) && this.#topologyInPlace) {
           void this.#reconcileTopology(snapshot3);
           return;
         }
-        if (!frames || !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
+        if (!frames || windowChanged || !PaneStreamLayoutSnapshotFrameSchemaZ.safeParse({
           type: "layout-snapshot",
           topologyEpoch: snapshot3.topologyEpoch,
           layouts: frames,
@@ -78250,6 +78478,17 @@ var init_pane_stream_websocket = __esm({
           layouts: frames,
           windowLinks: snapshot3.windowLinks
         });
+      }
+      /** #806: the layout no longer shows this stream's window with exactly its panes. */
+      #windowPaneSetChanged(snapshot3) {
+        const window2 = this.#descriptor.semanticWindowId;
+        if (window2 === null) return false;
+        const live = [...this.#panes.values()].filter((channel) => !channel.closed).map((channel) => channel.semanticPaneId);
+        const shown = snapshot3.layouts.find((event) => event.semanticWindowId === window2);
+        if (!shown) return true;
+        const panes = shown.panes.map((pane) => pane.semanticPaneId ?? "");
+        if (shown.zoomed) return panes.length !== 1 || !live.includes(panes[0]);
+        return panes.length !== live.length || panes.some((pane) => !live.includes(pane));
       }
       /** The same session and runtime, a newer epoch, a layout a stream can carry. */
       #layoutAuthorityAdmissible(snapshot3) {
@@ -78345,10 +78584,25 @@ var init_pane_stream_websocket = __esm({
           windowLinks: snapshot3.windowLinks
         }).success)
           return this.#topologyFailed("layout snapshot invalid");
+        const window2 = this.#descriptor.semanticWindowId;
+        let windowPanes = null;
+        if (window2 !== null) {
+          windowPanes = [
+            ...new Set(
+              described.panes.filter((pane) => pane.semanticWindowId === window2).map((pane) => pane.semanticPaneId)
+            )
+          ].sort();
+          if (windowPanes.length === 0) return this.#topologyFailed("the stream's window is gone");
+          const shown = snapshot3.layouts.find((event) => event.semanticWindowId === window2);
+          const shownPanes = (shown?.panes ?? []).map((pane) => pane.semanticPaneId ?? "");
+          if (!shown || (shown.zoomed ? shownPanes.length !== 1 || !windowPanes.includes(shownPanes[0]) : shownPanes.length !== windowPanes.length || shownPanes.some((pane) => !windowPanes.includes(pane))))
+            return "stale";
+        }
+        const followed = windowPanes ?? next;
         const live = [...this.#panes.values()].filter((channel) => !channel.closed);
-        const removed = live.filter((channel) => !next.includes(channel.semanticPaneId));
+        const removed = live.filter((channel) => !followed.includes(channel.semanticPaneId));
         const liveIds = new Set(live.map((channel) => channel.semanticPaneId));
-        const added = this.#leasesWholeSession ? next.filter((pane) => !liveIds.has(pane)) : [];
+        const added = windowPanes !== null || this.#leasesWholeSession ? followed.filter((pane) => !liveIds.has(pane)) : [];
         if (added.length > 0 && !inventoryIsThisSession)
           return this.#topologyFailed("inventory cannot prove the runtime session");
         const remaining = live.length - removed.length + added.length;
@@ -78472,6 +78726,7 @@ var init_pane_stream_websocket = __esm({
             displayNameSource: pane.displayNameSource,
             ...this.#offers(PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION) || this.#offers(PANE_STREAM_READER_CAPABILITY_VERSION) ? { browserIcon: pane.browserIcon ?? null } : {},
             ...this.#offers(PANE_STREAM_READER_CAPABILITY_VERSION) ? { reader: pane.reader ? { name: pane.reader.name } : null } : {},
+            ...this.#offers(PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION) ? { browserKind: pane.browserKind ?? null } : {},
             left: pane.left,
             top: pane.top,
             width: pane.width,
@@ -79194,6 +79449,7 @@ var init_pane_stream_websocket = __esm({
             else if (kind === "text") channel.sub.sendText(data);
             else if (kind === "key") channel.sub.sendKey(data);
             else throw new Error("Byte input requires semantic runtime");
+            channel.delivery?.prioritize?.();
             let ackStartedAtMicros = null;
             let ackStartedAtSharedMicros = null;
             if (trace) {
@@ -80263,12 +80519,12 @@ function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () =
       const row = rows.get(liveSessionId) ?? {
         summary: { liveSessionId, sessionName: name, paneCount: 0 },
         panes: /* @__PURE__ */ new Set(),
-        windows: /* @__PURE__ */ new Set(),
+        windows: /* @__PURE__ */ new Map(),
         dir,
         activity: activity && /^\d+$/.test(activity) ? Number(activity) : null
       };
+      if (!row.panes.has(pane)) row.windows.set(window2, (row.windows.get(window2) ?? 0) + 1);
       row.panes.add(pane);
-      row.windows.add(window2);
       rows.set(liveSessionId, row);
     }
     const names = new Set([...rows.values()].map(({ summary }) => summary.sessionName));
@@ -80287,6 +80543,7 @@ function createNativeTmuxServerCatalog(workspaceRegistry, run, assertOpen = () =
       ...summary,
       paneCount: panes.size,
       windowCount: windows.size,
+      largestWindowPaneCount: Math.max(...windows.values()),
       lastActivity: activity,
       sessionPath: dir
     }));
@@ -92372,6 +92629,37 @@ function projectTerminalRuntimeInventory(session, resourceRevision) {
     ].sort()
   });
 }
+function projectTerminalRuntimeInventoryV2(session, resourceRevision) {
+  const identities = paneIdentities(session);
+  const windows = /* @__PURE__ */ new Map();
+  session.panes.forEach((pane, index) => {
+    if (pane.windowId === void 0) return;
+    const stamp = pane.windowStamp ?? null;
+    const entry = windows.get(pane.windowId) ?? {
+      semanticWindowId: stamp,
+      active: false,
+      panes: [],
+      complete: true
+    };
+    windows.set(pane.windowId, entry);
+    const attachability = identities[index].attachability;
+    if (attachability.status === "available") entry.panes.push(attachability.semanticPaneId);
+    else entry.complete = false;
+    if (pane.active) entry.active = true;
+  });
+  return TerminalRuntimeInventoryProjectionV2SchemaZ.parse({
+    ...projectTerminalRuntimeInventory(session, resourceRevision),
+    windows: [...windows.values()].flatMap(
+      (window2) => window2.complete && window2.semanticWindowId !== null && window2.panes.length > 0 ? [
+        {
+          semanticWindowId: window2.semanticWindowId,
+          active: window2.active,
+          semanticPaneIds: [...window2.panes].sort()
+        }
+      ] : []
+    )
+  });
+}
 function terminalRuntimeInventoryEnvelope(daemon, session, resourceRevision) {
   return {
     version: TERMINAL_RUNTIME_INVENTORY_RESOURCE_VERSION,
@@ -92622,7 +92910,8 @@ function mountTmuxServerRoutes(app, options) {
     `${scoped}/sessions`,
     route(async (c) => {
       const server = scope2(c);
-      const v2 = c.req.query("version") === "2";
+      const v3 = c.req.query("version") === "3";
+      const v2 = v3 || c.req.query("version") === "2";
       const { rows, favicons } = await options.owners.withOwner(server, async (owner) => {
         const sessions = await owner.catalog();
         const workspaces = owner.workspaceRegistry.list();
@@ -92653,9 +92942,10 @@ function mountTmuxServerRoutes(app, options) {
           })
         );
       let budget2 = SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES;
+      const schema = v3 ? TmuxServerSessionsResourceV3SchemaZ : TmuxServerSessionsResourceV2SchemaZ;
       return c.json(
-        TmuxServerSessionsResourceV2SchemaZ.parse({
-          version: 2,
+        schema.parse({
+          version: v3 ? 3 : 2,
           server,
           sessions: rows.map(({ session, workspaceName }, index) => {
             const found = favicons[index] ?? null;
@@ -92667,6 +92957,7 @@ function mountTmuxServerRoutes(app, options) {
               workspaceName,
               paneCount: session.paneCount,
               windowCount: session.windowCount,
+              ...v3 ? { largestWindowPaneCount: session.largestWindowPaneCount } : {},
               lastActivity: session.lastActivity,
               favicon: favicon ? { mime: favicon.mime, data: favicon.data } : null
             };
@@ -92694,6 +92985,7 @@ function mountTmuxServerRoutes(app, options) {
     route(async (c) => {
       const server = scope2(c);
       const workspaceName = workspaceSchema.parse(c.req.param("workspaceName"));
+      const v2 = c.req.query("version") === "2";
       const resource3 = await options.owners.withOwner(server, async (owner) => {
         const sessions = await owner.catalog();
         const workspace = owner.workspaceRegistry.get(workspaceName);
@@ -92707,9 +92999,10 @@ function mountTmuxServerRoutes(app, options) {
           workspace.sessionName,
           c.req.raw.signal
         );
-        return snapshot3 ? projectTerminalRuntimeInventory(snapshot3, 0) : null;
+        if (!snapshot3) return null;
+        return v2 ? projectTerminalRuntimeInventoryV2(snapshot3, 0) : projectTerminalRuntimeInventory(snapshot3, 0);
       });
-      return resource3 ? c.json({ version: 1, server, resource: resource3 }) : c.json({ error: { code: "workspace-not-found" } }, 404);
+      return resource3 ? c.json({ version: v2 ? 2 : 1, server, resource: resource3 }) : c.json({ error: { code: "workspace-not-found" } }, 404);
     })
   );
   app.get(
