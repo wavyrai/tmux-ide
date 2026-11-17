@@ -101,7 +101,8 @@ impl SnapshotView {
         cx: &mut Context<Self>,
     ) {
         use bezel_motion::AppExt as _;
-        let reduced = cx.reduced_motion() || cx.reduce_motion();
+        // macOS Reduce Motion, as the chrome hands it to gpui each render.
+        let reduced = cx.reduced_motion();
         let active = window.is_window_active();
         let target = target(self, frame.view(), preview.is_some(), active, reduced);
         if painter

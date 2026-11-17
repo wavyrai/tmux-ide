@@ -78,6 +78,15 @@ fn a_new_target_mid_glide_starts_from_the_drawn_position() {
         restarted > midway && restarted < 11.,
         "{midway} -> {restarted}"
     );
+    // Exactly the head start's share of the way from the drawn position; a
+    // restart from the old cell (10) would land at 10 + head.
+    let head = ease_out(HEAD_START.as_secs_f32() / GLIDE.as_secs_f32());
+    let expected = midway + (11. - midway) * head;
+    assert!(
+        (restarted - expected).abs() < 1e-3,
+        "{restarted} != {expected}"
+    );
+    assert!(restarted < 10. + head - 0.01, "restarted from the old cell");
 }
 
 #[test]
