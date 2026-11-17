@@ -273,6 +273,7 @@ impl Controller {
         }
         let (sequence, command) = self.policy.input_submission(pane, lifetime, input, now)?;
         self.send(command)?;
+        self.visibility.input_sent(pane, sequence, now);
         Ok(sequence)
     }
     /// The caller owns an exclusive scheduler barrier until every paste ACK settles.
@@ -441,6 +442,7 @@ impl Controller {
                     | "error"
             ) {
                 let outcome = self.policy.accept_json(control.get().as_bytes())?;
+                self.visibility.inputs_answered(&outcome.inputs, now);
                 inputs.extend(outcome.inputs);
                 intents.extend(outcome.intent);
                 if outcome.viewport.is_some() {

@@ -432,6 +432,11 @@ impl NativeSession {
             mailbox.controls.push(raw);
         }
     }
+    /// The stream's round trip as its last answered ping measured it.
+    pub fn rtt(&self) -> Option<std::time::Duration> {
+        self.stream.rtt()
+    }
+
     pub fn drain(&self) -> Result<Updates, Error> {
         let mut mailbox = self.shared.lock().map_err(|_| Error::Mailbox)?;
         let panes = std::mem::take(&mut mailbox.pending)

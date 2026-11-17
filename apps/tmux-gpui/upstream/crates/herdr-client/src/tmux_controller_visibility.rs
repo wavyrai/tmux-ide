@@ -8,10 +8,14 @@
 //! every daemon this app talks to.
 use super::*;
 
-/// How long the window being left stays up for a revealed pane's fresh state.
-/// Past it the window is shown with what there is, and the fresh state
+/// The most the window being left stays up for a revealed pane's fresh state.
+/// Past the hold the window is shown with what there is, and the fresh state
 /// replaces it when it comes; never a blank window.
 pub(super) const REVEAL_MS: u64 = 150;
+/// The least hold: one display frame.
+pub(super) const FRAME_MS: u64 = 17;
+/// An input ACK's round trip counts over the ping's for this long.
+const ACK_FRESH_MS: u64 = 10_000;
 
 #[derive(Default)]
 pub(super) struct Visibility {
@@ -22,6 +26,26 @@ pub(super) struct Visibility {
     revealing: BTreeMap<String, (u64, String, u64)>,
     /// The window was held for a reveal: present it once the reveal settles.
     held: bool,
+    /// Inputs on their way, by pane and sequence: when each was sent.
+    sent: BTreeMap<(String, u32), u64>,
+    /// The last input ACK's round trip, and when it came.
+    ack_rtt: Option<(u64, u64)>,
+}
+impl Visibility {
+    pub(super) fn input_sent(&mut self, pane: &str, sequence: u32, now: u64) {
+        if self.sent.len() < 256 {
+            self.sent.insert((pane.to_owned(), sequence), now);
+        }
+    }
+    pub(super) fn inputs_answered(&mut self, inputs: &[InputCompletion], now: u64) {
+        for input in inputs {
+            if let Some(sent) = self.sent.remove(&(input.pane.clone(), input.sequence))
+                && input.result == tmux_control::InputResult::Ok
+            {
+                self.ack_rtt = Some((now, now.saturating_sub(sent)));
+            }
+        }
+    }
 }
 
 impl Controller {
@@ -99,9 +123,29 @@ impl Controller {
         Ok(())
     }
 
+    /// The connection's round trip in ms: the last input ACK's while keys
+    /// flow (fresher), else the stream's last ping; `None` before either.
+    fn rtt_ms(&self, now: u64) -> Option<u64> {
+        let ack = (self.visibility.ack_rtt)
+            .filter(|(at, _)| now.saturating_sub(*at) < ACK_FRESH_MS)
+            .map(|(_, rtt)| rtt);
+        let ping =
+            (self.session.rtt()).map(|rtt| u64::try_from(rtt.as_millis()).unwrap_or(u64::MAX));
+        ack.or(ping)
+    }
+    /// How long a window shown again is held (PM, 17 Nov): twice the round
+    /// trip, at least one display frame, at most `REVEAL_MS`; the cap until
+    /// the round trip is known. A changed pane's delivery usually lands within
+    /// two round trips; an unchanged pane's state is already current.
+    pub(super) fn reveal_ms(&self, now: u64) -> u64 {
+        self.rtt_ms(now).map_or(REVEAL_MS, |rtt| {
+            rtt.saturating_mul(2).max(FRAME_MS).min(REVEAL_MS)
+        })
+    }
     /// Whether a pane shown again still waits for its fresh state, within
-    /// `REVEAL_MS`.
+    /// `reveal_ms`.
     pub(super) fn revealing(&mut self, now: u64) -> bool {
+        let bound = self.reveal_ms(now);
         let current = &self.current;
         self.visibility
             .revealing
@@ -109,7 +153,7 @@ impl Controller {
                 current.get(pane).is_some_and(|committed| {
                     committed.identity.canonical_revision <= *revision
                         && committed.identity.delivery_nonce == *nonce
-                }) && now.saturating_sub(*since) < REVEAL_MS
+                }) && now.saturating_sub(*since) < bound
             });
         let revealing = !self.visibility.revealing.is_empty();
         self.visibility.held |= revealing;

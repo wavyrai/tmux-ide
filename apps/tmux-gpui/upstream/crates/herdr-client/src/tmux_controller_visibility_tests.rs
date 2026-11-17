@@ -183,3 +183,49 @@ fn a_new_delivery_of_a_hidden_pane_is_hidden_again() {
     assert_eq!(again[0]["visibility"], "hidden");
     assert_eq!(again[0]["deliveryNonce"], renewed);
 }
+
+/// PM, 17 Nov: the hold is twice the round trip, at least a display frame, at
+/// most REVEAL_MS; the cap until the round trip is known.
+#[test]
+fn the_hold_follows_the_round_trip_within_a_frame_and_the_cap() {
+    let (mut c, _observed, _response, _peer) = fixture();
+    assert_eq!(c.reveal_ms(1), REVEAL_MS, "no round trip known yet");
+    for (rtt, hold) in [(5, FRAME_MS), (30, 60), (74, 148), (200, REVEAL_MS)] {
+        c.visibility.ack_rtt = Some((0, rtt));
+        assert_eq!(c.reveal_ms(1), hold, "rtt {rtt}");
+    }
+    // An ACK's round trip goes stale; then the cap holds again.
+    c.visibility.ack_rtt = Some((0, 30));
+    assert_eq!(c.reveal_ms(10_000), REVEAL_MS);
+}
+
+/// With a 30 ms round trip the window is held for 60 ms, not 150.
+#[test]
+fn a_window_shown_again_is_held_for_two_round_trips() {
+    let (mut c, observed, response, _peer) = fixture();
+    c.visibility.ack_rtt = Some((0, 30));
+    c.session.push_control(two_windows(1));
+    c.poll(1).unwrap();
+    sent(&observed, &response);
+    show(&mut c, "right", 2);
+    assert_eq!(regions(&c.poll(10).unwrap()), ["left"]);
+    assert_eq!(regions(&c.poll(69).unwrap()), ["left"]);
+    assert_eq!(regions(&c.poll(70).unwrap()), ["right"]);
+}
+
+/// Input ACKs measure the round trip while keys flow.
+#[test]
+fn an_input_ack_measures_the_round_trip() {
+    let (mut c, _observed, _response, _peer) = fixture();
+    c.visibility.input_sent("left", 7, 100);
+    c.visibility.inputs_answered(
+        &[InputCompletion {
+            pane: "left".into(),
+            sequence: 7,
+            result: tmux_control::InputResult::Ok,
+        }],
+        124,
+    );
+    assert_eq!(c.visibility.ack_rtt, Some((124, 24)));
+    assert_eq!(c.reveal_ms(130), 48);
+}
