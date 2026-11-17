@@ -1,4 +1,9 @@
 import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
+import {
+  daemonRemoteClipboardHub,
+  type RemoteClipboardSink,
+} from "../remote-bridge/clipboard-hub.ts";
+import { OSC_CLIPBOARD, parseOsc52 } from "../remote-bridge/osc52.ts";
 import { logger } from "../../lib/log.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
 import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
@@ -168,6 +173,8 @@ export interface TerminalReplicaInterpreterOptions {
   readonly backendFactory?: TerminalInterpreterBackendFactory;
   /** Shared kitty image byte quotas; defaults to the daemon-wide budget. */
   readonly kittyImageBudget?: KittyImageBudget;
+  /** Where OSC 52 clipboard writes go; defaults to the daemon-wide bridge hub. */
+  readonly clipboardSink?: RemoteClipboardSink;
 }
 
 export interface TerminalReplicaInterpreterStats {
@@ -223,6 +230,7 @@ export class TerminalReplicaInterpreter {
   // kitty graphics: images outlive reseeds; the scanner owns split APCs.
   readonly #kittyScanner = new KittyApcScanner();
   readonly #kitty: KittyImageStore;
+  readonly #clipboard: RemoteClipboardSink;
   readonly #kittyPending = new Map<number, KittyCommand>();
   readonly #graphicsListeners = new Set<(state: TerminalGraphicsState) => void>();
   #graphics: TerminalGraphicsState | null = null;
@@ -274,7 +282,9 @@ export class TerminalReplicaInterpreter {
     this.#kitty = new KittyImageStore(
       options.kittyImageBudget ? { budget: options.kittyImageBudget } : {},
     );
+    this.#clipboard = options.clipboardSink ?? daemonRemoteClipboardHub;
     this.#attachKitty(this.#backend);
+    this.#attachClipboard(this.#backend);
     this.#snapshot = blankTerminalReplicaSnapshot(options.cols, options.rows);
     this.#seedReady = new Promise((resolve, reject) => {
       this.#resolveSeedReady = resolve;
@@ -506,6 +516,8 @@ export class TerminalReplicaInterpreter {
       const previous = this.#backend;
       this.#backend = replacement;
       this.#attachKitty(replacement);
+      // After the replay: bytes a reseed replays were reported when first seen.
+      this.#attachClipboard(replacement);
       // A capture replay does not erase graphics already observed by this owner.
       // Keep anchors only when both backends agree on their coordinate basis;
       // reflow, history replacement and authoritative stream resets are ambiguous.
@@ -999,6 +1011,39 @@ export class TerminalReplicaInterpreter {
       if (!command) return true;
       this.#kittyPending.delete(Number(data));
       this.#kitty.apply(command, backend.graphicsCursor?.() ?? null);
+      return true;
+    });
+  }
+
+  /** OSC 52: report clipboard writes; a query is consumed and never answered. */
+  #attachClipboard(backend: TerminalInterpreterBackend): void {
+    if (typeof backend.registerOscHandler !== "function") return;
+    backend.registerOscHandler(OSC_CLIPBOARD, (data) => {
+      if (this.#closed || backend !== this.#backend) return true;
+      const parsed = parseOsc52(data);
+      const address = {
+        session: this.#workspaceName,
+        paneId: this.#semanticPaneId,
+        incarnation: this.#incarnation,
+      };
+      try {
+        if (parsed.kind === "text")
+          this.#clipboard.publish({
+            type: "clipboard.write",
+            ...address,
+            bytes: parsed.bytes,
+            text: parsed.text,
+          });
+        else if (parsed.kind === "too-large")
+          this.#clipboard.publish({
+            type: "clipboard.refused",
+            ...address,
+            bytes: parsed.bytes,
+            reason: "too-large",
+          });
+      } catch {
+        // A bridge failure never poisons the authoritative parser FIFO.
+      }
       return true;
     });
   }
