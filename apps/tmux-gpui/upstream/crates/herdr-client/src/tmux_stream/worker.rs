@@ -21,6 +21,20 @@ use super::{ConnectOptions, Error, Event, MAX_CLIENT_BYTES, MAX_SERVER_BYTES, SU
 /// pace the loop.
 const POLL: Duration = Duration::from_millis(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+/// How often the worker measures the round trip with a ping of its own.
+fn ping_every() -> Duration {
+    #[cfg(test)]
+    if let Some(ms) = PING_EVERY_MS.with(std::cell::Cell::get) {
+        return Duration::from_millis(ms);
+    }
+    Duration::from_secs(10)
+}
+#[cfg(test)]
+thread_local! {
+    /// Tests that measure the round trip shorten the period for streams
+    /// spawned on their thread.
+    pub(super) static PING_EVERY_MS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A pre-serialized existing protocol command, never a request to invent authority.
@@ -69,6 +83,10 @@ struct Cancellation {
     cancelled: AtomicBool,
     socket: Mutex<Option<TcpStream>>,
     bell: Bell,
+    /// The last round trip a ping measured, in microseconds; 0 before one.
+    rtt_us: std::sync::atomic::AtomicU64,
+    /// How often the worker pings (read on the spawning thread).
+    ping_every: Duration,
     /// How often the worker went round its loop: an idle stream must not.
     #[cfg(test)]
     wakes: std::sync::atomic::AtomicU64,
@@ -130,6 +148,8 @@ impl PaneStream {
             cancelled: AtomicBool::new(false),
             socket: Mutex::new(None),
             bell: Bell::new()?,
+            rtt_us: std::sync::atomic::AtomicU64::new(0),
+            ping_every: ping_every(),
             #[cfg(test)]
             wakes: std::sync::atomic::AtomicU64::new(0),
         });
@@ -175,6 +195,13 @@ impl PaneStream {
     #[cfg(test)]
     pub(super) fn wakes(&self) -> u64 {
         self.cancellation.wakes.load(Ordering::Relaxed)
+    }
+
+    /// The connection's round trip as the last answered ping measured it;
+    /// `None` before the first answer.
+    pub fn rtt(&self) -> Option<Duration> {
+        let micros = self.cancellation.rtt_us.load(Ordering::Relaxed);
+        (micros > 0).then(|| Duration::from_micros(micros))
     }
 
     pub fn events(&self) -> &Receiver<Event> {
@@ -352,6 +379,12 @@ fn run(
     // Whether the socket may have bytes, or tungstenite a whole frame read
     // ahead: true until a read finds nothing.
     let mut readable = true;
+    // A ping of our own, answered by the daemon's WebSocket, measures the
+    // round trip (the reveal hold is bounded by it). Its payload names it.
+    let mut ping: Option<([u8; 8], Instant)> = None;
+    // The first after one period: until then, input ACKs give the estimate,
+    // or the hold uses its cap.
+    let mut next_ping = Instant::now() + cancel.ping_every;
     loop {
         cancel.check()?;
         #[cfg(test)]
@@ -376,7 +409,17 @@ fn run(
                 }
                 deliver(&events, wire::parse_binary_live(&bytes, &live)?, cancel)?;
             }
-            Ok(Message::Ping(_) | Message::Pong(_)) => continue,
+            Ok(Message::Pong(payload)) => {
+                if let Some((sent, at)) = ping
+                    && payload.as_ref() == sent
+                {
+                    let micros = u64::try_from(at.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    cancel.rtt_us.store(micros.max(1), Ordering::Relaxed);
+                    ping = None;
+                }
+                continue;
+            }
+            Ok(Message::Ping(_)) => continue,
             Ok(Message::Close(frame)) => {
                 return Err(frame.map_or(Error::Disconnected, |frame| {
                     Error::Closed(super::Close::new(frame.code.into(), &frame.reason))
@@ -406,6 +449,14 @@ fn run(
         // A fragmented message is retained by tungstenite. A timeout cannot release
         // application commands against the state preceding that unfinished message.
         let fenced = !verified || socket.get_ref().boundary.is_partial();
+        if !fenced && Instant::now() >= next_ping {
+            let payload = uuid::Uuid::new_v4().as_bytes()[..8]
+                .try_into()
+                .unwrap_or([0; 8]);
+            socket.send(Message::Ping(payload.to_vec().into()))?;
+            ping = Some((payload, Instant::now()));
+            next_ping = Instant::now() + cancel.ping_every;
+        }
         if !fenced {
             for _ in 0..16 {
                 cancel.check()?;
@@ -420,6 +471,7 @@ fn run(
             let until = quiet
                 .into_iter()
                 .chain((!verified).then_some(deadline))
+                .chain(verified.then_some(next_ping))
                 .min();
             readable = wait(&socket.get_ref().socket, &cancel.bell, until)?;
         }

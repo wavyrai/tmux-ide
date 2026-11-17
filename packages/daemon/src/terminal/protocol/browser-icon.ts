@@ -4,7 +4,7 @@ export function browserIcon(value: string, alive = processAlive): string | null 
   if (!match || !alive(Number(match[1]))) return null;
   return match[2]!;
 }
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

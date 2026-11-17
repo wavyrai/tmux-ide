@@ -266,6 +266,12 @@ export const PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION = 117;
  */
 export const PANE_STREAM_READER_CAPABILITY_VERSION = 118;
 /**
+ * #718: layout panes carry `browserKind` ("native" | "plain" | null), so a
+ * client can say why a plain terminal browser has no tmux-ide controls.
+ * Sent only to a client offering 123; older clients refuse the field.
+ */
+export const PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION = 123;
+/**
  * The client keeps its stream when the session gains or loses a pane (#723):
  * the daemon sends a `topology` frame where it would otherwise close the
  * stream with 1012 "topology-changed". Offered beside the other versions, not
@@ -596,6 +602,11 @@ export const PaneStreamLayoutFrameSchemaZ = z
               .regex(/^(?:[0-9a-f]{2048})?$/u)
               .nullable()
               .optional(),
+            /**
+             * Only with capability 123: a terminal browser with tmux-ide's
+             * native controls, a plain one without them, or null.
+             */
+            browserKind: z.enum(["native", "plain"]).nullable().optional(),
             /** Only with capability 118: the Markdown reader's file name, never its path. */
             reader: z
               .object({

@@ -440,6 +440,20 @@ function completeSeed(rig: Rig, lines: readonly string[], cursor: string): void 
   });
 }
 
+describe("terminal browser kind (#718)", () => {
+  it("subscribes to a browser's controls and command, and reads the panes again when they change", async () => {
+    const rig = await startedRig();
+    expect(rig.sim.written).toContain(
+      "refresh-client -B 'tmux-ide-browser-kind:%*:#{@tmux_ide_browser_control}#{m:terminal-browse*,#{pane_current_command}}'",
+    );
+    const before = rig.pendingSyncs.length;
+    rig.sim.feedLines("%subscription-changed tmux-ide-browser-kind $1 @1 0 %1 : 1");
+    // The change schedules a fresh read of the panes and their descriptors.
+    expect(rig.pendingSyncs.length).toBe(before + 1);
+    await rig.channel.dispose();
+  });
+});
+
 describe("native client activity", () => {
   it("distinguishes proven absence from native presence and malformed inventory", async () => {
     const presence = vi.fn();

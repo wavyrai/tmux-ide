@@ -88,6 +88,8 @@ pub struct Controller {
     reported: bool,
     /// Capability 119: what following a pane change in place needs.
     in_place: in_place::InPlace,
+    /// What the daemon was told about each pane's visibility (`visibility`).
+    visibility: visibility::Visibility,
 }
 /// What one stream cost until its window could take input.
 pub struct InputReport {
@@ -161,6 +163,7 @@ impl Controller {
             received: BTreeMap::new(),
             reported: false,
             in_place: Default::default(),
+            visibility: Default::default(),
         })
     }
     pub fn retire(&mut self) {
@@ -277,6 +280,7 @@ impl Controller {
         }
         let (sequence, command) = self.policy.input_submission(pane, lifetime, input, now)?;
         self.send(command)?;
+        self.visibility.input_sent(pane, sequence, now);
         Ok(sequence)
     }
     /// The caller owns an exclusive scheduler barrier until every paste ACK settles.
@@ -451,6 +455,7 @@ impl Controller {
                     | "error"
             ) {
                 let outcome = self.policy.accept_json(control.get().as_bytes())?;
+                self.visibility.inputs_answered(&outcome.inputs, now);
                 inputs.extend(outcome.inputs);
                 intents.extend(outcome.intent);
                 if outcome.viewport.is_some() {
@@ -506,10 +511,15 @@ impl Controller {
         }
         inputs.extend(expired.inputs);
         let selection = self.finish_selection(&intents, &expired.intents)?;
+        // Before the window is presented: a window shown again is revealed
+        // first, and held until its fresh state is in (`revealing`).
+        self.follow_visibility(now)?;
+        let revealed = self.reveal_settled(now);
         let presence_revision = self
             .flush_presence(now)?
             .or(self.last_presence.map(|(_, rev)| rev));
         if (presentation_changed
+            || revealed
             || selection
                 .as_ref()
                 .is_some_and(|selection| selection.selected))
@@ -519,9 +529,15 @@ impl Controller {
                 .presentation
                 .update(&self.topology, &self.current, true)?;
             // The window after a pane change may need a seed or a resize;
-            // until then the window as it was stays up, without input.
+            // until then the window as it was stays up, without input. So
+            // does the window being left while the one shown again still
+            // has a hidden pane's old state (bounded).
             let up = self.cached_window.is_some();
-            if !self.hold(presented.is_some(), up, now)? {
+            if up && self.revealing(now) {
+                if let Some(held) = &mut self.cached_window {
+                    held.coherent = false;
+                }
+            } else if !self.hold(presented.is_some(), up, now)? {
                 self.cached_window = presented;
             } else if let Some(held) = &mut self.cached_window {
                 held.coherent = false;
@@ -584,4 +600,7 @@ pub use owner::{OwnerAuthorization, OwnerCompletion, OwnerEvent, OwnerOutcome, O
 
 #[path = "tmux_controller_divider.rs"]
 mod divider;
+
+#[path = "tmux_controller_visibility.rs"]
+mod visibility;
 pub use divider::{DividerState, SplitPhase, SplitPublication, SplitRead};
