@@ -9,6 +9,15 @@ use bezel_ui::widgets::{ButtonStyle, Buttons as _};
 /// "Earlier" collects what came before versions were listed.
 pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
     (
+        "0.1.19",
+        &[
+            "Typing, commands and trackpad scrolling over SSH stay quick next to busy panes.",
+            "A session with more than 24 panes opens one window at a time on this Mac.",
+            "Panes in windows that are not on screen stop using the connection until you show them.",
+            "SSH connections the app opens close when it quits, even after a crash.",
+        ],
+    ),
+    (
         "0.1.18",
         &[
             "Splitting or closing a pane from another tmux client no longer reconnects the terminal.",
