@@ -262,11 +262,39 @@ it("carries live browser icon metadata without changing pane identity", () => {
   });
 });
 
+it("reports a terminal browser's kind from its control option and command (#718)", () => {
+  expect(
+    SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{pane_pid}\t#{qa:@tmux_ide_browser_control}"),
+  ).toBe(true);
+  const record = (command: string, control: string) => {
+    const fields = line("%3").split("\t");
+    fields[4] = command;
+    return `${fields.join("\t")}\tmanual\t\t\t${process.pid}\t${control}`;
+  };
+  const kind = (command: string, control: string) =>
+    parseSessionPaneDescriptors([record(command, control)])[0]?.browserKind;
+  // A browser with native controls sets the control option, whatever its process name.
+  expect(kind("terminal-browse", "1")).toBe("native");
+  expect(kind("node", "1")).toBe("native");
+  // tmux reports the process name cut to 15 characters on macOS.
+  expect(kind("terminal-browse", "")).toBe("plain");
+  expect(kind("terminal-browser", "")).toBe("plain");
+  expect(kind("zsh", "")).toBeNull();
+  expect(kind("terminal-browsers", "")).toBeNull();
+  // An older reply without the field: no kind, the pane is kept.
+  expect(
+    parseSessionPaneDescriptors([`${line("%3")}\tmanual\t\t\t${process.pid}`])[0],
+  ).toMatchObject({
+    runtimePaneId: "%3",
+    browserKind: null,
+  });
+});
+
 it("carries a live reader's file name and path, and drops a dead or malformed one", () => {
   const option = JSON.stringify({ version: 1, pid: process.pid, path: "/repo/docs/notes.md" });
   // tmux `qa` escapes the option as one argument.
   const quoted = `"${option.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-  expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{qa:@tmux_ide_reader}\t#{pane_pid}")).toBe(
+  expect(SESSION_PANE_DESCRIPTOR_FORMAT.includes("\t#{qa:@tmux_ide_reader}\t#{pane_pid}\t")).toBe(
     true,
   );
   const record = (raw: string, panePid: string | number = process.pid) =>

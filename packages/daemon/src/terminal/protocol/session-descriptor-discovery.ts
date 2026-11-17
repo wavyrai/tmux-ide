@@ -3,6 +3,8 @@ import { readerOption, type ReaderOption } from "./reader-option.ts";
 
 export interface SessionPaneDescriptor {
   browserIcon?: string | null;
+  /** #718: a terminal browser with native controls, a plain one, or null. */
+  browserKind?: "native" | "plain" | null;
   /** A live `tmux-ide open file.md` reader; the path stays daemon-side. */
   reader?: ReaderOption | null;
   nativePaneBirthId?: string | null;
@@ -62,6 +64,8 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{qa:@tmux_ide_reader}",
   // The reader option belongs to the pane only when its own process set it.
   "#{pane_pid}",
+  // Set only by a terminal browser that has tmux-ide's native controls (#718).
+  "#{qa:@tmux_ide_browser_control}",
 ].join("\t");
 
 /**
@@ -172,7 +176,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length < 21 || encoded.length > 25) continue;
+    if (encoded.length < 21 || encoded.length > 26) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -199,6 +203,7 @@ export function parseSessionPaneDescriptorReply(
       browserIconRaw = "",
       readerRaw = "",
       panePidRaw = "",
+      browserControl = "",
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -239,6 +244,7 @@ export function parseSessionPaneDescriptorReply(
     }
     descriptors.push({
       browserIcon: browserIcon(browserIconRaw),
+      browserKind: terminalBrowserKind(browserControl, currentCommand),
       reader: readerOption(readerRaw, panePidRaw),
       sessionName,
       runtimePaneId,
@@ -430,4 +436,17 @@ export function decodeControlReplyUtf8(value: string): string | null {
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   return Number.isSafeInteger(value) && value! > 0 ? value! : fallback;
+}
+
+/**
+ * #718: a pane runs a terminal browser with tmux-ide's native controls when
+ * the browser set @tmux_ide_browser_control; a plain one otherwise, known by
+ * its process name (tmux cuts it to 15 characters on macOS).
+ */
+export function terminalBrowserKind(
+  control: string,
+  currentCommand: string,
+): "native" | "plain" | null {
+  if (control.length > 0) return "native";
+  return /^terminal-browser?$/u.test(currentCommand) ? "plain" : null;
 }

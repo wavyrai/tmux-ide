@@ -12,6 +12,8 @@ import {
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamClientFrameSchemaZ,
+  PaneStreamLayoutFrameSchemaZ,
+  PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION,
   PaneStreamConsumedFrameSchemaZ,
   PaneStreamInputFrameSchemaZ,
   PaneStreamIssueDescriptorSchemaZ,
@@ -323,6 +325,33 @@ describe("pane-stream client frames", () => {
     expect(PaneStreamInputFrameSchemaZ.safeParse({ ...base, pane: "%5", data: "x" }).success).toBe(
       false,
     );
+  });
+
+  it("carries a browser kind on a layout pane only as native, plain or null (capability 123)", () => {
+    expect(PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION).toBe(123);
+    const layout = (browserKind?: unknown) => ({
+      type: "layout",
+      semanticWindowId: "window.one",
+      windowName: "main",
+      currentWindow: true,
+      cols: 80,
+      rows: 24,
+      zoomed: false,
+      panes: [
+        {
+          pane: "pane.editor",
+          ...(browserKind === undefined ? {} : { browserKind }),
+          left: 0,
+          top: 0,
+          width: 80,
+          height: 24,
+          active: true,
+        },
+      ],
+    });
+    for (const kind of ["native", "plain", null, undefined])
+      expect(PaneStreamLayoutFrameSchemaZ.safeParse(layout(kind)).success).toBe(true);
+    expect(PaneStreamLayoutFrameSchemaZ.safeParse(layout("electron")).success).toBe(false);
   });
 
   it("validates consumed frames and the client union", () => {
