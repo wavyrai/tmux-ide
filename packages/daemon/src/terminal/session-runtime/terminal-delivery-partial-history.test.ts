@@ -223,17 +223,59 @@ async function client(hub: Hub, id: string, partial = true, encoding = "semantic
   return self;
 }
 
-async function converge(clients: Awaited<ReturnType<typeof client>>[]) {
-  // Fixed rounds: deliveries may take several turns of the event loop.
-  for (let round = 0; round < 30; round++) {
+/**
+ * Settle, drain and acknowledge. With `done`, keep going until it holds (or
+ * fail with `label` after 60 s), so a slow run (coverage, load) never reads
+ * state before the delivery it waits for has arrived.
+ */
+async function converge(
+  clients: Awaited<ReturnType<typeof client>>[],
+  done?: () => boolean,
+  label = "the expected deliveries",
+) {
+  const round = async () => {
     await settle();
     for (const cl of clients) {
       cl.drain();
       cl.ack();
     }
+  };
+  if (!done) {
+    for (let index = 0; index < 30; index++) await round();
+  } else {
+    const deadline = Date.now() + 60_000;
+    while (!done()) {
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+      await round();
+    }
+    for (let index = 0; index < 3; index++) await round();
   }
   await settle();
   for (const cl of clients) cl.drain();
+}
+
+/** Drain without acknowledging until `done` holds (60 s limit). */
+async function waitFor(cl: Awaited<ReturnType<typeof client>>, done: () => boolean, label: string) {
+  const deadline = Date.now() + 60_000;
+  for (;;) {
+    await settle();
+    cl.drain();
+    if (done()) return;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
+  }
+}
+
+/** Every client has committed and acknowledged the source's latest revision. */
+function caughtUp(clients: Awaited<ReturnType<typeof client>>[], src: { revision: number }) {
+  return () =>
+    clients.every((cl) => cl.state.appliedRevision === src.revision && cl.pendingAck === null);
+}
+
+/** The client's unloaded commitment, failing clearly when the stream is not partial. */
+function unloadedOf(cl: Awaited<ReturnType<typeof client>>): number {
+  const unloaded = cl.state.historyUnloaded;
+  if (!unloaded) throw new Error("expected a partial history (capability 122), found none");
+  return unloaded.rows;
 }
 
 function withHistory(src: ReturnType<typeof source>, rows: number, alternate = false): Snap {
@@ -253,7 +295,7 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 1000));
-    await converge([partial, full]);
+    await converge([partial, full], caughtUp([partial, full], src), "the latest revision");
     const seed = partial.envelopes[0]!;
     expect(seed).toMatchObject({ frame: "seed", history: "partial" });
     expect(seed.historyUnloaded!.rows).toBe(800);
@@ -272,7 +314,7 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 300, true));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     expect(partial.envelopes[0]!.historyUnloaded!.rows).toBe(300);
     expect(partial.state.canonicalSnapshot!.history).toEqual([]);
     await hub.close();
@@ -285,11 +327,11 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 300, true));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     expect(partial.state.canonicalSnapshot!.history).toEqual([]);
     const normal = { ...src.cur, modes: { ...src.cur.modes, alternateScreen: false } };
     src.patch(structuredClone(normal), { rows: [], modes: normal.modes });
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     expect(partial.historyRows).toEqual([200]);
     expect(partial.state.historyUnloaded!.rows).toBe(100);
     expect(partial.state.canonicalSnapshot!.history).toEqual(src.cur.history.slice(100));
@@ -303,10 +345,10 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 1000));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     const loaded = partial.state.canonicalSnapshot!.history;
     src.scroll(3, 1000);
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     const patch = partial.envelopes.at(-1)!;
     expect(patch).toMatchObject({ frame: "patch", history: "partial" });
     expect(patch.historyUnloaded!.rows).toBe(797);
@@ -324,14 +366,15 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 3000));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     partial.requestHistory(500);
-    await converge([partial]);
+    await converge([partial], () => partial.historyRows.length === 1, "the first history frame");
     expect(partial.historyRows).toEqual([500]);
-    expect(partial.state.historyUnloaded!.rows).toBe(2300);
-    while (partial.state.historyUnloaded!.rows > 0) {
+    expect(unloadedOf(partial)).toBe(2300);
+    while (unloadedOf(partial) > 0) {
+      const frames = partial.historyRows.length;
       partial.requestHistory(2000);
-      await converge([partial]);
+      await converge([partial], () => partial.historyRows.length > frames, "a history frame");
     }
     expect(partial.historyRows).toEqual([500, 2000, 300]);
     expect(partial.state.canonicalSnapshot).toEqual(src.cur);
@@ -350,25 +393,28 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 1000));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     // A patch is in flight, history is asked for, and newer output arrives.
+    const seeded = partial.envelopes.length;
     src.scroll(1, 2000);
-    await settle();
-    partial.drain();
+    await waitFor(partial, () => partial.envelopes.length > seeded, "the first patch");
     expect(partial.envelopes.at(-1)!.frame).toBe("patch");
     partial.requestHistory(300);
     src.scroll(1, 2000);
-    await settle();
-    partial.drain();
+    // The hub has taken the newer revision before the patch is acknowledged.
+    await waitFor(
+      partial,
+      () => hub.convergenceSnapshot().panes[0]?.revision === src.revision,
+      "the newer revision in the hub",
+    );
+    const sent = partial.envelopes.length;
     partial.ack();
-    await settle();
-    partial.drain();
+    await waitFor(partial, () => partial.envelopes.length > sent, "the newer patch");
     expect(partial.envelopes.map((e) => e.frame).slice(-2)).toEqual(["patch", "patch"]);
     partial.ack();
-    await settle();
-    partial.drain();
+    await waitFor(partial, () => partial.envelopes.length > sent + 1, "the history frame");
     expect(partial.envelopes.at(-1)!.frame).toBe("history");
-    await converge([partial]);
+    await converge([partial], () => partial.historyRows.length === 1, "the history frame");
     expect(partial.historyRows).toEqual([300]);
     expect(partial.state.appliedHash).toBe(hashTerminalReplicaSnapshot(src.cur));
     await hub.close();
@@ -381,13 +427,13 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 1500));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     partial.requestHistory(700);
-    await converge([partial]);
-    expect(partial.state.historyUnloaded!.rows).toBe(600);
+    await converge([partial], () => partial.historyRows.length === 1, "a history frame");
+    expect(unloadedOf(partial)).toBe(600);
     // A resize reflows every row: the same incarnation, new row objects, more rows.
     src.seed(withHistory(src, 2400));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     const last = partial.envelopes.at(-1)!;
     expect(last.frame).toBe("seed");
     expect(last.historyUnloaded!.rows).toBe(1500);
@@ -403,7 +449,7 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 3000));
-    await converge([partial]);
+    await converge([partial], caughtUp([partial], src), "the latest revision");
     const s = partial.state;
     partial.c.historyRequest!({
       type: "terminal.delivery.history-request",
@@ -436,19 +482,26 @@ describe("history on demand through the delivery hub (capability 122)", () => {
       // Dense 80-column rows: the cell count alone would allow a frame of megabytes.
       const snap: Snap = structuredClone(blankTerminalReplicaSnapshot(80, 24));
       let k = 0;
-      snap.history = Array.from({ length: 5000 }, () => {
+      // 1200 rows suffice: the byte cap cuts each 2000-row request short, so the
+      // 1000 unloaded rows still take several frames. 5000 rows took minutes
+      // under coverage.
+      snap.history = Array.from({ length: 1200 }, () => {
         const r = structuredClone(snap.grid[0]!);
         for (const cell of r.cells) cell.grapheme = String.fromCharCode(0x21 + ((k++ * 7919) % 90));
         return r;
       });
       src.seed(snap);
-      await converge([partial]);
-      while (partial.state.historyUnloaded!.rows > 0) {
+      await converge([partial], caughtUp([partial], src), "the 1200-row seed");
+      // 1200 rows with a 200-row tail: the seed must leave rows unloaded.
+      expect(unloadedOf(partial)).toBe(1000);
+      while (unloadedOf(partial) > 0) {
+        const frames = partial.historyRows.length;
         partial.requestHistory(2000);
-        await converge([partial]);
+        await converge([partial], () => partial.historyRows.length > frames, "a history frame");
       }
       const frames = partial.envelopes.filter((e) => e.frame === "history");
       expect(frames.length).toBeGreaterThan(1);
+      expect(Math.max(...partial.historyRows)).toBeLessThan(2000);
       for (const frame of frames)
         expect(frame.representationBytes).toBeLessThanOrEqual(HISTORY_FRAME_MAX_BYTES);
       expect(HISTORY_FRAME_MAX_BYTES).toBeLessThanOrEqual(
@@ -466,7 +519,7 @@ describe("history on demand through the delivery hub (capability 122)", () => {
     const src = source(owner);
     await settle();
     src.seed(withHistory(src, 100));
-    await converge([full]);
+    await converge([full], caughtUp([full], src), "the latest revision");
     full.requestHistory(50);
     await settle();
     expect(full.messages.some((m) => m.type === "terminal.delivery.fault")).toBe(true);
@@ -538,12 +591,13 @@ describe.each(["semantic-compact-v1", "semantic-binary-v1"] as const)(
               expect(s.canonicalSnapshot.grid).toEqual(full.grid);
             }
           }
-          await converge(clients);
+          await converge(clients, caughtUp(clients, src), "the latest revision");
           // Load every chunk: each partial client then equals a fresh full seed.
           for (const cl of clients.slice(0, 2)) {
-            for (let round = 0; round < 50 && (cl.state.historyUnloaded?.rows ?? 0) > 0; round++) {
+            for (let round = 0; round < 50 && unloadedOf(cl) > 0; round++) {
+              const frames = cl.historyRows.length;
               cl.requestHistory(2000);
-              await converge(clients);
+              await converge(clients, () => cl.historyRows.length > frames, "a history frame");
             }
             exercised.history += cl.historyRows.length;
             exercised.trims += cl.unloadedTrims;
