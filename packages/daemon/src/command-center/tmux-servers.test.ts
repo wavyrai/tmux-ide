@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { TmuxServerOwners } from "../lib/tmux-server-owners.ts";
 import type { NativeTmuxServerOwner } from "../lib/tmux-server-owner.ts";
+import { projectTerminalRuntimeInventory } from "./resources/terminal-runtime-inventory.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
 import { logger } from "../lib/log.ts";
 
@@ -443,9 +444,24 @@ it("serves inventory version 2 with windows only when asked (#806)", async () =>
     ],
   });
   try {
-    const v1 = await (await f.request(f.scope(f.a) + "/inventory/same")).json();
-    expect(v1.version).toBe(1);
-    expect(v1.resource).not.toHaveProperty("windows");
+    // Every other query answers version 1, byte for byte as before #806.
+    const snapshot = await owner.discover.getMockImplementation()!();
+    const expectedV1 = JSON.stringify({
+      version: 1,
+      server: { serverId: f.a.serverId, generation: f.a.generation },
+      resource: projectTerminalRuntimeInventory(snapshot, 0),
+    });
+    for (const query of ["", "?version=1", "?version=3", "?version=2x"]) {
+      const text = await (await f.request(f.scope(f.a) + "/inventory/same" + query)).text();
+      expect(text).toBe(expectedV1);
+    }
+    expect(Object.keys(JSON.parse(expectedV1).resource)).toEqual([
+      "workspaceName",
+      "workspaceId",
+      "sessionId",
+      "resourceRevision",
+      "semanticPaneIds",
+    ]);
     const v2 = await (await f.request(f.scope(f.a) + "/inventory/same?version=2")).json();
     expect(v2.version).toBe(2);
     expect(v2.resource.semanticPaneIds).toEqual(["pane.a", "pane.bb", "pane.ccc"]);
