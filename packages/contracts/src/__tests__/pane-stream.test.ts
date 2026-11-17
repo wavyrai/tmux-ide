@@ -68,6 +68,20 @@ describe("pane-stream lease contracts", () => {
     expect(parsed.panes).toHaveLength(2);
   });
 
+  it("carries a 16-number delivery offer in an issue request", () => {
+    const protocolVersions = [1, ...Array.from({ length: 15 }, (_, index) => 101 + index)];
+    expect(
+      PaneStreamLeaseRequestSchemaZ.parse({
+        ...leaseRequest(),
+        terminalDelivery: {
+          protocolVersions,
+          encodings: ["semantic-compact-v1"],
+          richPlacements: true,
+        },
+      }).terminalDelivery?.protocolVersions,
+    ).toEqual(protocolVersions);
+  });
+
   it("rejects a viewport — mirror streams do not size the source", () => {
     expect(
       PaneStreamLeaseRequestSchemaZ.safeParse({

@@ -20,6 +20,8 @@ export const TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION = 109;
 export const TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION = 110;
 
 export const TERMINAL_DELIVERY_PROTOCOL_VERSION = 1 as const;
+/** Capability numbers one offer may carry (nine before 2.9.26). */
+export const TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = 16;
 export const TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
 export const TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = 512 * 1024;
 export const TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES = 16 * 1024 * 1024;
@@ -35,8 +37,12 @@ export type TerminalDeliveryEncoding = z.infer<typeof TerminalDeliveryEncodingSc
 
 export const TerminalDeliveryOfferSchemaZ = z
   .object({
-    // Interactive binary/graphics offers use eight slots; native surfaces add one.
-    protocolVersions: z.array(z.number().int().positive()).min(1).max(9),
+    // Released daemons before 2.9.26 refuse more than nine numbers, so a client
+    // offers a tenth only to a daemon whose productVersion is 2.9.26 or later.
+    protocolVersions: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS),
     encodings: z.array(TerminalDeliveryEncodingSchemaZ).min(1).max(4),
     richPlacements: z.boolean(),
   })
