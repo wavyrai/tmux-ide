@@ -295,6 +295,14 @@ it("reports a terminal browser's kind from its control option and command (#718)
   // A value that is not a live endpoint is not "native".
   expect(kind("terminal-browse", "1")).toBe("plain");
   expect(kind("zsh", "1")).toBeNull();
+  // Malformed JSON, and pids that name no single live process (0 is the
+  // caller's process group, -1 every process), are never "native".
+  expect(kind("terminal-browse", "{bad")).toBe("plain");
+  expect(kind("zsh", "{bad")).toBeNull();
+  for (const pid of [0, -1]) {
+    expect(kind("terminal-browse", endpoint(pid))).toBe("plain");
+    expect(kind("zsh", endpoint(pid))).toBeNull();
+  }
   // tmux reports the process name cut to 15 characters on macOS.
   expect(kind("terminal-browse", "")).toBe("plain");
   expect(kind("terminal-browser", "")).toBe("plain");
