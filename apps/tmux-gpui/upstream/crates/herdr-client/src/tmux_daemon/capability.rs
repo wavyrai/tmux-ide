@@ -93,6 +93,23 @@ fn offered_versions(
     }
     versions
 }
+/// Capability 123 (#718: each layout pane's browser kind) added to a
+/// header stream's offer, for a daemon that knows it. Such a daemon also
+/// takes up to 16 numbers; a released one refuses a tenth, so it never gets
+/// 123. A surface source has no header and never asks for it.
+fn with_browser_kind(
+    mut versions: Vec<u32>,
+    graphics: bool,
+    product_version: Option<&str>,
+) -> Vec<u32> {
+    if graphics
+        && release_at_least(product_version, BROWSER_KIND_SINCE)
+        && versions.len() < MAX_OFFERED_VERSIONS_2_9_26
+    {
+        versions.push(BROWSER_KIND);
+    }
+    versions
+}
 /// Whether a daemon of this product version knows capability 120. Only a
 /// plain release number counts: for anything else 118 stays in the offer.
 fn knows_topology_bundle(product_version: Option<&str>) -> bool {
@@ -153,6 +170,14 @@ const READER_TOPOLOGY_BUNDLE: u32 = 120;
 /// that is offered 120 gives neither 118 nor 119, so this must not be lower
 /// than the release the daemon side of #723 ships in.
 const TOPOLOGY_BUNDLE_SINCE: [u64; 3] = [2, 9, 25];
+/// Capability 123: each layout pane carries its `browserKind` (#718).
+const BROWSER_KIND: u32 = 123;
+/// The first daemon release that knows 123 and takes a 16-number offer
+/// (#433). Not yet set by a release: the PM confirms it when 2.9.26 ships.
+const BROWSER_KIND_SINCE: [u64; 3] = [2, 9, 26];
+/// The bound a daemon of 2.9.26 or later puts on an offer (#433). The same
+/// constant as on the partial-history branch (#122); keep one at merge.
+const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
 /// The first daemon release with window-scoped streams (#806). Not yet set
 /// by a release: the PM confirms it when the daemon side ships.
 const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
@@ -238,6 +263,7 @@ impl ServerClient {
             selection.mode == ViewerMode::Interactive,
             knows_topology_bundle(daemon_version.as_deref()),
         );
+        let versions = with_browser_kind(versions, graphics, daemon_version.as_deref());
         let body = issue_body(
             &request_id,
             &scope.generation,
