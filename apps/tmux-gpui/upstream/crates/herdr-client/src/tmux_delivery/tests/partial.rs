@@ -83,3 +83,73 @@ fn a_history_frame_must_name_the_committed_revision_and_hash() {
         );
     }
 }
+
+/// #435 review: a chain of chunks can end in a nonzero empty commitment that
+/// still matches the canonical hash with wrong rows (P is odd, so any rows
+/// have a matching "next" digest). An empty commitment must be the digest of
+/// no rows; with that pin each chunk check is an induction proof.
+#[test]
+fn a_forged_chunk_chain_ending_in_a_nonzero_empty_commitment_is_refused() {
+    let (mut store, hash, unloaded) = seeded();
+    // 300 wrong rows for the 300 unloaded ones.
+    let wrong = vec![loaded(&store)[0].clone(); 300];
+    // next = (old − H(wrong)) · P^−300, so next·P^300 + H(wrong) == old.
+    const P: u64 = 0x100000001b3;
+    let mut inverse = P;
+    for _ in 0..6 {
+        inverse = inverse.wrapping_mul(2u64.wrapping_sub(P.wrapping_mul(inverse)));
+    }
+    let old = u64::from_str_radix(&unloaded.digest, 16).unwrap();
+    let rows = u64::from_str_radix(
+        &hash::concat_rows_hash("0000000000000000", &wrong).unwrap(),
+        16,
+    )
+    .unwrap();
+    let next = old
+        .wrapping_sub(rows)
+        .wrapping_mul(inverse.wrapping_pow(300));
+    let forged = DeferredHistory {
+        rows: 0,
+        digest: format!("{next:016x}"),
+    };
+    // The forgery verifies by hash alone.
+    assert_eq!(
+        hash::concat_rows_hash(&forged.digest, &wrong).unwrap(),
+        unloaded.digest
+    );
+    let update = Update::History {
+        revision: 0,
+        rows: wrong,
+    };
+    assert!(store.apply_with(update, &hash, Some(forged)).is_err());
+    assert_eq!(store.snapshot().unwrap().history.unloaded_rows(), 300);
+}
+
+/// The same pin on a seed and a patch: nothing unloaded is the empty digest.
+#[test]
+fn an_empty_commitment_must_be_the_digest_of_no_rows() {
+    let partial = |digest: &str| {
+        let mut s = Store::default();
+        let (seeded, hash, _) = seeded();
+        let mut snapshot = Snapshot::clone(seeded.snapshot().unwrap());
+        let History::Partial(held) = snapshot.history.clone() else {
+            panic!("partial")
+        };
+        snapshot.history = History::Complete(held.loaded);
+        let result = s.apply_with(
+            Update::Seed {
+                revision: 0,
+                snapshot,
+            },
+            &hash,
+            Some(DeferredHistory {
+                rows: 0,
+                digest: digest.into(),
+            }),
+        );
+        matches!(result, Err(Error::Invalid(_)))
+    };
+    assert!(partial("0123456789abcdef"));
+    // The empty digest is admitted by the bound check (the hash then decides).
+    assert!(!partial("0000000000000000"));
+}

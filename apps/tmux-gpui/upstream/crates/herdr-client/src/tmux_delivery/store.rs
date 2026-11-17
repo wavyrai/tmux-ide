@@ -185,6 +185,8 @@ fn apply_partial_patch(prior: &Snapshot, p: Patch, unloaded: DeferredHistory) ->
     validate(&next)?;
     Ok(next)
 }
+/// The rows digest of no rows: the fold's start.
+const EMPTY_DIGEST: &str = "0000000000000000";
 pub(super) fn validate(s: &Snapshot) -> Result<()> {
     if s.cols == 0
         || s.rows == 0
@@ -209,6 +211,10 @@ pub(super) fn validate(s: &Snapshot) -> Result<()> {
                 p.loaded.len() > 10000
                     || p.unloaded.rows > 1_000_000
                     || super::hash::concat_rows_hash(&p.unloaded.digest, &[]).is_none()
+                    // Nothing unloaded is the digest of no rows, or a forged
+                    // chain of chunks could end in a commitment that hides
+                    // wrong rows behind a matching hash (#435 review).
+                    || (p.unloaded.rows == 0 && p.unloaded.digest != EMPTY_DIGEST)
                     || (s.grid.len() + p.loaded.len()).saturating_mul(s.cols) > 1_000_000
             }
         }
