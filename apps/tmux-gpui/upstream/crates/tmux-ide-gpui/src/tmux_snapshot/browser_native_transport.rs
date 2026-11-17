@@ -565,13 +565,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         if !presence.0 && matches!(command, Command::Input { .. }) {
                             continue;
                         }
-                        if pending.len() >= MAX_PENDING {
+                        if !active::push(&mut pending, command, MAX_PENDING) {
                             // Refuse the newest command and say so; the connection stays.
                             state.status = PENDING_REFUSED.into();
                             changed = true;
-                            continue;
                         }
-                        pending.push_back(command);
                     }
                     Err(mpsc::TryRecvError::Disconnected) => break 'worker,
                     Err(mpsc::TryRecvError::Empty) => break,
@@ -726,6 +724,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     })
                 })
                 .flatten();
+            active::merge_into_waiting(&mut pending, active.as_mut());
             let can_admit = !(navigation_waiting && draining_history)
                 && active.as_ref().is_none_or(|a| {
                     !a.reissue
