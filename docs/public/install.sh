@@ -591,7 +591,7 @@ JS
 if [ "${1:-}" = --native-alpha ]; then
   shift
   if [ "${1:-}" = --help ]; then
-    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Bootstraps CLI 2.9.25; upgrades older stable CLI versions and preserves 2.9.25; newer or unrecognized versions require explicit review; native actions preserve daemon and tmux processes.'
+    printf '%s\n' 'Usage: install.sh --native-alpha [--prefix ABSOLUTE_NATIVE_ROOT] [--update|--rollback|--uninstall]' 'Apple Silicon macOS 26+. Bootstraps CLI 2.9.26; upgrades older stable CLI versions and preserves 2.9.26; newer or unrecognized versions require explicit review; native actions preserve daemon and tmux processes.'
     exit 0
   fi
   [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Native alpha requires an Apple Silicon Mac'
@@ -622,7 +622,7 @@ if [ "${1:-}" = --native-alpha ]; then
         [ -n "$native_cli_version" ] || fail 'Existing CLI preserved: its version could not be read; repair or review it explicitly before continuing'
       fi
       case "$native_cli_version" in
-        'tmux-ide v2.9.25') ;;
+        'tmux-ide v2.9.26') ;;
         '') native_cli_needed=true ;;
         *)
           # Only upgrade a recognized older stable release. Unknown/newer
@@ -630,7 +630,7 @@ if [ "${1:-}" = --native-alpha ]; then
           if printf '%s\n' "$native_cli_version" | awk '
             /^tmux-ide v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$/ {
               sub(/^tmux-ide v/, ""); split($0, v, ".");
-              older = v[1] < 2 || (v[1] == 2 && (v[2] < 9 || (v[2] == 9 && v[3] < 25)));
+              older = v[1] < 2 || (v[1] == 2 && (v[2] < 9 || (v[2] == 9 && v[3] < 26)));
               count++;
             }
             END { exit !(count == 1 && NR == 1 && older) }
@@ -642,7 +642,7 @@ if [ "${1:-}" = --native-alpha ]; then
       esac ;;
   esac
   if [ "$native_cli_needed" = true ]; then
-    (main --version 2.9.25 --prefix "$HOME/.local" --no-claude-agent-teams)
+    (main --version 2.9.26 --prefix "$HOME/.local" --no-claude-agent-teams)
   elif [ "$native_action" = install ] || [ "$native_action" = update ]; then
     # The pinned CLI is already current; still move a stale daemon or launchd job onto it.
     native_upgrade=1
@@ -652,8 +652,8 @@ if [ "${1:-}" = --native-alpha ]; then
   native_stage=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-bootstrap.XXXXXXXX")
   trap 'rm -rf "$native_stage"' 0
   trap 'exit 1' INT TERM
-  fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111601/install-native-alpha-v14.sh "$native_stage/install.sh"
-  [ "$(digest "$native_stage/install.sh")" = f5e1368a12c8d8bcd3205cf0ff0d226dd519172d7ba02100fb96654bddadcc91 ] || fail 'Native installer checksum mismatch'
+  fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111701/install-native-alpha-v15.sh "$native_stage/install.sh"
+  [ "$(digest "$native_stage/install.sh")" = @INSTALLER_V15_SHA256@ ] || fail 'Native installer checksum mismatch'
   sh "$native_stage/install.sh" "$@"
 else
   main "$@"
