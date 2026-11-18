@@ -42,9 +42,12 @@ mod view {
     };
     use super::*;
     use core::prelude::v1::test;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
     use herdr_client::protocol::{CellData, CursorState, FrameData};
-    use std::sync::{Arc, mpsc};
+    use std::{
+        sync::{Arc, mpsc},
+        time::Duration,
+    };
 
     /// One input of the view changed between two paints.
     #[derive(Clone, Copy, Debug)]
@@ -95,10 +98,9 @@ mod view {
         })
     }
 
-    /// Paints the cursor at (4, 2), applies `change`, then paints it one cell
-    /// right, through the view's own `glide_cursor`. Returns where the painter
-    /// draws the cursor on that second paint.
-    fn second_paint(cx: &mut TestAppContext, change: Change) -> (f32, f32) {
+    /// A focused window over a view with motion allowed (tests default to
+    /// reduced).
+    fn open(cx: &mut TestAppContext) -> (Entity<SnapshotView>, &mut VisualTestContext) {
         let (sender, _receiver) = mpsc::sync_channel(64);
         let (view, cx) = cx.add_window_view(|window, cx| {
             fixture_view(
@@ -113,17 +115,6 @@ mod view {
                 },
             )
         });
-        let painter = RefCell::new(TerminalPainter::default());
-        let paint = |cx: &mut VisualTestContext, frame: &DisplayFrame, preview: bool| {
-            cx.update(|window, cx| {
-                view.update(cx, |view, cx| {
-                    view.glide_cursor(&painter, frame, &preview.then_some(()), window, cx)
-                })
-            });
-        };
-        let mut size = (80, 24);
-        let mut preview = false;
-        // A focused window with motion allowed (tests default to reduced).
         cx.update(|window, cx| {
             window.activate_window();
             view.update(cx, |v, cx| {
@@ -133,6 +124,38 @@ mod view {
         });
         cx.run_until_parked();
         cx.update(|window, _| assert!(window.is_window_active()));
+        (view, cx)
+    }
+
+    /// Runs the view's `glide_cursor` for `frame` and returns how many
+    /// next-frame requests it left behind.
+    fn paint(
+        view: &Entity<SnapshotView>,
+        cx: &mut VisualTestContext,
+        painter: &RefCell<TerminalPainter>,
+        frame: &DisplayFrame,
+        preview: bool,
+    ) -> usize {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            view.update(cx, |view, cx| {
+                view.glide_cursor(painter, frame, &preview.then_some(()), window, cx)
+            });
+            window.simulate_next_frame(cx)
+        })
+    }
+
+    /// Paints the cursor at (4, 2), applies `change`, then paints it one cell
+    /// right, through the view's own `glide_cursor`. Returns where the painter
+    /// draws the cursor on that second paint.
+    fn second_paint(cx: &mut TestAppContext, change: Change) -> (f32, f32) {
+        let (view, cx) = open(cx);
+        let painter = RefCell::new(TerminalPainter::default());
+        let paint = |cx: &mut VisualTestContext, frame: &DisplayFrame, preview: bool| {
+            paint(&view, cx, &painter, frame, preview);
+        };
+        let mut size = (80, 24);
+        let mut preview = false;
         paint(cx, &frame(4, 2, true, size), false);
         match change {
             Change::Nothing => {}
@@ -218,5 +241,21 @@ mod view {
             view.cursor_motion.enabled = false;
             assert!(!target(view, shown.view(), false, true, false).animate);
         });
+    }
+
+    /// The owner's idle requirement: once the glide settles, painting the
+    /// still cursor again asks for no further frame.
+    #[gpui::test]
+    fn a_settled_cursor_requests_no_more_frames_in_the_view(cx: &mut TestAppContext) {
+        let (view, cx) = open(cx);
+        let painter = RefCell::new(TerminalPainter::default());
+        let at = |x| frame(x, 2, true, (80, 24));
+        assert_eq!(paint(&view, cx, &painter, &at(4), false), 0, "first sight");
+        assert_eq!(paint(&view, cx, &painter, &at(5), false), 1, "gliding");
+        cx.background_executor
+            .advance_clock(Duration::from_millis(100));
+        for _ in 0..3 {
+            assert_eq!(paint(&view, cx, &painter, &at(5), false), 0, "settled");
+        }
     }
 }
