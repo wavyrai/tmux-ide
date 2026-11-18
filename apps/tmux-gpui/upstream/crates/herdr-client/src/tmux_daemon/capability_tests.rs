@@ -374,3 +374,30 @@ fn history_on_demand_is_offered_only_from_2_9_27() {
         assert!(!with_partial_history(base("2.9.25"), None).contains(&122));
     }
 }
+
+/// The offer the issue request sends, with every step in place: 123 (#446)
+/// and then 122 for a daemon that knows each, and the released 2.9.25 offer
+/// unchanged. A merge that drops either step fails here.
+#[test]
+fn the_issue_offer_carries_browser_kind_then_history_on_demand() {
+    let full = |version: &str| issue_versions(true, true, true, true, Some(version));
+    assert_eq!(full("2.9.25"), [1, 101, 114, 120, 103, 104, 116, 105, 106]);
+    assert_eq!(
+        full("2.9.25"),
+        offered_versions(
+            true,
+            true,
+            true,
+            true,
+            knows_topology_bundle(Some("2.9.25"))
+        )
+    );
+    assert_eq!(
+        full("2.9.26"),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123]
+    );
+    assert_eq!(
+        full("2.9.27"),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123, 122]
+    );
+}

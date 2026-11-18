@@ -155,6 +155,26 @@ fn with_partial_history(mut versions: Vec<u32>, product_version: Option<&str>) -
     }
     versions
 }
+/// The protocol versions an issue request offers a daemon of this product
+/// version: the base offer, then 123 (#446), then 122, each only for a
+/// daemon that knows it.
+fn issue_versions(
+    graphics: bool,
+    local_images: bool,
+    native_surfaces: bool,
+    interactive: bool,
+    daemon_version: Option<&str>,
+) -> Vec<u32> {
+    let versions = offered_versions(
+        graphics,
+        local_images,
+        native_surfaces,
+        interactive,
+        knows_topology_bundle(daemon_version),
+    );
+    let versions = with_browser_kind(versions, graphics, daemon_version);
+    with_partial_history(versions, daemon_version)
+}
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
     let Some(version) = product_version else {
@@ -273,15 +293,13 @@ impl ServerClient {
         // nine-slot offer bound. Older daemons fall back to inflated image bytes.
         // 118 is 117 plus the reader pane badge (#756); a daemon that predates it
         // sends neither icons nor badges and serves inflated image bytes.
-        let versions = offered_versions(
+        let versions = issue_versions(
             graphics,
             local_images.is_some(),
             native_surfaces,
             selection.mode == ViewerMode::Interactive,
-            knows_topology_bundle(daemon_version.as_deref()),
+            daemon_version.as_deref(),
         );
-        let versions = with_browser_kind(versions, graphics, daemon_version.as_deref());
-        let versions = with_partial_history(versions, daemon_version.as_deref());
         let body = issue_body(
             &request_id,
             &scope.generation,
