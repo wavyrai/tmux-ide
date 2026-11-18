@@ -95,6 +95,16 @@ describe("parseAppConfig — deep partial merge", () => {
     });
   });
 
+  it("keeps system mode's light and dark presets only when each is of its kind", () => {
+    expect(
+      parseAppConfig({ theme: { mode: "system", light: "paper", dark: "nord" } }).theme,
+    ).toMatchObject({ mode: "system", light: "paper", dark: "nord" });
+    const wrong = parseAppConfig({ theme: { light: "nord", dark: "nope" } }).theme;
+    expect(wrong.light).toBeUndefined();
+    expect(wrong.dark).toBeUndefined();
+    expect(parseAppConfig({}).theme.light).toBeUndefined();
+  });
+
   it("persists valid theme modes and falls back for invalid values", () => {
     expect(parseAppConfig({ theme: { mode: "light" } }).theme.mode).toBe("light");
     expect(parseAppConfig({ theme: { mode: "system" } }).theme.mode).toBe("system");

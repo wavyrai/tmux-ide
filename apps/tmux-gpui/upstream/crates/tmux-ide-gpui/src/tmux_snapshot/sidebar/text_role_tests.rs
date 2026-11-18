@@ -40,6 +40,8 @@ pub(super) fn catalog() -> Vec<(String, Appearance)> {
                 theme,
                 options: Vec::new(),
                 error: None,
+                light: crate::tmux_snapshot::appearance::native::DEFAULT_LIGHT.into(),
+                dark: crate::tmux_snapshot::appearance::native::DEFAULT_DARK.into(),
             };
             (name, appearance)
         })

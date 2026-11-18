@@ -1,7 +1,7 @@
 //! Native-supported reference only. TUI application-shortcuts.ts supplies the
 //! category pattern; unsupported TUI-only terminal/session keys are not advertised.
 use super::{Action, Mode, Row, Target};
-const SHORTCUTS: &[&str] = &[
+pub(in crate::tmux_snapshot) const SHORTCUTS: &[&str] = &[
     "Application · F1 — Home",
     "Application · F2 — Terminals",
     "Application · F5 — Commands",
@@ -9,6 +9,7 @@ const SHORTCUTS: &[&str] = &[
     "Application · F6 — Search sessions and panes",
     "Workspace · Cmd+Alt+← / → / ↑ / ↓ — Focus adjacent pane",
     "Workspace · Cmd+Shift+Enter — Zoom or restore focused pane",
+    "Workspace · Cmd+D / Cmd+Shift+D — Split the focused pane right / down",
     "Workspace · Ctrl+G — Focus visible fleet sidebar; otherwise search sessions",
     "Fleet sidebar · ↑ / ↓ / PageUp / PageDown / Home / End — Move focus",
     "Fleet sidebar · Enter — Activate focused row; Esc — Return to terminal",
