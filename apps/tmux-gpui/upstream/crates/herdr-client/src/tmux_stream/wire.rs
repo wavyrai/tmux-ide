@@ -39,6 +39,8 @@ pub struct ConnectOptions {
     pub descriptor: IssuedDescriptor,
     pub origin: String,
     pub host_client_id: String,
+    /// attach-rtt: a socket proven ahead, and whether to redeem in the upgrade.
+    pub upgrade: super::UpgradeHints,
 }
 
 impl IssuedDescriptor {

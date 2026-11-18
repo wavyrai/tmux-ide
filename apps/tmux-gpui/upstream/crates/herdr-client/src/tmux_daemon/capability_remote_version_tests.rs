@@ -158,18 +158,19 @@ fn ask_remote(version: &str, windowed: bool) -> (Option<String>, bool, Asked) {
 /// The offer a local daemon of `version` gets for this stream, given what an
 /// SSH route can never carry: local image files and native surfaces.
 fn local_offer(version: Option<&str>) -> Vec<u32> {
-    let offer = offered_versions(true, false, false, true, knows_topology_bundle(version));
-    with_browser_kind(offer, true, version)
+    issue_versions(true, false, false, true, version)
 }
 #[test]
 fn a_remote_daemon_gets_the_gates_of_its_proven_version() {
     let before = json!([1, 101, 113, 118, 103, 104, 105, 106, 119]);
     let since_2_9_26 = json!([1, 101, 113, 118, 103, 104, 105, 106, 119, 123]);
+    // 2.9.27 also streams history on demand (122) to a remote daemon (#453).
+    let since_2_9_27 = json!([1, 101, 113, 118, 103, 104, 105, 106, 119, 123, 122]);
     for (version, windows, offer) in [
         ("2.9.24", false, &before),
         ("2.9.25", false, &before),
         ("2.9.26", true, &since_2_9_26),
-        ("2.9.27", true, &since_2_9_26),
+        ("2.9.27", true, &since_2_9_27),
         // A build that is not a release stays conservative, as it does locally.
         ("2.9.27-rc.1", false, &before),
     ] {

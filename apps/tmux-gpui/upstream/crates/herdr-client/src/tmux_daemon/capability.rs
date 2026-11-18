@@ -124,7 +124,7 @@ pub(super) fn knows_window_streams(product_version: Option<&str>) -> bool {
 /// The issue request. A window-scoped selection (#806) names its window, and
 /// only to a daemon that knows the field: a released daemon refuses unknown
 /// stream fields, so an older one gets no window selection at all.
-fn issue_body(
+pub(super) fn issue_body(
     request_id: &str,
     generation: &str,
     selection: &TerminalSelection,
@@ -262,6 +262,38 @@ impl ServerClient {
     ) -> Result<Handoff, Error> {
         self.assert_current()?;
         selection.validate()?;
+        let prelude = self.issue_prelude(graphics, selection.mode == ViewerMode::Interactive)?;
+        let request_id = Uuid::new_v4().to_string();
+        let host_client_id = format!("gpui:{}", Uuid::new_v4());
+        let scope = self.scope();
+        let body = issue_body(
+            &request_id,
+            &scope.generation,
+            selection,
+            &prelude.versions,
+            prelude.daemon_version.as_deref(),
+        )?;
+        let path = format!(
+            "api/v1/tmux-servers/{}/{}/pane-streams/issue?liveSessionId={}",
+            scope.server_id, scope.generation, selection.live_session_id
+        );
+        let result = self.daemon.post_resource_with_headers(
+            &path,
+            body.as_bytes(),
+            &issue_headers(&request_id, &scope.generation, &host_client_id),
+        );
+        self.assert_current()?;
+        self.issue_finish(prelude, selection, &request_id, host_client_id, &result?)
+    }
+    /// Everything an issue request needs before it is sent: the origin the
+    /// descriptor must name, local image access, the SSH forward and peer,
+    /// the offered protocol versions, and (attach-rtt) the stream's socket
+    /// being dialed and proven while the request is in flight.
+    pub(super) fn issue_prelude(
+        &self,
+        graphics: bool,
+        interactive: bool,
+    ) -> Result<IssuePrelude, Error> {
         let daemon_version = self.product_version();
         let (origin, local_images, remote): (_, _, Option<(u16, crate::tmux_ssh::PeerIdentity)>) =
             match &self.daemon {
@@ -283,10 +315,10 @@ impl ServerClient {
                 }
             };
         self.assert_current()?;
+        let prepared = remote
+            .as_ref()
+            .map(|(port, peer)| self.take_prepared().unwrap_or_else(|| prepare(*port, peer)));
         let native_surfaces = graphics && self.native_surface_capability()?;
-        let request_id = Uuid::new_v4().to_string();
-        let host_client_id = format!("gpui:{}", Uuid::new_v4());
-        let scope = self.scope();
         // A verified SSH loopback forward is still remote. Never offer local
         // file leases unless this handoff carries actual local image access.
         // 117 bundles favicon metadata with zlib support (102), retaining the
@@ -297,33 +329,32 @@ impl ServerClient {
             graphics,
             local_images.is_some(),
             native_surfaces,
-            selection.mode == ViewerMode::Interactive,
+            interactive,
             daemon_version.as_deref(),
         );
-        let body = issue_body(
-            &request_id,
-            &scope.generation,
-            selection,
-            &versions,
-            daemon_version.as_deref(),
-        )?;
-        let path = format!(
-            "api/v1/tmux-servers/{}/{}/pane-streams/issue?liveSessionId={}",
-            scope.server_id, scope.generation, selection.live_session_id
-        );
-        let result = self.daemon.post_resource_with_headers(
-            &path,
-            body.as_bytes(),
-            &[
-                ("Origin", ORIGIN),
-                ("X-Tmux-Ide-Request-Id", &request_id),
-                ("X-Tmux-Ide-Expected-Daemon-Instance-Id", &scope.generation),
-                ("X-Tmux-Ide-Host-Client-Id", &host_client_id),
-            ],
-        );
-        self.assert_current()?;
-        let mut descriptor = parse(&result?, selection, scope, &request_id, &origin)?;
-        let remote_peer = if let Some((port, peer)) = remote {
+        Ok(IssuePrelude {
+            origin,
+            local_images,
+            remote,
+            prepared,
+            native_surfaces,
+            versions,
+            daemon_version,
+            graphics,
+        })
+    }
+    /// Check an issue answer against the selection and build the handoff.
+    pub(super) fn issue_finish(
+        &self,
+        prelude: IssuePrelude,
+        selection: &TerminalSelection,
+        request_id: &str,
+        host_client_id: String,
+        bytes: &[u8],
+    ) -> Result<Handoff, Error> {
+        let scope = self.scope();
+        let mut descriptor = parse(bytes, selection, scope, request_id, &prelude.origin)?;
+        let remote_peer = if let Some((port, peer)) = prelude.remote {
             // Validate the remote daemon's canonical origin before translating
             // only its authority to our owned SSH forward. Path/ticket stay exact.
             let mut endpoint = descriptor.validate().map_err(Error::Capability)?;
@@ -340,8 +371,9 @@ impl ServerClient {
             None
         };
         self.assert_current()?;
+        let redeem_in_upgrade = attaches(prelude.daemon_version.as_deref());
         Ok(Handoff {
-            native_surfaces,
+            native_surfaces: prelude.native_surfaces,
             remote_peer,
             descriptor,
             origin: ORIGIN.into(),
@@ -349,17 +381,69 @@ impl ServerClient {
             workspace_name: selection.workspace_name.clone(),
             selected_pane: selection.selected_pane.clone(),
             catalog_only: false,
-            graphics,
+            graphics: prelude.graphics,
             binary_cells: true,
-            alternate_screen_projection: graphics,
-            local_images,
+            alternate_screen_projection: prelude.graphics,
+            local_images: prelude.local_images,
             server_scope: Some(scope.clone()),
-            daemon_version,
+            daemon_version: prelude.daemon_version,
+            upgrade: crate::tmux_stream::UpgradeHints {
+                prepared: prelude.prepared,
+                redeem_in_upgrade,
+            },
         })
     }
+    /// attach-rtt: start dialing and proving the stream's socket now, before
+    /// the requests that lead to the issue, when the daemon is over SSH.
+    pub(super) fn prepare_stream(&self) {
+        #[cfg(unix)]
+        if let super::owner::Owner::Remote(remote) = &self.daemon
+            && let Ok((_, port, peer)) = remote.capability_route()
+            && let Ok(mut slot) = self.prepared.lock()
+        {
+            *slot = Some(prepare(port, &peer));
+        }
+    }
+    fn take_prepared(&self) -> Option<crate::tmux_stream::PreparedSocket> {
+        self.prepared.lock().ok()?.take()
+    }
 }
+fn prepare(port: u16, peer: &crate::tmux_ssh::PeerIdentity) -> crate::tmux_stream::PreparedSocket {
+    crate::tmux_stream::PreparedSocket::spawn(port, peer.clone(), std::time::Duration::from_secs(2))
+}
+pub(super) fn issue_headers<'a>(
+    request_id: &'a str,
+    generation: &'a str,
+    host_client_id: &'a str,
+) -> [(&'static str, &'a str); 4] {
+    [
+        ("Origin", ORIGIN),
+        ("X-Tmux-Ide-Request-Id", request_id),
+        ("X-Tmux-Ide-Expected-Daemon-Instance-Id", generation),
+        ("X-Tmux-Ide-Host-Client-Id", host_client_id),
+    ]
+}
+/// What `issue_prelude` gathers for one issue or attach request.
+pub(super) struct IssuePrelude {
+    origin: url::Url,
+    local_images: Option<LocalImages>,
+    remote: Option<(u16, crate::tmux_ssh::PeerIdentity)>,
+    prepared: Option<crate::tmux_stream::PreparedSocket>,
+    native_surfaces: bool,
+    pub(super) versions: Vec<u32>,
+    pub(super) daemon_version: Option<String>,
+    graphics: bool,
+}
+/// attach-rtt: whether a daemon of this product version knows the attach
+/// request and a redeem carried by the upgrade, and keeps an owner
+/// connection 65 s. Not yet set by a release: the PM confirms it when the
+/// daemon side ships.
+pub(super) fn attaches(product_version: Option<&str>) -> bool {
+    release_at_least(product_version, ATTACH_SINCE)
+}
+const ATTACH_SINCE: [u64; 3] = [2, 9, 27];
 impl TerminalSelection {
-    fn validate(&self) -> Result<(), Error> {
+    pub(super) fn validate(&self) -> Result<(), Error> {
         let valid_pane = crate::tmux_stream::valid_pane;
         let live = self.live_session_id.strip_prefix("live-session.");
         if !crate::tmux_stream::valid_identity(&self.workspace_name)

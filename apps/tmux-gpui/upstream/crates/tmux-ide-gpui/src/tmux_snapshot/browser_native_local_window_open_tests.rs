@@ -293,3 +293,86 @@ fn choosing_a_pane_of_another_window_reissues_for_its_window() {
         (Some("window.a"), "pane.p3")
     );
 }
+
+/// attach-rtt: a stream issued with the open.
+fn prepared(
+    window: Option<&str>,
+    panes: Vec<String>,
+    selected: &str,
+) -> Box<herdr_client::tmux_daemon::PreparedStream> {
+    let handoff = herdr_client::tmux_handoff::Handoff::parse(
+        serde_json::json!({
+            "descriptor": {"protocolVersion":2,"webSocketUrl":"ws://127.0.0.1:4111/v2/terminal/pane-streams/redeem","subprotocol":herdr_client::tmux_stream::SUBPROTOCOL,"redemptionTicket":format!("ps2_{}","a".repeat(43)),"daemonInstanceId":"d9c81ebd-5785-45a3-9206-a2aa497d68fc","requestId":"d9c81ebd-5785-45a3-9206-a2aa497d68fd","expiresAt":9999999999999u64,"panes":panes,"effectiveViewerMode":"interactive"},
+            "origin": "tmux-ide://app",
+            "hostClientId": "gpui:d9c81ebd-5785-45a3-9206-a2aa497d68fe",
+            "workspaceName": "fixture",
+            "selectedPane": selected,
+        })
+        .to_string()
+        .as_bytes(),
+    )
+    .unwrap();
+    Box::new(herdr_client::tmux_daemon::PreparedStream {
+        window: window.map(Into::into),
+        panes,
+        selected: selected.into(),
+        handoff,
+    })
+}
+fn attached(local: &mut Local, stream: Box<herdr_client::tmux_daemon::PreparedStream>) {
+    local.open(4, key(local, SMALL), None).unwrap();
+    let stage = local.stage.take().unwrap();
+    // The open asks for the stream with the rule's inputs.
+    let CatalogAction::Attach {
+        preferred,
+        max_panes,
+        ..
+    } = stage.action()
+    else {
+        panic!("expected an attach");
+    };
+    assert_eq!((preferred, max_panes), (None, 24));
+    local
+        .completed(
+            stage,
+            CatalogResult::Attached {
+                workspace_name: "fixture".into(),
+                panes: panes(12),
+                windows: Some(vec![win("window.a", true, 0..12)]),
+                stream: Some(stream),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_stream_issued_with_the_open_for_the_rules_choice_skips_the_issue() {
+    let (mut local, events) = loaded(3);
+    attached(&mut local, prepared(None, panes(12), "pane.p0"));
+    assert!(local.stage.is_none(), "no issue stage");
+    assert_eq!(local.active.as_ref().unwrap().workspace, "fixture");
+    assert!(
+        events
+            .try_iter()
+            .any(|event| matches!(event, Incoming::Handoff(Event::Open { .. })))
+    );
+}
+
+#[test]
+fn a_stream_issued_for_another_choice_or_while_inactive_is_issued_again() {
+    for (stream, foreground) in [
+        (prepared(None, panes(12), "pane.p1"), true),
+        (prepared(Some("window.a"), panes(12), "pane.p0"), true),
+        (prepared(None, panes(12), "pane.p0"), false),
+    ] {
+        let (mut local, _events) = loaded(3);
+        local.foreground = foreground;
+        attached(&mut local, stream);
+        let (window, issued_panes, selected) = issued(&local);
+        assert_eq!(
+            (window, issued_panes.len(), selected.as_str()),
+            (None, 12, "pane.p0")
+        );
+        assert!(local.active.is_none());
+    }
+}
