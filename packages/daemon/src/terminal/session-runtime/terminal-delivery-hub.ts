@@ -33,6 +33,8 @@ import {
   TerminalDeliveryVisibilitySchemaZ,
   TerminalDeliveryHistoryRequestSchemaZ,
   TERMINAL_DELIVERY_HISTORY_TAIL_ROWS,
+  TERMINAL_DELIVERY_MAX_PIPELINED,
+  TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
   TERMINAL_HISTORY_EMPTY_DIGEST,
   type TerminalDeliveryHistoryCommitment,
   type TerminalDeliveryHistoryRequest,
@@ -118,15 +120,13 @@ export const TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
  */
 export const TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS = 30;
 /**
- * Deliveries one visible pane may have unacknowledged. Over a long link an
- * echo commits while the previous echo's delivery is still unacknowledged;
- * waiting for that ACK costs up to one more round trip per key. Clients apply
- * patches in order against their last applied revision, so later patches go
- * out behind unacknowledged ones. After a NACK each such patch draws one more
- * NACK, and the shipped app fails a stream on its fourth NACK in a row: keep
- * this at 3 or below. Daemon policy only: nothing on the wire changes.
+ * Capability 124 (TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION): over a
+ * long link an echo commits while the previous echo's delivery is still
+ * unacknowledged, and waiting for that ACK costs up to one more round trip
+ * per key. A visible pane of a client that offers 124 sends up to this many
+ * patches before the first is acknowledged. Daemon policy over that capability.
  */
-export const TERMINAL_DELIVERY_MAX_PIPELINED = 3;
+export { TERMINAL_DELIVERY_MAX_PIPELINED };
 
 export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
@@ -302,6 +302,8 @@ interface ClientState {
     nextChunk: number;
     sentAt: number;
   } | null;
+  /** Capability 124: the client takes patches behind unacknowledged ones. */
+  readonly pipelining: boolean;
   /**
    * Patches sent after `inFlight`, oldest first, each based on the one before
    * (TERMINAL_DELIVERY_MAX_PIPELINED). ACKs settle `inFlight` first.
@@ -582,6 +584,9 @@ export class SessionRuntimeTerminalDeliveryHub {
         historyBytesPerRow: null,
         revisionSinceHistoryRequest: false,
         inFlight: null,
+        pipelining: offer.protocolVersions.includes(
+          TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+        ),
         pipelined: [],
         droppedTransactions: new Set(),
         latestRevision: pane.latest?.update.revision ?? null,
@@ -1240,8 +1245,8 @@ export class SessionRuntimeTerminalDeliveryHub {
   }
 
   /**
-   * Whether another delivery may go out behind the unacknowledged ones. Only a
-   * visible pane, only behind canonical patches whose chunks have all been
+   * Whether another delivery may go out behind the unacknowledged ones. Only
+   * for a client that offers 124, only a visible pane, only behind canonical patches whose chunks have all been
    * handed to the socket (a client takes one envelope's chunks at a time), and
    * within TERMINAL_DELIVERY_MAX_PIPELINED and the connection's unacknowledged
    * byte budget. Seeds, projections, history frames and history requests keep
@@ -1249,6 +1254,7 @@ export class SessionRuntimeTerminalDeliveryHub {
    */
   #canPipeline(client: ClientState): boolean {
     if (
+      !client.pipelining ||
       !client.inFlight ||
       client.pipelined.length + 1 >= TERMINAL_DELIVERY_MAX_PIPELINED ||
       client.visibility !== "visible" ||

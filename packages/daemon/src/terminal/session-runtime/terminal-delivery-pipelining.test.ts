@@ -6,6 +6,10 @@ import type {
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import {
+  TERMINAL_DELIVERY_MAX_PIPELINED,
+  TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
+import {
   admitTerminalDeliveryChunk,
   admitTerminalDeliveryEnvelope,
   blankTerminalReplicaSnapshot,
@@ -26,8 +30,6 @@ import {
 // so a visible pane sends small patches behind unacknowledged ones (bounded).
 const generation = "00000000-0000-4000-8000-000000000001";
 const incarnation = `${generation}:0`;
-/** At most this many deliveries per pane in flight (the shipped app NACKs up to 3 in a row). */
-const TERMINAL_DELIVERY_MAX_PIPELINED = 3;
 
 class Owner implements TerminalDeliverySourceOwner {
   listener: ((update: CanonicalTerminalReplicaUpdate) => void) | undefined;
@@ -109,7 +111,12 @@ const deliveries = (m: TerminalDeliveryServerMessage[]) =>
 const faults = (m: TerminalDeliveryServerMessage[]) =>
   m.filter((x) => x.type === "terminal.delivery.fault");
 
-async function open(protocolVersions = [1], encoding = "semantic-v1" as const) {
+async function open(
+  protocolVersions = [1],
+  encoding = "semantic-v1" as const,
+  /** The socket's accept: may hold a frame back until it resolves. */
+  socket?: (m: TerminalDeliveryServerMessage) => void | Promise<void>,
+) {
   const owner = new Owner();
   const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner);
   const messages: TerminalDeliveryServerMessage[] = [];
@@ -123,6 +130,7 @@ async function open(protocolVersions = [1], encoding = "semantic-v1" as const) {
     },
     (m) => {
       messages.push(m);
+      return socket?.(m);
     },
   );
   return { owner, hub, messages, c };
@@ -132,7 +140,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
   "pipelined %s patches",
   (encoding) => {
     it("sends each echo while earlier patches are unacknowledged, up to the bound", async () => {
-      const { owner, hub, messages, c } = await open([1], encoding);
+      const { owner, hub, messages, c } = await open([1, 124], encoding);
       try {
         let screen = initial();
         owner.seed(screen, 0);
@@ -189,7 +197,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
     });
 
     it("an ACK that skips the oldest flight is still a protocol violation", async () => {
-      const { owner, hub, messages, c } = await open([1], encoding);
+      const { owner, hub, messages, c } = await open([1, 124], encoding);
       try {
         let screen = initial();
         owner.seed(screen, 0);
@@ -217,7 +225,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
     });
 
     it("a seed waits for every outstanding patch", async () => {
-      const { owner, hub, messages, c } = await open([1], encoding);
+      const { owner, hub, messages, c } = await open([1, 124], encoding);
       try {
         let screen = initial();
         owner.seed(screen, 0);
@@ -253,7 +261,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
     });
 
     it("a NACK drops the pipelined patches; their own NACKs are inert; the pane reseeds", async () => {
-      const { owner, hub, messages, c } = await open([1], encoding);
+      const { owner, hub, messages, c } = await open([1, 124], encoding);
       try {
         let screen = initial();
         owner.seed(screen, 0);
@@ -332,7 +340,7 @@ describe("pipelining behind a large patch", () => {
       const c = await hub.open(
         "client",
         "pane",
-        { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+        { protocolVersions: [1, 124], encodings: ["semantic-v1"], richPlacements: false },
         (m) => {
           messages.push(m);
           if (holding && m.type === "terminal.delivery.chunk")
@@ -426,7 +434,7 @@ describe("pipelining behind a large patch", () => {
 
 describe("pipelined patches with partial history (capability 122)", () => {
   it("patches each pipelined echo on the history the client will hold", async () => {
-    const { owner, hub, messages, c } = await open([1, 122], "semantic-compact-v1");
+    const { owner, hub, messages, c } = await open([1, 122, 124], "semantic-compact-v1");
     try {
       let screen = initial(500);
       owner.seed(screen, 0);
@@ -458,6 +466,367 @@ describe("pipelined patches with partial history (capability 122)", () => {
       await settle();
       expect(client.state.canonicalSnapshot!.grid).toEqual(screen.grid);
       expect(faults(messages)).toEqual([]);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+});
+
+// Review of #454 (review-454): history request, visibility and late ACKs under pipelining.
+
+const historyRequest = (
+  c: Awaited<ReturnType<typeof open>>["c"],
+  s: ClientState,
+  maxRows: number,
+) =>
+  c.historyRequest!({
+    type: "terminal.delivery.history-request",
+    workspaceName: "w",
+    semanticPaneId: "pane",
+    generation,
+    incarnation: s.incarnation!,
+    deliveryNonce: c.negotiation.accepted ? c.negotiation.negotiated.deliveryNonce : "",
+    canonicalRevision: s.appliedRevision,
+    unloadedRows: s.historyUnloaded?.rows ?? 0,
+    maxRows,
+  });
+
+describe("review #454 adversarial", () => {
+  it("R1 a history request while patches are pipelined: no more pipelining, frame after the ACKs, client applies all", async () => {
+    const { owner, hub, messages, c } = await open([1, 122, 124], "semantic-compact-v1");
+    try {
+      let screen = initial(500);
+      owner.seed(screen, 0);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(1));
+      let client = apply(
+        createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+        deliveries(messages)[0]!,
+        messages,
+      );
+      c.ack(client.ack);
+      await settle();
+      screen = owner.type(screen, 1, "a");
+      await settle();
+      screen = owner.type(screen, 2, "b");
+      await settle();
+      expect(deliveries(messages)).toHaveLength(3);
+      // The client applied patch 1 and asks for history before ACKing anything.
+      const p1 = deliveries(messages)[1]!;
+      client = apply(client.state, p1, messages);
+      historyRequest(c, client.state, 50);
+      screen = owner.type(screen, 3, "c");
+      await settle();
+      expect(deliveries(messages)).toHaveLength(3); // no pipelining with a history request pending
+      c.ack(client.ack);
+      await settle();
+      const p2 = deliveries(messages)[2]!;
+      client = apply(client.state, p2, messages);
+      c.ack(client.ack);
+      await vi.waitFor(() => expect(deliveries(messages).length).toBeGreaterThanOrEqual(4));
+      for (let guard = 0; guard < 6; guard++) {
+        const pending = deliveries(messages).slice(3 + guard);
+        if (!pending.length) break;
+        client = apply(client.state, pending[0]!, messages);
+        c.ack(client.ack);
+        await settle();
+      }
+      expect(
+        deliveries(messages)
+          .slice(3)
+          .map((e) => e.frame),
+      ).toContain("history");
+      expect(client.state.canonicalSnapshot!.grid).toEqual(screen.grid);
+      expect(faults(messages)).toEqual([]);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("R2 a pane hidden mid-pipeline sends nothing more; visible again catches up", async () => {
+    const { owner, hub, messages, c } = await open([1, 124], "semantic-v1");
+    try {
+      let screen = initial();
+      owner.seed(screen, 0);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(1));
+      let client = apply(
+        createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+        deliveries(messages)[0]!,
+        messages,
+      );
+      c.ack(client.ack);
+      screen = owner.type(screen, 1, "a");
+      await settle();
+      c.setVisibility("hidden");
+      screen = owner.type(screen, 2, "b");
+      screen = owner.type(screen, 3, "c");
+      await settle();
+      expect(deliveries(messages)).toHaveLength(2);
+      client = apply(client.state, deliveries(messages)[1]!, messages);
+      c.ack(client.ack);
+      await settle();
+      expect(deliveries(messages)).toHaveLength(2);
+      c.setVisibility("visible");
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(3));
+      client = apply(client.state, deliveries(messages)[2]!, messages);
+      c.ack(client.ack);
+      expect(client.state.canonicalSnapshot).toEqual(screen);
+      expect(faults(messages)).toEqual([]);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("R3 a client that ACKs late sees every patch apply in order across many keys (no fault, no seed)", async () => {
+    const { owner, hub, messages, c } = await open([1, 124], "semantic-compact-v1");
+    try {
+      let screen = initial();
+      owner.seed(screen, 0);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(1));
+      let client = apply(
+        createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+        deliveries(messages)[0]!,
+        messages,
+      );
+      c.ack(client.ack);
+      let applied = 1;
+      const acks: ReturnType<typeof apply>["ack"][] = [];
+      for (let revision = 1; revision <= 40; revision++) {
+        screen = owner.type(screen, revision, String.fromCharCode(97 + (revision % 26)));
+        await settle();
+        for (const e of deliveries(messages).slice(applied)) {
+          client = apply(client.state, e, messages);
+          acks.push(client.ack);
+          applied += 1;
+        }
+        // ACKs arrive one key late: the link is longer than the key gap.
+        if (acks.length > 1) c.ack(acks.shift()!);
+        expect(acks.length).toBeLessThanOrEqual(3);
+      }
+      while (acks.length) {
+        c.ack(acks.shift()!);
+        await settle();
+        for (const e of deliveries(messages).slice(applied)) {
+          client = apply(client.state, e, messages);
+          acks.push(client.ack);
+          applied += 1;
+        }
+      }
+      expect(
+        deliveries(messages)
+          .slice(1)
+          .every((e) => e.frame === "patch"),
+      ).toBe(true);
+      expect(client.state.canonicalSnapshot).toEqual(screen);
+      expect(faults(messages)).toEqual([]);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+});
+
+describe("capability 124 and the pipelining guards", () => {
+  /** A seeded, ACKed client; `typed` echoes go out unacknowledged. */
+  async function seeded(
+    protocolVersions: number[],
+    socket?: (m: TerminalDeliveryServerMessage) => void | Promise<void>,
+    screen = initial(),
+  ) {
+    const opened = await open(protocolVersions, "semantic-v1", socket);
+    opened.owner.seed(screen, 0);
+    await vi.waitFor(() => expect(deliveries(opened.messages)).toHaveLength(1), {
+      timeout: 20_000,
+    });
+    const client = apply(
+      createTerminalDeliveryClientState(opened.c.negotiation.negotiated, "w", "pane"),
+      deliveries(opened.messages)[0]!,
+      opened.messages,
+    );
+    opened.c.ack(client.ack);
+    await settle();
+    return { ...opened, client, screen };
+  }
+  const nackOf = (e: TerminalDeliveryEnvelope) => ({
+    type: "terminal.delivery.nack" as const,
+    workspaceName: "w",
+    semanticPaneId: "pane",
+    generation,
+    incarnation: e.incarnation,
+    deliveryNonce: e.deliveryNonce,
+    transactionId: e.transactionId,
+    reason: "hash-mismatch" as const,
+    appliedRevision: 0,
+  });
+
+  it("keeps one delivery in flight for a client that does not offer 124", async () => {
+    const { owner, hub, messages, c, client, screen } = await seeded([1]);
+    try {
+      const one = owner.type(screen, 1, "a");
+      await settle();
+      const two = owner.type(one, 2, "b");
+      await settle();
+      expect(deliveries(messages)).toHaveLength(2);
+      const first = apply(client.state, deliveries(messages)[1]!, messages);
+      c.ack(first.ack);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(3));
+      expect(deliveries(messages)[2]).toMatchObject({ baseRevision: 1, canonicalRevision: 2 });
+      expect(
+        apply(first.state, deliveries(messages)[2]!, messages).state.canonicalSnapshot,
+      ).toEqual(two);
+      expect(TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION).toBe(124);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("never pipelines behind a seed in flight", async () => {
+    const opened = await open([1, 124]);
+    const { owner, hub, messages, c } = opened;
+    try {
+      const screen = initial();
+      owner.seed(screen, 0);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(1));
+      owner.type(screen, 1, "a");
+      await settle();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(deliveries(messages)).toHaveLength(1);
+      const seeded = apply(
+        createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+        deliveries(messages)[0]!,
+        messages,
+      );
+      c.ack(seeded.ack);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(2));
+      expect(deliveries(messages)[1]).toMatchObject({ frame: "patch", baseRevision: 0 });
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("an ACK for a dropped flight is inert, and the dropped set clears on the next ACK", async () => {
+    const { owner, hub, messages, c, screen } = await seeded([1, 124]);
+    try {
+      let next = screen;
+      for (let revision = 1; revision <= 2; revision++) {
+        next = owner.type(next, revision, "x");
+        await settle();
+      }
+      const [first, second] = deliveries(messages).slice(1);
+      expect(second).toBeDefined();
+      c.nack(nackOf(first!));
+      // A late ACK naming the dropped flight (it raced the NACK) is ignored.
+      c.ack({
+        type: "terminal.delivery.ack",
+        workspaceName: "w",
+        semanticPaneId: "pane",
+        generation,
+        incarnation: second!.incarnation,
+        deliveryNonce: second!.deliveryNonce,
+        transactionId: second!.transactionId,
+        canonicalRevision: second!.canonicalRevision,
+        canonicalStateHash: second!.canonicalStateHash,
+        representationHash: second!.representationHash,
+      });
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(4));
+      expect(faults(messages)).toEqual([]);
+      const reseed = apply(
+        createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+        deliveries(messages)[3]!,
+        messages,
+      );
+      c.ack(reseed.ack);
+      await settle();
+      // After an accepted ACK the old transaction is no longer excused.
+      c.nack(nackOf(second!));
+      await vi.waitFor(() => expect(faults(messages)).toHaveLength(1));
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("counts every pipelined byte toward the pane's own budget", async () => {
+    const wide = structuredClone(blankTerminalReplicaSnapshot(300, 30));
+    const { owner, hub, messages, c, screen } = await seeded([1, 124], undefined, wide);
+    try {
+      // Redraw `rows` rows with heavy cells: one ~100-200 KiB patch.
+      const redraw = (from: TerminalReplicaSnapshot, revision: number, rows: number) => {
+        const next = structuredClone(from);
+        for (let y = 0; y < rows; y++)
+          for (const [x, cell] of next.grid[y]!.cells.entries()) {
+            cell.grapheme = String.fromCharCode(65 + ((x + y + revision) % 26));
+            cell.foreground = { kind: "rgb", value: 0xabcdef - revision };
+            cell.background = { kind: "rgb", value: 0x123456 + revision };
+          }
+        owner.listener!({
+          type: "terminal.patch",
+          workspaceName: "w",
+          semanticPaneId: "pane",
+          generation,
+          incarnation,
+          baseRevision: revision - 1,
+          revision,
+          cols: next.cols,
+          rows: next.rows,
+          patch: {
+            rows: next.grid
+              .slice(0, rows)
+              .map((row, index) => ({ index, row: structuredClone(row) })),
+          },
+          stateHash: hashTerminalReplicaSnapshot(next),
+          hashAlgorithm: "fnv1a64-v1",
+        } as CanonicalTerminalReplicaUpdate);
+        return next;
+      };
+      let next = redraw(screen, 1, 4);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(2));
+      next = redraw(next, 2, 4);
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(3));
+      const [a, b] = deliveries(messages).slice(1);
+      expect(a!.chunkCount).toBe(1);
+      expect(a!.representationBytes).toBeLessThan(TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES);
+      expect(a!.representationBytes + b!.representationBytes).toBeGreaterThanOrEqual(
+        TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
+      );
+      // A third delivery would fit the depth, not the bytes: it waits.
+      owner.type(next, 3, "z");
+      await settle();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(deliveries(messages)).toHaveLength(3);
+      expect(faults(messages)).toEqual([]);
+    } finally {
+      await c.close();
+      await hub.close();
+    }
+  });
+
+  it("sends a waiting echo as soon as the previous delivery's chunks are out", async () => {
+    let hold: (() => void) | null = null;
+    let holding = false;
+    const { owner, hub, messages, c, screen } = await seeded([1, 124], (m) => {
+      if (holding && m.type === "terminal.delivery")
+        return new Promise<void>((resolve) => (hold = resolve));
+    });
+    try {
+      holding = true;
+      const one = owner.type(screen, 1, "a");
+      await vi.waitFor(() => expect(hold).not.toBeNull());
+      holding = false;
+      // Echo 2 commits while echo 1's envelope is still on the socket and its
+      // chunk not yet sent: it cannot go out yet.
+      owner.type(one, 2, "b");
+      await settle();
+      expect(deliveries(messages)).toHaveLength(2);
+      const release: () => void = hold!;
+      release();
+      // No ACK: echo 2 goes out once echo 1's last chunk is handed over.
+      await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(3));
+      expect(deliveries(messages)[2]).toMatchObject({ baseRevision: 1, canonicalRevision: 2 });
     } finally {
       await c.close();
       await hub.close();

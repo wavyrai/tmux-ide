@@ -147,8 +147,8 @@ async function client(hub: Hub, id: string, partial = true, encoding = "semantic
     {
       protocolVersions: partial
         ? encoding === "semantic-binary-v1"
-          ? [1, 109, 122]
-          : [1, 122]
+          ? [1, 109, 122, 124]
+          : [1, 122, 124]
         : [1],
       encodings: ["semantic-compact-v1"],
       richPlacements: false,

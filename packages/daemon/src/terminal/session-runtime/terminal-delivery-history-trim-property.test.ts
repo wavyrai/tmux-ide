@@ -132,12 +132,19 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
           pendingAcks: unknown[];
           id: string;
         };
+        let opened = 0;
         const open = async (id: string): Promise<Client> => {
           const messages: TerminalDeliveryServerMessage[] = [];
           const c = await hub.open(
             id,
             "pane",
-            { protocolVersions: [1], encodings: [encoding], richPlacements: false },
+            {
+              // Capability 124 for every other client: pipelined and one-flight
+              // readers of the same pane must both converge exactly.
+              protocolVersions: opened++ % 2 === 0 ? [1, 124] : [1],
+              encodings: [encoding],
+              richPlacements: false,
+            },
             (m) => {
               messages.push(m);
             },

@@ -2802,3 +2802,125 @@ describe("invalid coalesced delivery admission", () => {
       });
     }
 });
+
+describe("review-454: TUI endpoint under pipelined daemon patches", () => {
+  it("R454-T1 accepts a patch based on a cooperatively decoding patch (what #454 sends)", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2_000), "401");
+    const second = compactHistoryPatchDelivery(
+      first.next,
+      1,
+      2,
+      uniqueHistoryRows(2_000, 3),
+      "402",
+    );
+    // The daemon hands A's envelope and every chunk to the socket, then pipelines B on A.
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(test.client.ack).not.toHaveBeenCalled(); // A is decoding cooperatively
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    // Both decode cooperatively; under load that can take seconds.
+    await vi.waitFor(
+      () => expect(test.client.ack.mock.calls.length + test.client.close.mock.calls.length).toBe(2),
+      { timeout: 50_000, interval: 50 },
+    );
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+  }, 60_000);
+
+  it("holds a pipelined patch behind a frozen subscription's unsettled flight, then ACKs both in order", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2), "411");
+    const second = compactHistoryPatchDelivery(first.next, 1, 2, uniqueHistoryRows(2, 2), "412");
+    subscription.freeze();
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+    expect(state).toEqual(second.next);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("NACKs a queued patch as a gap after the flight before it fails, keeping the connection", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => {});
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const state = blankTerminalReplicaSnapshot(132, 41);
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2_000), "421");
+    const second = compactHistoryPatchDelivery(
+      first.next,
+      1,
+      2,
+      uniqueHistoryRows(2_000, 3),
+      "422",
+    );
+    // A's canonical hash is wrong: its cooperative decode fails after B is queued.
+    const broken = { ...first.envelope, canonicalStateHash: second.envelope.canonicalStateHash };
+    test.options().onTerminalDelivery(PANE_A, broken);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => expect(test.client.nack).toHaveBeenCalledTimes(2), { timeout: 50_000 });
+    expect(test.client.nack.mock.calls.map(([nack]) => [nack.transactionId, nack.reason])).toEqual([
+      [first.envelope.transactionId, "decode-failed"],
+      [second.envelope.transactionId, "gap"],
+    ]);
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+  }, 60_000);
+});
