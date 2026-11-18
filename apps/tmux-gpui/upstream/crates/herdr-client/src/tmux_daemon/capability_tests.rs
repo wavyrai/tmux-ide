@@ -375,9 +375,28 @@ fn history_on_demand_is_offered_only_from_2_9_27() {
     }
 }
 
-/// The offer the issue request sends, with every step in place: 123 (#446)
-/// and then 122 for a daemon that knows each, and the released 2.9.25 offer
-/// unchanged. A merge that drops either step fails here.
+/// Capability 124 (pipelined delivery) goes only to a daemon release that
+/// has it (2.9.27); older or unknown daemons get the offer unchanged.
+#[test]
+fn pipelined_delivery_is_offered_only_from_2_9_27() {
+    let base = || vec![1, 101, 114, 120, 103, 104, 116, 105, 106];
+    for knowing in ["2.9.27", "2.10.0", "3.0.0"] {
+        let offer = with_pipelining(base(), Some(knowing));
+        assert_eq!(offer.last(), Some(&124), "{knowing}: {offer:?}");
+        assert_eq!(offer[..offer.len() - 1], base()[..]);
+    }
+    for older in ["2.9.25", "2.9.26", "2.9.27-rc.1", "bad"] {
+        assert_eq!(with_pipelining(base(), Some(older)), base(), "{older}");
+    }
+    assert_eq!(with_pipelining(base(), None), base());
+    // Never past the 16 numbers a daemon takes.
+    let full: Vec<u32> = (1..=16).collect();
+    assert_eq!(with_pipelining(full.clone(), Some("2.9.27")), full);
+}
+
+/// The offer the issue request sends, with every step in place: 123 (#446),
+/// then 122, then 124 for a daemon that knows each, and the released 2.9.25
+/// offer unchanged. A merge that drops any step fails here.
 #[test]
 fn the_issue_offer_carries_browser_kind_then_history_on_demand() {
     let full = |version: &str| issue_versions(true, true, true, true, Some(version));
@@ -398,6 +417,6 @@ fn the_issue_offer_carries_browser_kind_then_history_on_demand() {
     );
     assert_eq!(
         full("2.9.27"),
-        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123, 122]
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123, 122, 124]
     );
 }
