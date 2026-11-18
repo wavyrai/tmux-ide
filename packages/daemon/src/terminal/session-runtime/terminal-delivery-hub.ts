@@ -273,6 +273,8 @@ interface ClientState {
   historyLoadedRows: number;
   /** Rows the client asked for and has not been sent; null when none. */
   pendingHistoryRows: number | null;
+  /** Encoded bytes per row of the last history frame: sizes the next one. */
+  historyBytesPerRow: number | null;
   /** New output went out since the request: the history frame goes next. */
   revisionSinceHistoryRequest: boolean;
   inFlight: {
@@ -555,6 +557,7 @@ export class SessionRuntimeTerminalDeliveryHub {
         historyUnloadedDigest: TERMINAL_HISTORY_EMPTY_DIGEST,
         historyLoadedRows: 0,
         pendingHistoryRows: null,
+        historyBytesPerRow: null,
         revisionSinceHistoryRequest: false,
         inFlight: null,
         latestRevision: pane.latest?.update.revision ?? null,
@@ -2213,17 +2216,32 @@ export class SessionRuntimeTerminalDeliveryHub {
     const encoding = client.negotiated.encoding as "semantic-compact-v1" | "semantic-binary-v1";
     const unloadedRows = client.historyUnloadedRows;
     try {
-      // Bound the frame by its encoded bytes: start from at most one byte per
-      // cell's worth of rows and shrink until it fits.
-      let count = Math.max(
-        1,
-        Math.min(asked, unloadedRows, Math.floor(HISTORY_FRAME_MAX_BYTES / Math.max(1, full.cols))),
-      );
-      let rows = full.history.slice(unloadedRows - count, unloadedRows);
-      let bytes = encodeSemanticTerminalHistory(
-        { frame: "history", revision: record.update.revision, rows },
-        encoding,
-      );
+      // Bound the frame by its encoded bytes. The event loop pays for every
+      // row encoded, so encode about what is sent: size the frame from the
+      // last frame's bytes per row (or a small sample of the rows next in
+      // line), grow once if it came out well under, shrink until it fits.
+      const limit = Math.max(1, Math.min(asked, unloadedRows));
+      const encode = (count: number) => {
+        const rows = full.history.slice(unloadedRows - count, unloadedRows);
+        const bytes = encodeSemanticTerminalHistory(
+          { frame: "history", revision: record.update.revision, rows },
+          encoding,
+        );
+        return { count, rows, bytes };
+      };
+      const fit = (bytesPerRow: number) =>
+        Math.max(
+          1,
+          Math.min(limit, Math.floor((HISTORY_FRAME_MAX_BYTES * 0.95) / Math.max(1, bytesPerRow))),
+        );
+      let frame = client.historyBytesPerRow === null ? encode(Math.min(limit, 32)) : null;
+      const estimate = client.historyBytesPerRow ?? frame!.bytes.byteLength / frame!.count;
+      if (!frame || fit(estimate) !== frame.count) frame = encode(fit(estimate));
+      if (frame.count < limit && frame.bytes.byteLength < HISTORY_FRAME_MAX_BYTES * 0.6) {
+        const grown = fit(frame.bytes.byteLength / frame.count);
+        if (grown > frame.count) frame = encode(grown);
+      }
+      let { count, rows, bytes } = frame;
       while (bytes.byteLength > HISTORY_FRAME_MAX_BYTES && count > 1) {
         count = Math.max(
           1,
@@ -2232,12 +2250,9 @@ export class SessionRuntimeTerminalDeliveryHub {
             Math.floor((count * HISTORY_FRAME_MAX_BYTES * 0.9) / bytes.byteLength),
           ),
         );
-        rows = full.history.slice(unloadedRows - count, unloadedRows);
-        bytes = encodeSemanticTerminalHistory(
-          { frame: "history", revision: record.update.revision, rows },
-          encoding,
-        );
+        ({ rows, bytes } = encode(count));
       }
+      client.historyBytesPerRow = bytes.byteLength / count;
       const chunk = {
         rows,
         unloaded: popTerminalHistoryCommitmentSuffix(
