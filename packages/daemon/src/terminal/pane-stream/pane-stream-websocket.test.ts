@@ -1809,6 +1809,91 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(floodedConnection.socket.closed).not.toBeNull();
   });
 
+  it.each([
+    ["routes a history request to a delivery that negotiated history on demand", true],
+    ["refuses a history request from a stream without history on demand", false],
+  ])("%s (capability 122)", async (_name, partial) => {
+    const historyRequest = vi.fn();
+    const nonce = "00000000-0000-4000-8000-000000000097";
+    let emit:
+      | ((message: import("@tmux-ide/contracts").TerminalDeliveryServerMessage) => void)
+      | undefined;
+    const h = harness({
+      openTerminalDelivery: async (_pane, _offer, listener) => {
+        emit = listener;
+        return {
+          negotiation: {
+            accepted: true,
+            negotiated: {
+              protocolVersion: 1,
+              encoding: "semantic-compact-v1",
+              richPlacements: false,
+              generation: INSTANCE,
+              deliveryNonce: nonce,
+              ...(partial ? { partialHistory: "tail-v1" as const } : {}),
+            },
+          },
+          ack: vi.fn(),
+          nack: vi.fn(),
+          historyRequest,
+          setVisibility: vi.fn(),
+          close: async () => undefined,
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.shell"],
+      semanticDelivery: true,
+      protocolVersions: [1, 122],
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(1));
+    const request = {
+      type: "terminal.delivery.history-request" as const,
+      workspaceName: "workspace.alpha",
+      semanticPaneId: "pane.shell",
+      generation: INSTANCE,
+      incarnation: `${INSTANCE}:0`,
+      deliveryNonce: nonce,
+      canonicalRevision: 3,
+      unloadedRows: 1800,
+      maxRows: 500,
+    };
+    emit!({
+      type: "terminal.delivery",
+      workspaceName: request.workspaceName,
+      semanticPaneId: request.semanticPaneId,
+      generation: INSTANCE,
+      incarnation: request.incarnation,
+      deliveryNonce: nonce,
+      transactionId: freshRequestId(),
+      protocolVersion: 1,
+      encoding: "semantic-compact-v1",
+      frame: "seed",
+      baseRevision: null,
+      canonicalRevision: 3,
+      canonicalStateHash: "1111111111111111",
+      representationHash: "3333333333333333",
+      representationBytes: 1,
+      chunkCount: 1,
+      canonicalEquivalent: true,
+      ...(partial
+        ? {
+            history: "partial" as const,
+            historyUnloaded: { rows: 1800, digest: "0123456789abcdef" },
+          }
+        : { history: "complete" as const }),
+      richPlacements: false,
+    });
+    socket.message({ type: "terminal-delivery-history-request", request });
+    if (partial) {
+      expect(historyRequest).toHaveBeenCalledExactlyOnceWith(request);
+      expect(socket.closed).toBeNull();
+    } else {
+      expect(historyRequest).not.toHaveBeenCalled();
+      expect(socket.closed).not.toBeNull();
+    }
+  });
+
   it("routes projection receipts and materialization separately from canonical ACKs", async () => {
     const receipt = vi.fn();
     const materialize = vi.fn();

@@ -118,6 +118,48 @@ function latest(messages: TerminalDeliveryServerMessage[]): TerminalDeliveryEnve
 }
 
 describe("real SessionRuntime qualification", () => {
+  it("forwards history requests (capability 122) through the consumer's delivery connection", async () => {
+    const { registry, drivers } = rig();
+    const client = registry.connect("zz-sim", "opentui", "client:history");
+    const sink: TerminalDeliveryServerMessage[] = [];
+    const opening = client.openTerminalDelivery(
+      "delivery:history",
+      "request:history",
+      "pane.alpha",
+      { protocolVersions: [1, 122], encodings: ["semantic-compact-v1"], richPlacements: false },
+      (message) => sink.push(message),
+    );
+    await waitForDriver(drivers);
+    await drivers[0]!.settleUntil(
+      () => sink.some((message) => message.type === "terminal.delivery"),
+      "initial delivery",
+    );
+    const connection = await opening;
+    expect(connection.negotiation).toMatchObject({
+      accepted: true,
+      negotiated: { partialHistory: "tail-v1" },
+    });
+    // The pane-stream fails a 122 stream whose delivery cannot take requests.
+    expect(typeof connection.historyRequest).toBe("function");
+    const seed = latest(sink);
+    connection.ack(ack(seed));
+    connection.historyRequest!({
+      type: "terminal.delivery.history-request",
+      workspaceName: seed.workspaceName,
+      semanticPaneId: seed.semanticPaneId,
+      generation: seed.generation,
+      incarnation: seed.incarnation,
+      deliveryNonce: seed.deliveryNonce,
+      canonicalRevision: seed.canonicalRevision,
+      unloadedRows: seed.historyUnloaded!.rows,
+      maxRows: 10,
+    });
+    await drivers[0]!.settleUntil(() => true, "request handled");
+    expect(sink.some((message) => message.type === "terminal.delivery.fault")).toBe(false);
+    await connection.close();
+    await registry.dispose();
+  });
+
   it.each([2, 4, 8])("keeps one control and converges %i clients under flood", async (count) => {
     const { registry, drivers } = rig();
     const clients = Array.from({ length: count }, (_, index) =>

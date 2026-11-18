@@ -3,6 +3,8 @@ import {
   TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_CAPABILITY_VERSION,
   TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION,
+  TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION,
+  type TerminalDeliveryHistoryCommitment,
 } from "@tmux-ide/contracts";
 import {
   BinaryTerminalWriter,
@@ -27,6 +29,9 @@ import {
   TerminalDeliveryNegotiatedSchemaZ,
   TerminalDeliveryNackSchemaZ,
   TerminalSemanticDeliveryPayloadSchemaZ,
+  TerminalSemanticHistoryPayloadSchemaZ,
+  TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS,
+  type TerminalSemanticHistoryPayload,
   TerminalReplicaSnapshotSchemaZ,
   TerminalReplicaRowSchemaZ,
   TerminalReplicaPatchPayloadSchemaZ,
@@ -56,6 +61,10 @@ import {
   terminalReplicaRowsEqual,
 } from "./terminal-replica.ts";
 import { grantCompactReplicaCapability } from "./terminal-compact-capability.ts";
+import {
+  hashPartialTerminalReplicaSnapshot,
+  prependVerifiedTerminalHistory,
+} from "./terminal-partial-history.ts";
 import {
   createDecodedTerminalReplicaRowBuilder,
   hashTerminalReplicaRowCooperatively,
@@ -107,12 +116,18 @@ export function negotiateTerminalDelivery(
     encoding !== "semantic-binary-v1"
   )
     return { accepted: false, reason: "unsupported-capability-combination" };
+  // Capability 122 (history on demand) replaces the alternate-screen projection.
+  const partialHistory =
+    offer.protocolVersions.includes(TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION) &&
+    (encoding === "semantic-compact-v1" || encoding === "semantic-binary-v1");
   return {
     accepted: true,
     negotiated: {
       protocolVersion: TERMINAL_DELIVERY_PROTOCOL_VERSION,
       encoding,
+      ...(partialHistory ? { partialHistory: "tail-v1" as const } : {}),
       ...(binary &&
+      !partialHistory &&
       offer.protocolVersions.some(
         (v) =>
           v === TERMINAL_PROJECTION_CAPABILITY_VERSION ||
@@ -456,6 +471,86 @@ function compactSemanticWire(input: TerminalSemanticDeliveryPayload) {
             v: 1,
           };
   return wire;
+}
+
+/** Capability 122: encode a "history" frame's rows in the negotiated semantic encoding. */
+export function encodeSemanticTerminalHistory(
+  input: TerminalSemanticHistoryPayload,
+  encoding: "semantic-v1" | "semantic-compact-v1" | "semantic-binary-v1",
+): Uint8Array {
+  const payload = TerminalSemanticHistoryPayloadSchemaZ.parse(input);
+  if (encoding === "semantic-v1") {
+    const bytes = UTF8_ENCODER.encode(canonicalJson(payload));
+    assertRepresentationSize(bytes);
+    return bytes;
+  }
+  const rows = compactRows(payload.rows, null, {
+    rows: 0,
+    runs: 0,
+    cells: 0,
+    placements: 0,
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+    reusedRows: 0,
+    allocatedCells: 0,
+    canonicalUtf8Allocations: 0,
+    canonicalUtf8Bytes: 0,
+    validatedCellAllocations: 0,
+  });
+  if (encoding === "semantic-compact-v1") {
+    const bytes = UTF8_ENCODER.encode(
+      JSON.stringify({ f: "h", h: rows, k: COMPACT_SEMANTIC_KIND, r: payload.revision, v: 1 }),
+    );
+    assertRepresentationSize(bytes);
+    return bytes;
+  }
+  const writer = new BinaryTerminalWriter();
+  try {
+    writer.header("history", payload.revision);
+    writer.value(rows);
+    return writer.finish();
+  } catch (error) {
+    if (error instanceof BinaryTerminalLimitError)
+      throw new TerminalDeliveryStateTooLargeError(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES + 1);
+    throw error;
+  }
+}
+
+/** Capability 122: decode a "history" frame's rows. */
+export function decodeSemanticTerminalHistory(
+  bytes: Uint8Array,
+  encoding: "semantic-v1" | "semantic-compact-v1" | "semantic-binary-v1",
+): TerminalSemanticHistoryPayload {
+  if (encoding === "semantic-v1")
+    return TerminalSemanticHistoryPayloadSchemaZ.parse(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+    );
+  const budget = { ...compactDecodeBudget(bytes.length), maxCells: COMPACT_MAX_EXPANDED_CELLS };
+  let revision: number;
+  let value: unknown;
+  if (encoding === "semantic-compact-v1") {
+    const wire = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+    if (
+      typeof wire !== "object" ||
+      wire === null ||
+      Object.keys(wire).join(",") !== "f,h,k,r,v" ||
+      (wire as { f: unknown }).f !== "h" ||
+      (wire as { k: unknown }).k !== COMPACT_SEMANTIC_KIND ||
+      (wire as { v: unknown }).v !== 1
+    )
+      throw new TypeError("Invalid compact history payload");
+    revision = (wire as { r: number }).r;
+    value = (wire as { h: unknown }).h;
+  } else {
+    const decoded = decodeBinaryTerminalTuple(bytes);
+    if (decoded.frame !== "history") throw new TypeError("Invalid binary history payload");
+    revision = decoded.revision;
+    value = decoded.value;
+  }
+  return TerminalSemanticHistoryPayloadSchemaZ.parse({
+    frame: "history",
+    revision,
+    rows: expandRows(value, budget, null, TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS, "history"),
+  });
 }
 
 export function encodeBinarySemanticTerminalUpdate(
@@ -1627,6 +1722,8 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
   options?: {
     readonly grantReducerAdoption?: boolean;
     readonly onComplete?: (profile: CompactSemanticCommitProfile) => void;
+    /** Capability 122: the snapshot holds only loaded history; hash with this commitment. */
+    readonly historyUnloaded?: TerminalDeliveryHistoryCommitment;
   },
 ): Readonly<{
   payload: TerminalSemanticDeliveryPayload;
@@ -1646,7 +1743,9 @@ export function decodeVerifiedCompactSemanticTerminalUpdate(
             })()
         : null;
   const hash = snapshot
-    ? hashTerminalReplicaSnapshot(snapshot)
+    ? options?.historyUnloaded
+      ? hashPartialTerminalReplicaSnapshot(snapshot, options.historyUnloaded)
+      : hashTerminalReplicaSnapshot(snapshot)
     : hashTerminalReplicaTombstone(
         payload.frame === "tombstone" ? payload.tombstone.reason : "protocol",
       );
@@ -3184,6 +3283,11 @@ export interface TerminalDeliveryClientState {
   readonly appliedRevision: number;
   readonly appliedHash: string | null;
   readonly canonicalSnapshot: TerminalReplicaSnapshot | null;
+  /**
+   * Capability 122: the history rows `canonicalSnapshot` does not hold, oldest
+   * first. Null when the stream has no partial history.
+   */
+  readonly historyUnloaded: TerminalDeliveryHistoryCommitment | null;
   readonly inFlight: TerminalDeliveryEnvelope | null;
   readonly nextChunk: number;
   readonly receivedBytes: number;
@@ -3205,6 +3309,7 @@ export function createTerminalDeliveryClientState(
     appliedRevision: -1,
     appliedHash: null,
     canonicalSnapshot: null,
+    historyUnloaded: null,
     inFlight: null,
     nextChunk: 0,
     receivedBytes: 0,
@@ -3229,6 +3334,21 @@ export function admitTerminalDeliveryEnvelope(
     envelope.richPlacements !== state.negotiated.richPlacements ||
     state.workspaceName !== envelope.workspaceName ||
     state.semanticPaneId !== envelope.semanticPaneId
+  )
+    return failClient(state);
+  // Capability 122: a partial history only on a stream that negotiated it, and
+  // then on every seed, patch and history frame.
+  if (
+    (envelope.history === "partial") !==
+    (state.negotiated.partialHistory === "tail-v1" && envelope.frame !== "tombstone")
+  )
+    return failClient(state);
+  if (
+    envelope.frame === "history" &&
+    (state.historyUnloaded === null ||
+      state.tombstoned ||
+      envelope.canonicalRevision !== state.appliedRevision ||
+      envelope.canonicalStateHash !== state.appliedHash)
   )
     return failClient(state);
   if (envelope.frame === "seed") {
@@ -3389,7 +3509,40 @@ export function commitTerminalDelivery(
     throw new TypeError("Terminal delivery representation hash mismatch");
   let canonicalSnapshot = state.canonicalSnapshot;
   let semanticUpdate: TerminalSemanticDeliveryPayload | null = null;
-  if (
+  const historyUnloaded = envelope.historyUnloaded ?? null;
+  if (envelope.frame === "history") {
+    // Capability 122: prepend proven rows; the canonical state is unchanged.
+    if (
+      !canonicalSnapshot ||
+      !state.historyUnloaded ||
+      !historyUnloaded ||
+      envelope.encoding === "ansi-diff-v1" ||
+      envelope.encoding === "ansi-raw-v1"
+    )
+      throw new TypeError("History frame without a partial history");
+    const payload = decodeSemanticTerminalHistory(staged.bytes, envelope.encoding);
+    if (payload.revision !== envelope.canonicalRevision)
+      throw new TypeError("History frame revision mismatch");
+    canonicalSnapshot = freezeTerminalReplicaSnapshot(
+      prependVerifiedTerminalHistory(
+        canonicalSnapshot,
+        state.historyUnloaded,
+        payload.rows,
+        historyUnloaded,
+      ),
+    );
+    if (
+      hashPartialTerminalReplicaSnapshot(canonicalSnapshot, historyUnloaded) !==
+      envelope.canonicalStateHash
+    )
+      throw new TypeError("Canonical state hash mismatch");
+  } else if (
+    historyUnloaded &&
+    envelope.frame === "patch" &&
+    (!state.historyUnloaded || historyUnloaded.rows > state.historyUnloaded.rows)
+  ) {
+    throw new TypeError("A patch cannot add unloaded history rows");
+  } else if (
     envelope.encoding === "semantic-v1" ||
     envelope.encoding === "semantic-compact-v1" ||
     envelope.encoding === "semantic-binary-v1"
@@ -3402,6 +3555,7 @@ export function commitTerminalDelivery(
               staged.bytes,
               canonicalSnapshot,
               envelope.canonicalStateHash,
+              historyUnloaded ? { historyUnloaded } : undefined,
             ).payload
           : decodeSemanticTerminalUpdate(staged.bytes);
     semanticUpdate = payload;
@@ -3427,7 +3581,9 @@ export function commitTerminalDelivery(
         canonicalSnapshot = applyTerminalReplicaPatch(canonicalSnapshot, payload.patch);
       } else canonicalSnapshot = null;
       const hash = canonicalSnapshot
-        ? hashTerminalReplicaSnapshot(canonicalSnapshot)
+        ? historyUnloaded
+          ? hashPartialTerminalReplicaSnapshot(canonicalSnapshot, historyUnloaded)
+          : hashTerminalReplicaSnapshot(canonicalSnapshot)
         : hashTerminalReplicaTombstone(
             payload.frame === "tombstone" ? payload.tombstone.reason : "protocol",
           );
@@ -3445,6 +3601,7 @@ export function commitTerminalDelivery(
     appliedRevision: envelope.canonicalRevision,
     appliedHash: envelope.canonicalStateHash,
     canonicalSnapshot,
+    historyUnloaded: envelope.frame === "tombstone" ? null : historyUnloaded,
     tombstoned: envelope.frame === "tombstone",
     inFlight: null,
     nextChunk: 0,
