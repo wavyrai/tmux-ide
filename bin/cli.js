@@ -47,6 +47,27 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// packages/daemon/src/lib/node-requirement.ts
+function isSupportedNodeVersion(version) {
+  const major = Number(version.split(".")[0]);
+  return Number.isInteger(major) && major >= MINIMUM_NODE_MAJOR;
+}
+function unsupportedNodeMessage(versions) {
+  if (versions.bun !== void 0 || versions.node === void 0) return null;
+  if (isSupportedNodeVersion(versions.node)) return null;
+  return `tmux-ide needs Node.js ${MINIMUM_NODE_MAJOR} or newer; this is Node.js ${versions.node}.
+Upgrade Node.js, or use the installer, which brings its own runtime:
+  curl -fsSL https://tmux-ide.com/install.sh | sh
+`;
+}
+var MINIMUM_NODE_MAJOR;
+var init_node_requirement = __esm({
+  "packages/daemon/src/lib/node-requirement.ts"() {
+    "use strict";
+    MINIMUM_NODE_MAJOR = 24;
+  }
+});
+
 // packages/tmux-bridge/src/errors.ts
 var TmuxError;
 var init_errors = __esm({
@@ -55,8 +76,8 @@ var init_errors = __esm({
     TmuxError = class extends Error {
       code;
       exitCode;
-      constructor(message, code2, options = {}) {
-        super(message, { cause: options.cause });
+      constructor(message2, code2, options = {}) {
+        super(message2, { cause: options.cause });
         this.name = "TmuxError";
         this.code = code2;
         this.exitCode = options.exitCode ?? 1;
@@ -4779,7 +4800,7 @@ var init_interaction_evidence = __esm({
       timeBasis: z27.enum(["daemon", "server", "unknown"]),
       receivedAt: time
     }).strict().superRefine((value, context) => {
-      const issue = (path2, message) => context.addIssue({ code: "custom", path: path2, message });
+      const issue = (path2, message2) => context.addIssue({ code: "custom", path: path2, message: message2 });
       const { observation: observation2, actor, effect, endpoints: endpoints2 } = value;
       for (const endpoint of [endpoints2.destination, endpoints2.source]) {
         if (endpoint?.kind === "native-pane" && (observation2.kind !== "native-journal" || endpoint.serverEpoch !== observation2.serverEpoch))
@@ -4859,7 +4880,7 @@ var init_interaction_evidence = __esm({
       lastGap: InteractionObservationGapSchemaZ.nullable(),
       droppedCount: NativeInteractionSequenceSchemaZ.nullable()
     }).strict().superRefine((value, context) => {
-      const issue = (path2, message) => context.addIssue({ code: "custom", path: path2, message });
+      const issue = (path2, message2) => context.addIssue({ code: "custom", path: path2, message: message2 });
       if (new Set(value.commands).size !== value.commands.length || new Set(value.effects).size !== value.effects.length)
         issue(["commands"], "capability lists must be unique");
       if (value.method !== "native-journal" && (value.cursor !== null || value.effects.length > 0))
@@ -13010,8 +13031,8 @@ async function readBoundedResponse(fetchImpl, url, maxBytes, policy) {
   const controller = new AbortController();
   let total = 0;
   let timeoutMessage = null;
-  const abortWith = (message) => () => {
-    timeoutMessage = message();
+  const abortWith = (message2) => () => {
+    timeoutMessage = message2();
     controller.abort();
   };
   const overallTimer = setTimeout(
@@ -13029,9 +13050,9 @@ async function readBoundedResponse(fetchImpl, url, maxBytes, policy) {
   try {
     const response3 = await fetchImpl(url, { signal: controller.signal });
     if (!response3.ok) {
-      const message = `HTTP ${response3.status} ${response3.statusText}`;
-      if (isTransientHttpStatus(response3.status)) throw new Error(message);
-      throw new PermanentDownloadError(message);
+      const message2 = `HTTP ${response3.status} ${response3.statusText}`;
+      if (isTransientHttpStatus(response3.status)) throw new Error(message2);
+      throw new PermanentDownloadError(message2);
     }
     markProgress();
     const declaredLength = Number(response3.headers.get("content-length"));
@@ -13076,8 +13097,8 @@ async function readWithRetries(fetchImpl, url, maxBytes, policy, log) {
       if (error instanceof PermanentDownloadError || attempt >= policy.maxAttempts || Date.now() + delayMs >= policy.deadline) {
         throw error;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      log(`download attempt ${attempt}/${policy.maxAttempts} failed (${message}); retrying`);
+      const message2 = error instanceof Error ? error.message : String(error);
+      log(`download attempt ${attempt}/${policy.maxAttempts} failed (${message2}); retrying`);
       await new Promise((resolve47) => setTimeout(resolve47, delayMs));
     }
   }
@@ -13141,10 +13162,10 @@ async function downloadTuiBinary(opts = {}) {
       log(`downloading ${url}`);
       gz = await readWithRetries(fetchImpl, url, limits.maxCompressedBytes, policy, log);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message2 = error instanceof Error ? error.message : String(error);
       const hint = error instanceof PermanentDownloadError ? "Check that the release published both exact-version assets." : "Check your network connection, then retry with `tmux-ide update --tui-binary`, or run the installer again if tmux-ide is not installed yet.";
       throw new Error(
-        `could not download the TUI binary and checksum for v${version} (${message}). ${hint}`,
+        `could not download the TUI binary and checksum for v${version} (${message2}). ${hint}`,
         { cause: error }
       );
     }
@@ -13278,9 +13299,9 @@ async function ensureTuiLaunchAvailable(input, options = {}) {
   try {
     downloaded = await (options.download ?? downloadTuiBinary)({ log: options.log });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message2 = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Automatic OpenTUI runtime acquisition failed: ${message}
+      `Automatic OpenTUI runtime acquisition failed: ${message2}
 Retry with \`tmux-ide update --tui-binary\`, then run \`tmux-ide app\` again.`,
       { cause: error }
     );
@@ -13377,8 +13398,8 @@ var init_errors2 = __esm({
     IdeError = class extends Error {
       code;
       exitCode;
-      constructor(message, { code: code2, exitCode = 1, cause } = {}) {
-        super(message, { cause });
+      constructor(message2, { code: code2, exitCode = 1, cause } = {}) {
+        super(message2, { cause });
         this.name = "IdeError";
         this.code = code2;
         this.exitCode = exitCode;
@@ -13393,22 +13414,22 @@ var init_errors2 = __esm({
       }
     };
     ConfigError = class extends IdeError {
-      constructor(message, code2, { cause } = {}) {
-        super(message, { code: code2, exitCode: 1, cause });
+      constructor(message2, code2, { cause } = {}) {
+        super(message2, { code: code2, exitCode: 1, cause });
         this.name = "ConfigError";
       }
     };
     DaemonStartupError = class extends IdeError {
       reason;
-      constructor(message, reason, { cause } = {}) {
-        super(message, { code: `DAEMON_${reason.toUpperCase()}`, exitCode: 1, cause });
+      constructor(message2, reason, { cause } = {}) {
+        super(message2, { code: `DAEMON_${reason.toUpperCase()}`, exitCode: 1, cause });
         this.name = "DaemonStartupError";
         this.reason = reason;
       }
     };
     DaemonShutdownError = class extends IdeError {
-      constructor(message, { cause } = {}) {
-        super(message, { code: "DAEMON_SHUTDOWN_FAILED", exitCode: 1, cause });
+      constructor(message2, { cause } = {}) {
+        super(message2, { code: "DAEMON_SHUTDOWN_FAILED", exitCode: 1, cause });
         this.name = "DaemonShutdownError";
       }
     };
@@ -13462,8 +13483,8 @@ function printLayout(config2) {
     }
   }
 }
-function outputError(message, code2, { exitCode = 1 } = {}) {
-  throw new IdeError(message, { code: code2, exitCode });
+function outputError(message2, code2, { exitCode = 1 } = {}) {
+  throw new IdeError(message2, { code: code2, exitCode });
 }
 function printCommandError(error, { json: json3 = false } = {}) {
   if (json3) {
@@ -14825,10 +14846,10 @@ function plainOrThrow(value) {
   if (!plain.ok) throw new PluginRunError(plain.error, null);
   return plain.value;
 }
-function classify(message) {
-  if (message.includes(TIMEOUT_MESSAGE) || message.includes(WALL_CLOCK_MESSAGE)) return "timeout";
-  if (/not enough memory/u.test(message)) return "memory";
-  if (/Aborted\(|RuntimeError/u.test(message)) return "abort";
+function classify(message2) {
+  if (message2.includes(TIMEOUT_MESSAGE) || message2.includes(WALL_CLOCK_MESSAGE)) return "timeout";
+  if (/not enough memory/u.test(message2)) return "memory";
+  if (/Aborted\(|RuntimeError/u.test(message2)) return "abort";
   return null;
 }
 var MAX_SOURCE_BYTES, PluginRunError, TIMER_GAP_MS, WALL_CLOCK_MESSAGE, FOREIGN_YIELD_MESSAGE, PluginLuaState;
@@ -14841,8 +14862,8 @@ var init_lua_state = __esm({
     MAX_SOURCE_BYTES = 1024 * 1024;
     PluginRunError = class extends Error {
       trip;
-      constructor(message, trip) {
-        super(message);
+      constructor(message2, trip) {
+        super(message2);
         this.name = "PluginRunError";
         this.trip = trip;
       }
@@ -14906,7 +14927,7 @@ var init_lua_state = __esm({
           const origin = runner.origin;
           runner.pending = Promise.resolve().then(() => fn(list, origin));
         });
-        global.set("__ide_log", (level, message, fieldsJson) => {
+        global.set("__ide_log", (level, message2, fieldsJson) => {
           const lvl = level === "debug" || level === "warn" || level === "error" ? level : "info";
           let fields;
           if (typeof fieldsJson === "string") {
@@ -14918,7 +14939,7 @@ var init_lua_state = __esm({
               fields = void 0;
             }
           }
-          options.hooks.log(lvl, String(message), fields);
+          options.hooks.log(lvl, String(message2), fields);
         });
         global.set("__ide_resolve", (kind, name) => {
           if (kind !== "file" && kind !== "module" || typeof name !== "string")
@@ -15028,11 +15049,11 @@ var init_lua_state = __esm({
             return [...thread.getStackValues()];
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const trip = classify(message);
+          const message2 = error instanceof Error ? error.message : String(error);
+          const trip = classify(message2);
           if (trip) this.#hooks.trip(trip);
           if (trip === "abort") this.#broken = "the Lua runtime aborted; reload the plugin";
-          throw new PluginRunError(message, trip);
+          throw new PluginRunError(message2, trip);
         } finally {
           lua.luaL_unref(global.address, LUA_REGISTRYINDEX, ref);
           this.#publishActions();
@@ -15215,7 +15236,7 @@ var init_main = __esm({
         });
         return next;
       }
-      #log(plugin, level, message, fields) {
+      #log(plugin, level, message2, fields) {
         const now = Date.now();
         let budget2 = this.#logBudgets.get(plugin);
         if (!budget2 || now - budget2.windowStart >= 1e3) {
@@ -15238,7 +15259,7 @@ var init_main = __esm({
           type: "log",
           plugin,
           level,
-          message: message.slice(0, 8192),
+          message: message2.slice(0, 8192),
           ...fields ? { fields } : {}
         });
       }
@@ -15257,7 +15278,7 @@ var init_main = __esm({
           hooks: {
             busy: () => this.#emit({ type: "busy", plugin: spec.name }),
             idle: () => this.#emit({ type: "idle", plugin: spec.name }),
-            log: (level, message, fields) => onLog ? onLog(level, message) : this.#log(spec.name, level, message, fields),
+            log: (level, message2, fields) => onLog ? onLog(level, message2) : this.#log(spec.name, level, message2, fields),
             trip: (kind) => this.#emit({ type: "trip", plugin: spec.name, kind }),
             actions: (json3) => this.#emit({ type: "actions", plugin: spec.name, actions: json3 })
           }
@@ -15311,10 +15332,10 @@ var init_main = __esm({
           });
           this.#emit({ type: "loaded", plugin: spec.name, ok: true, memoryBytes: state.memoryUsed() });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.#log(spec.name, "error", `load failed: ${message}`);
+          const message2 = error instanceof Error ? error.message : String(error);
+          this.#log(spec.name, "error", `load failed: ${message2}`);
           this.#unload(spec.name);
-          this.#emit({ type: "loaded", plugin: spec.name, ok: false, error: message.slice(0, 4096) });
+          this.#emit({ type: "loaded", plugin: spec.name, ok: false, error: message2.slice(0, 4096) });
         }
       }
       #unload(name) {
@@ -15337,13 +15358,13 @@ var init_main = __esm({
           });
           this.#emit({ type: "invoke-result", id: command3.id, ok: true, value });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.#log(command3.plugin, "error", `action ${command3.action} failed: ${message}`);
+          const message2 = error instanceof Error ? error.message : String(error);
+          this.#log(command3.plugin, "error", `action ${command3.action} failed: ${message2}`);
           this.#emit({
             type: "invoke-result",
             id: command3.id,
             ok: false,
-            error: message.slice(0, 8192)
+            error: message2.slice(0, 8192)
           });
         }
       }
@@ -15357,12 +15378,12 @@ var init_main = __esm({
           });
           this.#emit({ type: "param-options-result", id: command3.id, ok: true, options });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message2 = error instanceof Error ? error.message : String(error);
           this.#emit({
             type: "param-options-result",
             id: command3.id,
             ok: false,
-            error: message.slice(0, 8192)
+            error: message2.slice(0, 8192)
           });
         }
       }
@@ -15372,8 +15393,8 @@ var init_main = __esm({
         try {
           state = await this.#createState(
             { name: RUN_STATE_NAME, includeRoots: [], moduleRoots: [], settings: {} },
-            (level, message) => {
-              if (logs.length < 1e3) logs.push({ level, message: message.slice(0, 8192) });
+            (level, message2) => {
+              if (logs.length < 1e3) logs.push({ level, message: message2.slice(0, 8192) });
             }
           );
           const values2 = await state.runSource(command3.code, command3.chunkName, {
@@ -15382,12 +15403,12 @@ var init_main = __esm({
           });
           this.#emit({ type: "run-result", id: command3.id, ok: true, values: values2, logs });
         } catch (error) {
-          const message = error instanceof PluginRunError || error instanceof Error ? error.message : String(error);
+          const message2 = error instanceof PluginRunError || error instanceof Error ? error.message : String(error);
           this.#emit({
             type: "run-result",
             id: command3.id,
             ok: false,
-            error: message.slice(0, 8192),
+            error: message2.slice(0, 8192),
             logs
           });
         } finally {
@@ -15560,7 +15581,7 @@ var require_package = __commonJS({
         "developer-tools"
       ],
       engines: {
-        node: ">=20"
+        node: ">=24"
       },
       repository: {
         type: "git",
@@ -16265,8 +16286,8 @@ var init_project_registry = __esm({
     });
     ProjectRegistryError = class extends Error {
       code;
-      constructor(message, code2) {
-        super(message);
+      constructor(message2, code2) {
+        super(message2);
         this.name = "ProjectRegistryError";
         this.code = code2;
       }
@@ -17218,8 +17239,8 @@ var init_canonical_daemon = __esm({
     MAX_DAEMON_CLAIM_BYTES = 4 * 1024;
     activeClaims = /* @__PURE__ */ new Map();
     CanonicalDaemonReservationError = class extends Error {
-      constructor(message) {
-        super(`Supervisor reservation refused: ${message}`);
+      constructor(message2) {
+        super(`Supervisor reservation refused: ${message2}`);
         this.name = "CanonicalDaemonReservationError";
       }
     };
@@ -17777,8 +17798,8 @@ var init_report = __esm({
 });
 
 // packages/daemon/src/control/frames.ts
-function encodeFrame(message) {
-  return `${JSON.stringify(message)}
+function encodeFrame(message2) {
+  return `${JSON.stringify(message2)}
 `;
 }
 function createFrameSplitter() {
@@ -19492,13 +19513,13 @@ function decideNotifications(events, clients, lastNotified, nowMs, states2 = NOT
     if (last !== void 0 && nowMs - last < NOTIFY_DEBOUNCE_MS) continue;
     if (appFocus?.attached && ev.paneId && appFocus.panes.includes(ev.paneId)) continue;
     nextLastNotified.set(key2, nowMs);
-    const message = notifyMessage(ev);
+    const message2 = notifyMessage(ev);
     for (const c of clients) {
       if (suppressToastFor(c, ev)) continue;
-      toasts.push({ client: c.client, message });
+      toasts.push({ client: c.client, message: message2 });
     }
     system.push({
-      message,
+      message: message2,
       session: ev.session,
       state: ev.to,
       paneId: ev.paneId ?? null,
@@ -19562,9 +19583,9 @@ function readAppFocus(nowMs = Date.now()) {
 }
 function sendToasts(toasts) {
   if (resolveRuntimeNamespace().development) return;
-  for (const { client, message } of toasts) {
+  for (const { client, message: message2 } of toasts) {
     try {
-      runTmux(["display-message", "-c", client, "-d", "3000", message]);
+      runTmux(["display-message", "-c", client, "-d", "3000", message2]);
     } catch {
     }
   }
@@ -20530,8 +20551,8 @@ function dispatchUpdateToast(deps2, version) {
   if (!mark || !listClients || !toast) return;
   if (prefs && !prefs.toast) return;
   if (!mark(version)) return;
-  const message = `\u2B06 tmux-ide v${version} available \u2014 run: tmux-ide update`;
-  toast(listClients().map((c) => ({ client: c.client, message })));
+  const message2 = `\u2B06 tmux-ide v${version} available \u2014 run: tmux-ide update`;
+  toast(listClients().map((c) => ({ client: c.client, message: message2 })));
 }
 function seedSessionStatus(session) {
   try {
@@ -20746,8 +20767,8 @@ var init_dispatch = __esm({
     init_errors2();
     ControlVerbError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.code = code2;
       }
     };
@@ -20757,11 +20778,11 @@ var init_dispatch = __esm({
       ok: true,
       data
     });
-    fail = (id2, code2, message) => ({
+    fail = (id2, code2, message2) => ({
       v: CONTROL_PROTOCOL_VERSION,
       id: id2,
       ok: false,
-      error: { code: code2, message }
+      error: { code: code2, message: message2 }
     });
   }
 });
@@ -21263,12 +21284,12 @@ async function loadWorkspaceConfig(dir, options = {}) {
     });
   }
   if (resolution.config.kind !== "workspace") {
-    const message = resolution.config.kind === "legacy" ? `Found legacy config at ${resolution.config.path}; this loader requires .tmux-ide/workspace.yml` : `No .tmux-ide/workspace.yml config was found for ${resolution.inputDir}`;
+    const message2 = resolution.config.kind === "legacy" ? `Found legacy config at ${resolution.config.path}; this loader requires .tmux-ide/workspace.yml` : `No .tmux-ide/workspace.yml config was found for ${resolution.inputDir}`;
     throw new WorkspaceConfigLoadError({
       code: "WORKSPACE_CONFIG_REQUIRED",
       stage: "resolution",
       path: resolution.config.path,
-      message
+      message: message2
     });
   }
   const basePath = resolution.config.path;
@@ -21374,8 +21395,8 @@ var init_legacy_config_adapter = __esm({
 
 // packages/daemon/src/lib/legacy-config-migration.ts
 import yaml3 from "js-yaml";
-function pushDiagnostic(diagnostics, code2, path2, message) {
-  diagnostics.push({ code: code2, path: path2, message });
+function pushDiagnostic(diagnostics, code2, path2, message2) {
+  diagnostics.push({ code: code2, path: path2, message: message2 });
 }
 function cloneTerminalPane(pane) {
   const result2 = {};
@@ -21397,16 +21418,16 @@ function convertLegacyConfigToWorkspace(legacy) {
   const rows = legacy.rows.map((row, rowIndex) => ({
     ...row.size === void 0 ? {} : { size: row.size },
     panes: row.panes.map((pane, paneIndex) => {
-      for (const [key2, code2, message] of PANE_UNSUPPORTED) {
+      for (const [key2, code2, message2] of PANE_UNSUPPORTED) {
         if (pane[key2] !== void 0) {
-          pushDiagnostic(diagnostics, code2, `rows.${rowIndex}.panes.${paneIndex}.${key2}`, message);
+          pushDiagnostic(diagnostics, code2, `rows.${rowIndex}.panes.${paneIndex}.${key2}`, message2);
         }
       }
       return cloneTerminalPane(pane);
     })
   }));
-  for (const [key2, code2, message] of ROOT_UNSUPPORTED) {
-    if (legacy[key2] !== void 0) pushDiagnostic(diagnostics, code2, String(key2), message);
+  for (const [key2, code2, message2] of ROOT_UNSUPPORTED) {
+    if (legacy[key2] !== void 0) pushDiagnostic(diagnostics, code2, String(key2), message2);
   }
   const candidate = {
     version: 1,
@@ -21526,13 +21547,13 @@ function loadedWorkspaceToResolved(loaded) {
     migrationHint: null
   };
 }
-function configReadError(message, cause) {
-  return new ConfigError(message, "READ_ERROR", {
+function configReadError(message2, cause) {
+  return new ConfigError(message2, "READ_ERROR", {
     cause: cause instanceof Error ? cause : new Error(String(cause))
   });
 }
-function configInvalidError(message, cause) {
-  return new ConfigError(message, "INVALID_CONFIG", {
+function configInvalidError(message2, cause) {
+  return new ConfigError(message2, "INVALID_CONFIG", {
     cause: cause instanceof Error ? cause : new Error(String(cause))
   });
 }
@@ -21796,8 +21817,8 @@ var init_resolved_config = __esm({
     init_legacy_config_migration();
     WorkspaceConfigWriteError = class extends IdeError {
       path;
-      constructor(message, code2, path2, cause) {
-        super(message, {
+      constructor(message2, code2, path2, cause) {
+        super(message2, {
           code: code2,
           exitCode: 1,
           cause: cause instanceof Error ? cause : cause === void 0 ? void 0 : new Error(String(cause))
@@ -21807,8 +21828,8 @@ var init_resolved_config = __esm({
       }
     };
     UnsupportedLegacyConfigMutationError = class extends IdeError {
-      constructor(diagnostics, message = `Legacy ide.yml contains unsupported fields that would be dropped by config mutation. Run \`tmux-ide migrate --dry-run\` and move to .tmux-ide/workspace.yml first.`) {
-        super(message, { code: "LEGACY_CONFIG_MUTATION_UNSUPPORTED", exitCode: 1 });
+      constructor(diagnostics, message2 = `Legacy ide.yml contains unsupported fields that would be dropped by config mutation. Run \`tmux-ide migrate --dry-run\` and move to .tmux-ide/workspace.yml first.`) {
+        super(message2, { code: "LEGACY_CONFIG_MUTATION_UNSUPPORTED", exitCode: 1 });
         this.diagnostics = diagnostics;
         this.name = "UnsupportedLegacyConfigMutationError";
       }
@@ -23116,8 +23137,8 @@ var init_project_runtime_errors = __esm({
     "use strict";
     ProjectRuntimeRepositoryError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = new.target.name;
         this.code = code2;
       }
@@ -24530,8 +24551,8 @@ var init_mission_repository = __esm({
     MISSIONS_STREAM = "missions";
     MissionRepositoryError = class extends IdeError {
       missionCode;
-      constructor(message, code2, { cause } = {}) {
-        super(message, { code: code2, cause });
+      constructor(message2, code2, { cause } = {}) {
+        super(message2, { code: code2, cause });
         this.name = "MissionRepositoryError";
         this.missionCode = code2;
       }
@@ -26104,8 +26125,8 @@ var init_bootstrap_coordinator = __esm({
       code;
       reason;
       cause;
-      constructor(code2, message, options = {}) {
-        super(message, options.cause === void 0 ? void 0 : { cause: options.cause });
+      constructor(code2, message2, options = {}) {
+        super(message2, options.cause === void 0 ? void 0 : { cause: options.cause });
         this.name = "DaemonBootstrapError";
         this.code = code2;
         this.reason = options.reason ?? null;
@@ -27068,14 +27089,14 @@ import { randomUUID as randomUUID10 } from "node:crypto";
 import { execFileSync as execFileSync15 } from "node:child_process";
 import { resolve as resolve20, join as join30 } from "node:path";
 import { existsSync as existsSync24, mkdirSync as mkdirSync20, writeFileSync as writeFileSync18 } from "node:fs";
-function writeDispatchFile(dir, paneId, message) {
-  if (message.length <= LONG_MESSAGE_THRESHOLD) return null;
+function writeDispatchFile(dir, paneId, message2) {
+  if (message2.length <= LONG_MESSAGE_THRESHOLD) return null;
   const dispatchDir = join30(dir, ".tasks", "dispatch");
   if (!existsSync24(dispatchDir)) mkdirSync20(dispatchDir, { recursive: true });
   const paneSlug = paneId.replace("%", "");
   const filename = `send-${paneSlug}-${Date.now()}-${randomUUID10().slice(0, 8)}.md`;
   const filePath = join30(dispatchDir, filename);
-  writeFileSync18(filePath, message);
+  writeFileSync18(filePath, message2);
   return { filePath, triggerCmd: `Read and execute: .tasks/dispatch/${filename}` };
 }
 function resolvePane(panes, target) {
@@ -27095,11 +27116,11 @@ function resolvePane(panes, target) {
   if (byPattern) return byPattern;
   return null;
 }
-function prepareMessage(message, busyStatus) {
+function prepareMessage(message2, busyStatus) {
   if (busyStatus === "agent") {
-    return message.replace(/\n+/g, " ").trim();
+    return message2.replace(/\n+/g, " ").trim();
   }
-  return message;
+  return message2;
 }
 function deliverMessage(opts) {
   const { session, target, noEnter, dir } = opts;
@@ -27124,13 +27145,13 @@ ${available}`, {
     });
   }
   const busyStatus = getPaneBusyStatus(session, pane.id);
-  const message = prepareMessage(opts.message, busyStatus);
+  const message2 = prepareMessage(opts.message, busyStatus);
   let sentViaFile = false;
   if (noEnter) {
-    sendText(session, pane.id, message);
+    sendText(session, pane.id, message2);
   } else {
-    const dispatch = dir ? writeDispatchFile(dir, pane.id, message) : null;
-    if (!sendCommand(session, pane.id, dispatch?.triggerCmd ?? message)) {
+    const dispatch = dir ? writeDispatchFile(dir, pane.id, message2) : null;
+    if (!sendCommand(session, pane.id, dispatch?.triggerCmd ?? message2)) {
       throw new IdeError(`Could not send input to pane "${pane.id}"; delivery was not repeated.`, {
         code: "PANE_INPUT_FAILED"
       });
@@ -27146,7 +27167,7 @@ ${available}`, {
       title: pane.title,
       role: pane.role
     },
-    message,
+    message: message2,
     busyStatus,
     sentViaFile,
     ...busyStatus === "agent" ? { warning: "agent_busy" } : {}
@@ -27268,14 +27289,14 @@ async function send(targetDir, opts) {
     });
   }
   const result2 = await deliverMessageThroughDaemon({ session, target, message: rawMessage, noEnter, dir }) ?? deliverMessage({ session, target, message: rawMessage, noEnter, dir });
-  const { message, busyStatus } = result2;
+  const { message: message2, busyStatus } = result2;
   const pane = result2.target;
   if (json3) {
     console.log(JSON.stringify(result2, null, 2));
     return;
   }
   const label4 = pane.name ?? pane.title;
-  const preview = message.length > 60 ? message.slice(0, 60) + "..." : message;
+  const preview = message2.length > 60 ? message2.slice(0, 60) + "..." : message2;
   console.log(`Sent to "${label4}" (${pane.paneId}): ${preview}`);
   if (busyStatus === "agent") {
     console.log("Warning: agent appears busy. Message sent anyway.");
@@ -27956,8 +27977,8 @@ var init_client = __esm({
     init_server();
     ControlRequestError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.code = code2;
       }
     };
@@ -28105,8 +28126,8 @@ var init_development_state = __esm({
     "use strict";
     execute = promisify(execFile7);
     DevelopmentOperationError = class extends Error {
-      constructor(reason, message, receipt, diagnostic4) {
-        super(message);
+      constructor(reason, message2, receipt, diagnostic4) {
+        super(message2);
         this.reason = reason;
         this.receipt = receipt;
         this.diagnostic = diagnostic4;
@@ -28122,8 +28143,8 @@ var init_development_state = __esm({
 import { createHash as createHash10 } from "node:crypto";
 import { readFileSync as readFileSync26, readlinkSync as readlinkSync4, lstatSync as lstatSync11, opendirSync as opendirSync2 } from "node:fs";
 import { join as join32, dirname as dirname28 } from "node:path";
-function suspensionRefusal(message) {
-  throw new DevelopmentOperationError("suspension-unverified", message);
+function suspensionRefusal(message2) {
+  throw new DevelopmentOperationError("suspension-unverified", message2);
 }
 function validateContainerBinding(binding) {
   if (!binding || typeof binding.project !== "string" || typeof binding.containerId !== "string" || typeof binding.volumesHash !== "string" || !/^[a-z][a-z0-9-]{1,62}$/u.test(binding.project) || !HASH.test(binding.containerId) || !HASH.test(binding.volumesHash))
@@ -30329,8 +30350,8 @@ function sanitizeLogPayload(data, options = {}) {
   bytes = byteLength(serialized);
   return { data: summary, bytes, truncated: true, renamedKeys };
 }
-function sanitizeLogMessage(message, secrets2 = EMPTY, budget2 = DEFAULT_LOG_BUDGET) {
-  return truncateString(redactText(String(message), secrets2), budget2.maxMessageBytes);
+function sanitizeLogMessage(message2, secrets2 = EMPTY, budget2 = DEFAULT_LOG_BUDGET) {
+  return truncateString(redactText(String(message2), secrets2), budget2.maxMessageBytes);
 }
 function safeStringify(value) {
   try {
@@ -30420,14 +30441,14 @@ function writeToStream(name, line) {
     markStreamFailed(name, error);
   }
 }
-function writeStructuredLog(level, component, message, data) {
+function writeStructuredLog(level, component, message2, data) {
   if (LEVEL_RANK[level] < LEVEL_RANK[minLevel]) return;
   const payload = sanitizeLogPayload(data, { secrets, budget });
   const entry = {
     ts: (/* @__PURE__ */ new Date()).toISOString(),
     level,
     component: sanitizeLogMessage(String(component), secrets, budget).slice(0, 128),
-    msg: sanitizeLogMessage(message, secrets, budget),
+    msg: sanitizeLogMessage(message2, secrets, budget),
     pid: process.pid,
     ...identity2.instanceId ? { instanceId: identity2.instanceId } : {},
     ...identity2.version ? { version: identity2.version } : {},
@@ -33942,8 +33963,8 @@ function previousBindingsByRuntime(bindings) {
   }
   return byRuntime;
 }
-function diagnostic(code2, runtimePaneId, semanticPaneId3, message, degraded) {
-  return { code: code2, runtimePaneId, semanticPaneId: semanticPaneId3, message, degraded };
+function diagnostic(code2, runtimePaneId, semanticPaneId3, message2, degraded) {
+  return { code: code2, runtimePaneId, semanticPaneId: semanticPaneId3, message: message2, degraded };
 }
 var RUNTIME_PANE_ID, DEFAULT_GENERATION_ATTEMPTS;
 var init_workspace_tmux_adapter = __esm({
@@ -40024,9 +40045,9 @@ var init_native_journal_control_connection = __esm({
         );
         this.#phaseTimer.unref?.();
       }
-      #fail(message) {
+      #fail(message2) {
         this.#clearPhaseDeadline();
-        this.#failure ??= new Error(message);
+        this.#failure ??= new Error(message2);
         this.#pending?.reject(this.#failure);
         this.#pending = null;
         this.#frame = null;
@@ -41576,8 +41597,8 @@ var init_fleet_lifecycle_authority = __esm({
     MAX_REPLAY_OPERATIONS = 128;
     sleep2 = (milliseconds) => new Promise((resolve47) => setTimeout(resolve47, milliseconds));
     FleetLifecycleAuthorityError = class extends Error {
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.code = code2;
       }
       code;
@@ -42242,8 +42263,8 @@ var init_semantic_pane_catalog = __esm({
     SemanticPaneCatalogError = class extends Error {
       code;
       target;
-      constructor(code2, target, message) {
-        super(message);
+      constructor(code2, target, message2) {
+        super(message2);
         this.name = "SemanticPaneCatalogError";
         this.code = code2;
         this.target = target;
@@ -44727,11 +44748,11 @@ var init_control_channel = __esm({
         owner.retiring = true;
         if (owner.timer) clearTimeout(owner.timer);
         owner.timer = null;
-        const abort = (message) => {
+        const abort = (message2) => {
           if (this.atomicCollectorOwner !== owner) return;
           try {
-            this.core.fail(message);
-            this.noteExit(message);
+            this.core.fail(message2);
+            this.noteExit(message2);
           } finally {
             void this.dispose();
           }
@@ -45242,8 +45263,8 @@ var init_mirror_service = __esm({
         entry.channel.sendKey(semanticPaneId3, key2, performanceTraceId);
       }
       assertWindowOwnership(session) {
-        const message = this.windowOwnershipMessage(session);
-        if (message) throw new Error(message);
+        const message2 = this.windowOwnershipMessage(session);
+        if (message2) throw new Error(message2);
       }
       /** Registered-window ownership is being read again; input waits for it. */
       windowOwnershipPending() {
@@ -45840,8 +45861,8 @@ var init_semantic_mutation_executor = __esm({
     init_runtime_observability();
     init_semantic_mutation_resource_changes();
     SessionRuntimeIntentError = class extends Error {
-      constructor(outcome, message, options) {
-        super(message, options);
+      constructor(outcome, message2, options) {
+        super(message2, options);
         this.outcome = outcome;
         this.name = "SessionRuntimeIntentError";
       }
@@ -51816,7 +51837,7 @@ var init_xterm_headless = __esm({
           }
         }
         uncoveredLeakingObjs.sort(compareBy((l) => l.idx, numberComparator));
-        let message = "";
+        let message2 = "";
         let i = 0;
         for (const leaking of uncoveredLeakingObjs.slice(0, maxReported)) {
           i++;
@@ -51834,7 +51855,7 @@ var init_xterm_headless = __esm({
             }
             stackTraceFormattedLines.unshift(line);
           }
-          message += `
+          message2 += `
 
 
 ==================== Leaking disposable ${i}/${uncoveredLeakingObjs.length}: ${leaking.value.constructor.name} ====================
@@ -51844,14 +51865,14 @@ ${stackTraceFormattedLines.join("\n")}
 `;
         }
         if (uncoveredLeakingObjs.length > maxReported) {
-          message += `
+          message2 += `
 
 
 ... and ${uncoveredLeakingObjs.length - maxReported} more leaking disposables
 
 `;
         }
-        return { leaks: uncoveredLeakingObjs, details: message };
+        return { leaks: uncoveredLeakingObjs, details: message2 };
       }
     };
     _DisposableTracker.idx = 0;
@@ -52542,10 +52563,10 @@ ${stackTraceFormattedLines.join("\n")}
         if (this._warnCountdown <= 0) {
           this._warnCountdown = threshold * 0.5;
           const [topStack, topCount] = this.getMostFrequentStack();
-          const message = `[${this.name}] potential listener LEAK detected, having ${listenerCount} listeners already. MOST frequent listener (${topCount}):`;
-          console.warn(message);
+          const message2 = `[${this.name}] potential listener LEAK detected, having ${listenerCount} listeners already. MOST frequent listener (${topCount}):`;
+          console.warn(message2);
           console.warn(topStack);
-          const error = new ListenerLeakError(message, topStack);
+          const error = new ListenerLeakError(message2, topStack);
           this._errorHandler(error);
         }
         return () => {
@@ -52583,15 +52604,15 @@ ${stackTraceFormattedLines.join("\n")}
       }
     };
     ListenerLeakError = class extends Error {
-      constructor(message, stack) {
-        super(message);
+      constructor(message2, stack) {
+        super(message2);
         this.name = "ListenerLeakError";
         this.stack = stack;
       }
     };
     ListenerRefusalError = class extends Error {
-      constructor(message, stack) {
-        super(message);
+      constructor(message2, stack) {
+        super(message2);
         this.name = "ListenerRefusalError";
         this.stack = stack;
       }
@@ -52667,10 +52688,10 @@ ${stackTraceFormattedLines.join("\n")}
       get event() {
         this._event ??= (callback, thisArgs, disposables) => {
           if (this._leakageMon && this._size > this._leakageMon.threshold ** 2) {
-            const message = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
-            console.warn(message);
+            const message2 = `[${this._leakageMon.name}] REFUSES to accept new listeners because it exceeded its threshold by far (${this._size} vs ${this._leakageMon.threshold})`;
+            console.warn(message2);
             const tuple = this._leakageMon.getMostFrequentStack() ?? ["UNKNOWN stack", -1];
-            const error = new ListenerRefusalError(`${message}. HINT: Stack shows most frequent listener (${tuple[1]}-times)`, tuple[0]);
+            const error = new ListenerRefusalError(`${message2}. HINT: Stack shows most frequent listener (${tuple[1]}-times)`, tuple[0]);
             const errorHandler2 = this._options?.onListenerError || onUnexpectedError;
             errorHandler2(error);
             return Disposable.None;
@@ -53544,33 +53565,33 @@ ${stackTraceFormattedLines.join("\n")}
           }
         }
       }
-      _log(type, message, optionalParams) {
+      _log(type, message2, optionalParams) {
         this._evalLazyOptionalParams(optionalParams);
-        type.call(console, (this._optionsService.options.logger ? "" : LOG_PREFIX) + message, ...optionalParams);
+        type.call(console, (this._optionsService.options.logger ? "" : LOG_PREFIX) + message2, ...optionalParams);
       }
-      trace(message, ...optionalParams) {
+      trace(message2, ...optionalParams) {
         if (this._logLevel <= 0) {
-          this._log(this._optionsService.options.logger?.trace.bind(this._optionsService.options.logger) ?? console.log, message, optionalParams);
+          this._log(this._optionsService.options.logger?.trace.bind(this._optionsService.options.logger) ?? console.log, message2, optionalParams);
         }
       }
-      debug(message, ...optionalParams) {
+      debug(message2, ...optionalParams) {
         if (this._logLevel <= 1) {
-          this._log(this._optionsService.options.logger?.debug.bind(this._optionsService.options.logger) ?? console.log, message, optionalParams);
+          this._log(this._optionsService.options.logger?.debug.bind(this._optionsService.options.logger) ?? console.log, message2, optionalParams);
         }
       }
-      info(message, ...optionalParams) {
+      info(message2, ...optionalParams) {
         if (this._logLevel <= 2) {
-          this._log(this._optionsService.options.logger?.info.bind(this._optionsService.options.logger) ?? console.info, message, optionalParams);
+          this._log(this._optionsService.options.logger?.info.bind(this._optionsService.options.logger) ?? console.info, message2, optionalParams);
         }
       }
-      warn(message, ...optionalParams) {
+      warn(message2, ...optionalParams) {
         if (this._logLevel <= 3) {
-          this._log(this._optionsService.options.logger?.warn.bind(this._optionsService.options.logger) ?? console.warn, message, optionalParams);
+          this._log(this._optionsService.options.logger?.warn.bind(this._optionsService.options.logger) ?? console.warn, message2, optionalParams);
         }
       }
-      error(message, ...optionalParams) {
+      error(message2, ...optionalParams) {
         if (this._logLevel <= 4) {
-          this._log(this._optionsService.options.logger?.error.bind(this._optionsService.options.logger) ?? console.error, message, optionalParams);
+          this._log(this._optionsService.options.logger?.error.bind(this._optionsService.options.logger) ?? console.error, message2, optionalParams);
         }
       }
     };
@@ -65643,7 +65664,7 @@ var init_terminal_replica_owner = __esm({
       #leaseIsCurrent(lease, subscriptionEpoch) {
         return !this.#disposed && subscriptionEpoch === this.#subscriptionEpoch && this.#layoutLease !== null && this.#layoutLease.epoch === lease.epoch && layoutLeaseEqual(this.#layoutLease, lease);
       }
-      #retryReseedOrFault(message, reseed, stage, reason) {
+      #retryReseedOrFault(message2, reseed, stage, reason) {
         if (this.#disposed || this.#waitingForGeometryCapture) return;
         const diagnostic4 = this.#observability.enabled ? {
           reason,
@@ -65667,7 +65688,7 @@ var init_terminal_replica_owner = __esm({
         } : void 0;
         if (this.#reseedRetryCount >= 1) {
           this.#noteLifecycle("reseed-exhausted", diagnostic4);
-          const error = new Error(message);
+          const error = new Error(message2);
           this.#interpreter.abort(error);
           this.#onFault?.(error);
           return;
@@ -67483,7 +67504,7 @@ var init_terminal_delivery_hub = __esm({
         this.#schedule(client);
         this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
       }
-      #fault(client, reason, message, selectionObservation = null) {
+      #fault(client, reason, message2, selectionObservation = null) {
         logDeliveryFault(client, reason);
         if (this.#observability.enabled)
           try {
@@ -67528,7 +67549,7 @@ var init_terminal_delivery_hub = __esm({
         const fault = {
           type: "terminal.delivery.fault",
           reason,
-          message: message.slice(0, 1024),
+          message: message2.slice(0, 1024),
           deliveryNonce: client.negotiated.deliveryNonce
         };
         if (reason === "source-closed" && client.sending) {
@@ -67541,8 +67562,8 @@ var init_terminal_delivery_hub = __esm({
         this.#enqueue(client, fault);
         client.retireAfterDrain = true;
       }
-      #enqueue(client, message) {
-        this.#enqueueFactory(client, () => message);
+      #enqueue(client, message2) {
+        this.#enqueueFactory(client, () => message2);
       }
       #enqueueFactory(client, create) {
         if (client.closed) return;
@@ -68087,16 +68108,16 @@ var init_registry2 = __esm({
       pendingDeliveryClients: 0
     });
     SessionRuntimeControllerLeaseError = class extends Error {
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.code = code2;
         this.name = "SessionRuntimeControllerLeaseError";
       }
       code;
     };
     SessionRuntimeInputLifetimeEndedError = class extends Error {
-      constructor(message) {
-        super(message);
+      constructor(message2) {
+        super(message2);
         this.name = "SessionRuntimeInputLifetimeEndedError";
       }
     };
@@ -69479,9 +69500,9 @@ var init_registry2 = __esm({
         this.#publishAuthority();
       }
       assertNoSharedWindow() {
-        const message = this.#mirror.windowOwnershipMessage(this.session);
-        if (message) {
-          throw new SessionRuntimeControllerLeaseError("controller-conflict", message);
+        const message2 = this.#mirror.windowOwnershipMessage(this.session);
+        if (message2) {
+          throw new SessionRuntimeControllerLeaseError("controller-conflict", message2);
         }
       }
       invalidateSharedWindowAuthority() {
@@ -70737,8 +70758,8 @@ var init_lease_manager = __esm({
     MarkerPattern = /^v1:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):(0|[1-9][0-9]*)$/iu;
     AttachmentLeaseError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = "AttachmentLeaseError";
         this.code = code2;
       }
@@ -71477,8 +71498,8 @@ var init_direct_websocket = __esm({
     GridSchemaZ = TerminalAttachmentViewportSchemaZ;
     TerminalAttachmentAdmissionError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = "TerminalAttachmentAdmissionError";
         this.code = code2;
       }
@@ -76125,8 +76146,8 @@ var init_lease_manager2 = __esm({
     TicketPattern2 = /^ps2_[A-Za-z0-9_-]{43}$/u;
     PaneStreamLeaseError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = "PaneStreamLeaseError";
         this.code = code2;
       }
@@ -76762,8 +76783,8 @@ var init_pane_stream_websocket = __esm({
     BindingIdSchemaZ4 = z123.string().min(1).max(4096).refine((value) => !value.includes("\0"));
     PaneStreamAdmissionError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = "PaneStreamAdmissionError";
         this.code = code2;
       }
@@ -77857,10 +77878,10 @@ var init_pane_stream_websocket = __esm({
           return binding.openTerminalDelivery(
             channel.semanticPaneId,
             offer,
-            (message) => {
-              if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
-                pending.push(message);
-              else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+            (message2) => {
+              if (!ready && !(negotiated && message2.type === "terminal.delivery.fault"))
+                pending.push(message2);
+              else return this.#sendTerminalDelivery(channel.semanticPaneId, message2);
             },
             this.#descriptor.workspaceName
           );
@@ -77882,11 +77903,11 @@ var init_pane_stream_websocket = __esm({
         const negotiated = delivery.negotiation.negotiated;
         if (negotiated.generation !== this.#binding.daemonInstanceId) return true;
         let incarnation = null;
-        for (const message of pending) {
-          if (message.type !== "terminal.delivery" && message.type !== "terminal.projection") continue;
-          if (message.workspaceName !== this.#descriptor.workspaceName || message.semanticPaneId !== channel.semanticPaneId || message.generation !== negotiated.generation || message.deliveryNonce !== negotiated.deliveryNonce || incarnation !== null && message.incarnation !== incarnation)
+        for (const message2 of pending) {
+          if (message2.type !== "terminal.delivery" && message2.type !== "terminal.projection") continue;
+          if (message2.workspaceName !== this.#descriptor.workspaceName || message2.semanticPaneId !== channel.semanticPaneId || message2.generation !== negotiated.generation || message2.deliveryNonce !== negotiated.deliveryNonce || incarnation !== null && message2.incarnation !== incarnation)
             return true;
-          incarnation = message.incarnation;
+          incarnation = message2.incarnation;
         }
         return false;
       }
@@ -77918,8 +77939,8 @@ var init_pane_stream_websocket = __esm({
         }
         for (const { channel, pending, markReady } of opened) {
           if (this.#closed || channel.closed) continue;
-          for (const message of pending)
-            await this.#sendTerminalDelivery(channel.semanticPaneId, message);
+          for (const message2 of pending)
+            await this.#sendTerminalDelivery(channel.semanticPaneId, message2);
           pending.length = 0;
           markReady();
           this.#startGraphics(channel);
@@ -77952,27 +77973,27 @@ var init_pane_stream_websocket = __esm({
        * change has a fresh channel, which this tombstone is not about.
        */
       #tombstonesAfterChange = /* @__PURE__ */ new Set();
-      async #sendTerminalDelivery(pane, message) {
-        if ((message.type === "terminal.delivery" || message.type === "terminal.projection") && message.frame === "tombstone")
+      async #sendTerminalDelivery(pane, message2) {
+        if ((message2.type === "terminal.delivery" || message2.type === "terminal.projection") && message2.frame === "tombstone")
           this.#watchTombstone(pane);
-        if (message.type === "terminal.projection") {
+        if (message2.type === "terminal.projection") {
           const channel = this.#panes.get(pane);
-          if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
+          if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message2.incarnation;
           if (channel) channel.binaryCells = true;
-          this.#sendFrame(pane, { type: "terminal-projection-envelope", pane, envelope: message });
-        } else if (message.type === "terminal.delivery") {
+          this.#sendFrame(pane, { type: "terminal-projection-envelope", pane, envelope: message2 });
+        } else if (message2.type === "terminal.delivery") {
           if (!this.#diagnosticFirstSeedObserved) {
             this.#diagnosticFirstSeedObserved = true;
             this.#recordDiagnosticLifecycle("pane-stream-first-seed");
           }
           const channel = this.#panes.get(pane);
-          if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message.incarnation;
-          if (channel) channel.binaryCells = message.encoding === "semantic-binary-v1";
+          if (channel?.deliveryAddress) channel.deliveryAddress.incarnation = message2.incarnation;
+          if (channel) channel.binaryCells = message2.encoding === "semantic-binary-v1";
           const detailedDeliveryObservation = this.#observability?.enabled === true;
-          const trace = message.performanceTraceId && detailedDeliveryObservation ? this.#observability.beginTrace(
+          const trace = message2.performanceTraceId && detailedDeliveryObservation ? this.#observability.beginTrace(
             "terminal-input-to-paint",
-            { generation: message.generation, incarnation: message.incarnation },
-            message.performanceTraceId
+            { generation: message2.generation, incarnation: message2.incarnation },
+            message2.performanceTraceId
           ) : null;
           let startedAtMicros = null;
           if (detailedDeliveryObservation)
@@ -77990,7 +78011,7 @@ var init_pane_stream_websocket = __esm({
           this.#sendFrame(pane, {
             type: "terminal-delivery-envelope",
             pane,
-            envelope: message
+            envelope: message2
           });
           if (startedAtMicros !== null) {
             let endedAtMicros;
@@ -78018,32 +78039,32 @@ var init_pane_stream_websocket = __esm({
                   endedAtMicros: endedAtSharedMicros
                 },
                 Object.freeze({
-                  workspaceName: message.workspaceName,
-                  semanticPaneId: message.semanticPaneId,
-                  canonicalGeneration: message.generation,
-                  canonicalIncarnation: message.incarnation,
-                  canonicalRevision: message.canonicalRevision,
-                  canonicalStateHash: message.canonicalStateHash,
-                  transactionId: message.transactionId,
-                  ...terminalDeliveryObservationOrdinal(message) === null ? {} : { deliveryOrdinal: terminalDeliveryObservationOrdinal(message) },
+                  workspaceName: message2.workspaceName,
+                  semanticPaneId: message2.semanticPaneId,
+                  canonicalGeneration: message2.generation,
+                  canonicalIncarnation: message2.incarnation,
+                  canonicalRevision: message2.canonicalRevision,
+                  canonicalStateHash: message2.canonicalStateHash,
+                  transactionId: message2.transactionId,
+                  ...terminalDeliveryObservationOrdinal(message2) === null ? {} : { deliveryOrdinal: terminalDeliveryObservationOrdinal(message2) },
                   deliveryClientId: this.#sessionRuntimeBinding?.clientId ?? this.#clientId,
                   deliverySurface: this.#sessionRuntimeBinding?.surface ?? "unknown",
                   deliveryLaneId: this.#sessionRuntimeBinding?.deliveryLaneId ?? this.#clientId,
                   deliveryRequestId: this.#sessionRuntimeBinding?.deliveryRequestId ?? this.#clientId,
-                  deliveryNonce: message.deliveryNonce
+                  deliveryNonce: message2.deliveryNonce
                 })
               );
             } catch {
             }
           }
-        } else if (message.type === "terminal.delivery.chunk") {
+        } else if (message2.type === "terminal.delivery.chunk") {
           if (this.#panes.get(pane)?.binaryCells) {
             this.#sendEncoded(
               pane,
               Buffer.from(
                 encodeTerminalDeliveryBinaryChunk(
-                  { pane, transactionId: message.transactionId, index: message.index },
-                  message.bytes
+                  { pane, transactionId: message2.transactionId, index: message2.index },
+                  message2.bytes
                 )
               ),
               true
@@ -78052,13 +78073,13 @@ var init_pane_stream_websocket = __esm({
             this.#sendFrame(pane, {
               type: "terminal-delivery-chunk",
               pane,
-              transactionId: message.transactionId,
-              index: message.index,
-              data: Buffer.from(message.bytes).toString("base64")
+              transactionId: message2.transactionId,
+              index: message2.index,
+              data: Buffer.from(message2.bytes).toString("base64")
             });
           }
         } else {
-          this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message });
+          this.#sendFrame(pane, { type: "terminal-delivery-fault", pane, fault: message2 });
           return;
         }
         await this.#awaitSemanticCredit(pane);
@@ -82964,15 +82985,15 @@ async function readPortProcessFactsAsync(signal) {
 }
 function classifySessionInspectionError(error) {
   const candidate = error;
-  const message = candidate.message ?? "";
-  if (candidate.code === "EBADF" || candidate.code === "EAGAIN" || candidate.code === "EMFILE" || candidate.code === "ENFILE" || message.includes("EBADF") || message.includes("EAGAIN")) {
+  const message2 = candidate.message ?? "";
+  if (candidate.code === "EBADF" || candidate.code === "EAGAIN" || candidate.code === "EMFILE" || candidate.code === "ENFILE" || message2.includes("EBADF") || message2.includes("EAGAIN")) {
     return "unknown";
   }
   return "no";
 }
 function isConfirmedMissingTmuxTarget(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /(?:can't find|no such|unknown) (?:pane|session|window|target)/iu.test(message);
+  const message2 = error instanceof Error ? error.message : String(error);
+  return /(?:can't find|no such|unknown) (?:pane|session|window|target)/iu.test(message2);
 }
 async function mapBounded(values2, concurrency, operation) {
   let cursor2 = 0;
@@ -83162,8 +83183,8 @@ var init_pty_bridge = __esm({
       cwd;
       reason;
       constructor(args) {
-        const message = _TerminalCwdError.formatMessage(args.cwd, args.reason);
-        super(message, args.cause !== void 0 ? { cause: args.cause } : void 0);
+        const message2 = _TerminalCwdError.formatMessage(args.cwd, args.reason);
+        super(message2, args.cause !== void 0 ? { cause: args.cause } : void 0);
         this.name = "TerminalCwdError";
         this.cwd = args.cwd;
         this.reason = args.reason;
@@ -83531,9 +83552,9 @@ function parseResizeFrame(data) {
   }
   return { type: "resize", cols: frame.cols, rows: frame.rows };
 }
-function sendError(ws, message, extras) {
+function sendError(ws, message2, extras) {
   if (ws.readyState !== WS_OPEN4) return;
-  const frame = { type: "error", message };
+  const frame = { type: "error", message: message2 };
   if (extras?.reason !== void 0) frame.reason = extras.reason;
   if (extras?.cwd !== void 0) frame.cwd = extras.cwd;
   ws.send(JSON.stringify(frame));
@@ -83601,8 +83622,8 @@ function handlePtyWebSocket(ws, id2, options = {}) {
     bridge.pause();
     scheduleDrainCheck();
   };
-  const closeWithError = (message) => {
-    sendError(socket, message);
+  const closeWithError = (message2) => {
+    sendError(socket, message2);
     closeWs(socket);
   };
   const closeWithCwdError = (err) => {
@@ -85256,8 +85277,8 @@ function acquireLegacyObservation() {
 function broadcastInitOutput(jobId, chunk, done) {
   for (const client of allClients) client.broadcastInitOutput(jobId, chunk, done);
 }
-function broadcastInitError(jobId, message) {
-  for (const client of allClients) client.broadcastInitError(jobId, message);
+function broadcastInitError(jobId, message2) {
+  for (const client of allClients) client.broadcastInitError(jobId, message2);
 }
 function broadcastActionComplete(name, result2) {
   for (const client of allClients) client.broadcastActionComplete(name, result2);
@@ -85343,9 +85364,9 @@ function handleWsEventsConnection(socket, daemonIdentity, options = {}) {
     const frame = done === void 0 ? { type: "init.output", jobId, chunk } : { type: "init.output", jobId, chunk, done };
     send2(frame);
   };
-  const broadcastInitErrorForClient = (jobId, message) => {
+  const broadcastInitErrorForClient = (jobId, message2) => {
     if (!legacyDeliveryEnabled) return;
-    send2({ type: "init.error", jobId, message });
+    send2({ type: "init.error", jobId, message: message2 });
   };
   const broadcastActionCompleteForClient = (name, result2) => {
     if (!legacyDeliveryEnabled) return;
@@ -85835,8 +85856,8 @@ function actionErrorFromCwdError(err) {
 function wrapInternalError(err) {
   if (err instanceof ActionError) return err;
   if (err instanceof TerminalCwdError) return actionErrorFromCwdError(err);
-  const message = err instanceof Error ? err.message : String(err);
-  return new ActionError({ code: "internal", message, cause: err });
+  const message2 = err instanceof Error ? err.message : String(err);
+  return new ActionError({ code: "internal", message: message2, cause: err });
 }
 var ActionError, CWD_REASON_TO_CODE;
 var init_errors3 = __esm({
@@ -86705,8 +86726,8 @@ var init_workspace_open_handoff2 = __esm({
     "use strict";
     WorkspaceOpenHandoffError = class extends Error {
       code;
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.name = "WorkspaceOpenHandoffError";
         this.code = code2;
       }
@@ -87318,8 +87339,8 @@ function canonicalScene(scene) {
     focusedWindowId: scene.focusedWindowId
   };
 }
-function diagnostic2(code2, path2, message) {
-  return { code: code2, path: path2, message };
+function diagnostic2(code2, path2, message2) {
+  return { code: code2, path: path2, message: message2 };
 }
 function isRecord2(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -87840,9 +87861,9 @@ function sameScene(left, right) {
     focusedWindowId: right.focusedWindowId
   });
 }
-function requireNonnegativeIndex(value, path2, message) {
+function requireNonnegativeIndex(value, path2, message2) {
   if (!Number.isInteger(value) || value < 0) {
-    throw new AppWindowKernelError("INVALID_INPUT", path2, message);
+    throw new AppWindowKernelError("INVALID_INPUT", path2, message2);
   }
 }
 function boundedCoordinate(value, path2) {
@@ -87902,8 +87923,8 @@ function finalize(current, timestamp, patch) {
 }
 function translateStateError(error, path2) {
   if (error instanceof AppWindowKernelError) return error;
-  const message = error.message;
-  return new AppWindowKernelError("INVALID_INPUT", path2, message);
+  const message2 = error.message;
+  return new AppWindowKernelError("INVALID_INPUT", path2, message2);
 }
 var APP_WINDOW_FLOAT_MIN_WIDTH, APP_WINDOW_FLOAT_MIN_HEIGHT, APP_WINDOW_COORDINATE_LIMIT, AppWindowKernelError;
 var init_app_window_kernel = __esm({
@@ -87917,8 +87938,8 @@ var init_app_window_kernel = __esm({
     AppWindowKernelError = class extends Error {
       code;
       path;
-      constructor(code2, path2, message) {
-        super(message);
+      constructor(code2, path2, message2) {
+        super(message2);
         this.name = "AppWindowKernelError";
         this.code = code2;
         this.path = path2;
@@ -88290,8 +88311,8 @@ function validateExpectedRevision(value) {
   }
   return value;
 }
-function diagnostic3(code2, path2, message) {
-  return { code: code2, path: path2, message };
+function diagnostic3(code2, path2, message2) {
+  return { code: code2, path: path2, message: message2 };
 }
 var APP_WINDOW_DOCUMENT_PATH, LEGACY_WORKSPACE_UI_PATH, AppWindowRepositoryError, AppWindowService;
 var init_app_window_repository = __esm({
@@ -88307,8 +88328,8 @@ var init_app_window_repository = __esm({
       code;
       diagnostics;
       cause;
-      constructor(code2, message, diagnostics = [], cause) {
-        super(message);
+      constructor(code2, message2, diagnostics = [], cause) {
+        super(message2);
         this.name = "AppWindowRepositoryError";
         this.code = code2;
         this.diagnostics = diagnostics;
@@ -88814,10 +88835,10 @@ Content-Length: 0\r
       active3 = ws;
       const owner = new NativeSurfaceProviderChannel(
         registry,
-        (message) => {
-          if (!isCurrent() || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount + Buffer.byteLength(message) > 64 * 1024)
+        (message2) => {
+          if (!isCurrent() || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount + Buffer.byteLength(message2) > 64 * 1024)
             return false;
-          ws.send(message, (error) => {
+          ws.send(message2, (error) => {
             if (error) owner.close();
           });
           return true;
@@ -89840,8 +89861,8 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync as existsSync30, statSync as statSync25 } from "node:fs";
 import { isAbsolute as isAbsolute28 } from "node:path";
 import { z as z129 } from "zod";
-function fail2(message) {
-  throw new ExecError(message);
+function fail2(message2) {
+  throw new ExecError(message2);
 }
 async function prepareExec(raw, deps2) {
   const parsed = ExecRequestSchemaZ.safeParse(raw);
@@ -90134,8 +90155,8 @@ var init_plugin_store = __esm({
 import { spawn as spawn9 } from "node:child_process";
 import { homedir as homedir6 } from "node:os";
 import { z as z130 } from "zod";
-function fail3(message) {
-  throw new WorktreeCallError(message);
+function fail3(message2) {
+  throw new WorktreeCallError(message2);
 }
 async function worktreeCall(operation, raw, deps2) {
   if (!WORKTREE_OPERATIONS.includes(operation))
@@ -90180,8 +90201,8 @@ async function worktreeCall(operation, raw, deps2) {
   delete env.TMUX_PANE;
   const result2 = await deps2.runCli(args, env);
   if (result2.code !== 0) {
-    const message = (result2.stderr.trim() || result2.stdout.trim()).split("\n").slice(-3).join(" ");
-    fail3(`E_FAILED: ${message || `tmux-ide worktree ${op} failed`}`.slice(0, 2e3));
+    const message2 = (result2.stderr.trim() || result2.stdout.trim()).split("\n").slice(-3).join(" ");
+    fail3(`E_FAILED: ${message2 || `tmux-ide worktree ${op} failed`}`.slice(0, 2e3));
   }
   try {
     return JSON.parse(result2.stdout);
@@ -90250,8 +90271,8 @@ function daemonPort(endpoint) {
     return [];
   }
 }
-function fail4(message) {
-  throw new HostCallError(message);
+function fail4(message2) {
+  throw new HostCallError(message2);
 }
 function paneContextFromTmux(pane, line) {
   const [socket, pid, session, cwd] = line.replace(/\n$/u, "").split("	");
@@ -90276,8 +90297,8 @@ function createHostCallHandler(deps2) {
     const body = await response3.json().catch(() => null);
     if (!response3.ok) {
       const error = body && typeof body === "object" && "error" in body ? body.error : null;
-      const message = typeof error === "string" ? error : error && typeof error === "object" && "message" in error ? String(error.message) : error && typeof error === "object" && "code" in error ? String(error.code) : `HTTP ${response3.status}`;
-      fail4(`E_FAILED: ${message}`);
+      const message2 = typeof error === "string" ? error : error && typeof error === "object" && "message" in error ? String(error.message) : error && typeof error === "object" && "code" in error ? String(error.code) : `HTTP ${response3.status}`;
+      fail4(`E_FAILED: ${message2}`);
     }
     return body;
   };
@@ -91154,13 +91175,13 @@ var init_supervisor = __esm({
         });
       }
       // ---------------------------------------------------------------- internals
-      #log(plugin, level, message, fields) {
+      #log(plugin, level, message2, fields) {
         const secrets2 = this.#secretSet();
         this.#options.onLog({
           ts: new Date(this.#options.now()).toISOString(),
           plugin,
           level,
-          message: redactText(message, secrets2),
+          message: redactText(message2, secrets2),
           ...fields ? { fields: redactLogValue(fields, secrets2) } : {}
         });
       }
@@ -91509,11 +91530,11 @@ import { basename as basename19, dirname as dirname40, extname as extname3, join
 import { fileURLToPath as fileURLToPath10 } from "node:url";
 async function notifyTmuxClients(tmux8, plugin, text2, level) {
   const prefix = level === "info" ? "" : `${level}: `;
-  const message = `${plugin}: ${prefix}${text2}`.replace(/#/gu, "##");
+  const message2 = `${plugin}: ${prefix}${text2}`.replace(/#/gu, "##");
   const clients = (await tmux8(["list-clients", "-F", "#{client_name}"])).split("\n").map((line) => line.trim()).filter(Boolean);
   await Promise.all(
     clients.map(
-      (client) => tmux8(["display-message", "-c", client, "-d", "4000", message]).catch(() => "")
+      (client) => tmux8(["display-message", "-c", client, "-d", "4000", message2]).catch(() => "")
     )
   );
 }
@@ -95991,10 +96012,10 @@ async function mutateConfigAction(input, deps2, fn) {
         cause: err
       });
     }
-    const message = err.message ?? String(err);
+    const message2 = err.message ?? String(err);
     throw new ActionError({
-      code: message.toLowerCase().includes("path") ? "config_path_invalid" : "config_validation_failed",
-      message,
+      code: message2.toLowerCase().includes("path") ? "config_path_invalid" : "config_validation_failed",
+      message: message2,
       cause: err
     });
   }
@@ -97628,8 +97649,8 @@ var init_project_onboard = __esm({
     };
     OnboardInvalidInputError = class extends Error {
       code = "INVALID_INPUT";
-      constructor(message) {
-        super(message);
+      constructor(message2) {
+        super(message2);
         this.name = "OnboardInvalidInputError";
       }
     };
@@ -98133,23 +98154,23 @@ var init_workspace_files_authority = __esm({
         const parentRel = segments.join("/");
         return parentRel === "" ? rootId : this.ids.intern(parentRel);
       }
-      catalogUnavailable(reason, message, retryable = false) {
+      catalogUnavailable(reason, message2, retryable = false) {
         return WorkspaceFilesCatalogResourceV1SchemaZ.parse({
           status: "unavailable",
           workspaceName: this.workspaceName,
           reason,
-          message,
+          message: message2,
           retryable
         });
       }
-      previewUnavailable(fileId, reason, message, retryable = false) {
+      previewUnavailable(fileId, reason, message2, retryable = false) {
         return WorkspaceFilePreviewResourceV1SchemaZ.parse({
           status: "unavailable",
           workspaceName: this.workspaceName,
           catalogRevision: filesRevision(`unavailable:${fileId}`),
           fileId,
           reason,
-          message,
+          message: message2,
           retryable
         });
       }
@@ -98776,23 +98797,23 @@ var init_workspace_changes_authority = __esm({
         const source = raw.group === "staged" ? staged : unstaged;
         return source.get(raw.path) ?? { additions: 0, deletions: 0, binary: false };
       }
-      catalogUnavailable(reason, message, retryable = false) {
+      catalogUnavailable(reason, message2, retryable = false) {
         return WorkspaceChangesCatalogResourceV1SchemaZ.parse({
           status: "unavailable",
           workspaceName: this.workspaceName,
           reason,
-          message,
+          message: message2,
           retryable
         });
       }
-      diffUnavailable(changeId, reason, message, retryable = false) {
+      diffUnavailable(changeId, reason, message2, retryable = false) {
         return WorkspaceChangeDiffResourceV1SchemaZ.parse({
           status: "unavailable",
           workspaceName: this.workspaceName,
           changesRevision: changesRevision(`unavailable:${changeId}`),
           changeId,
           reason,
-          message,
+          message: message2,
           retryable
         });
       }
@@ -99707,8 +99728,8 @@ var init_mission_projections2 = __esm({
     init_mission_repository();
     MissionProjectionError = class extends IdeError {
       projectionCode;
-      constructor(message, code2, { cause } = {}) {
-        super(message, { code: code2, cause });
+      constructor(message2, code2, { cause } = {}) {
+        super(message2, { code: code2, cause });
         this.name = "MissionProjectionError";
         this.projectionCode = code2;
       }
@@ -100922,8 +100943,8 @@ var init_widget_asset_store = __esm({
     MAX_ASSET_FILES = 256;
     ASSET_DIRECTORY = "widget-assets";
     WidgetAssetStoreError = class extends Error {
-      constructor(code2, message) {
-        super(message);
+      constructor(code2, message2) {
+        super(message2);
         this.code = code2;
         this.name = "WidgetAssetStoreError";
       }
@@ -101823,7 +101844,7 @@ function createApp(options = {}) {
     const name = c.req.param("name");
     const session = lookupSession(name);
     if (typeof session === "string") return sessionMissing(c, session);
-    const { target, message, noEnter } = c.req.valid("json");
+    const { target, message: message2, noEnter } = c.req.valid("json");
     const panes = listSessionPanes(name);
     const pane = resolvePane(panes, target);
     if (!pane) {
@@ -101836,7 +101857,7 @@ function createApp(options = {}) {
       return c.json({ error: "Pane not found", target, available }, 404);
     }
     const busyStatus = getPaneBusyStatus(name, pane.id);
-    const prepared = busyStatus === "agent" ? message.replace(/\n+/g, " ").trim() : message;
+    const prepared = busyStatus === "agent" ? message2.replace(/\n+/g, " ").trim() : message2;
     if (noEnter) {
       sendText(name, pane.id, prepared);
     } else {
@@ -101873,8 +101894,8 @@ function createApp(options = {}) {
         ideConfigPath: resolved2.resolution.legacyConfigPath
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Failed to read workspace config", detail: message }, 500);
+      const message2 = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Failed to read workspace config", detail: message2 }, 500);
     }
   });
   app.post("/api/project/:name/config", async (c) => {
@@ -101905,8 +101926,8 @@ function createApp(options = {}) {
         ideConfigPath: resolved2.resolution.legacyConfigPath
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Failed to write workspace config", detail: message }, 500);
+      const message2 = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Failed to write workspace config", detail: message2 }, 500);
     }
   });
   const execFileAsync2 = promisify4(execFile15);
@@ -101922,8 +101943,8 @@ function createApp(options = {}) {
       });
       return c.json({ ok: true, session: name, status: "restarted" });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Restart failed", detail: message }, 500);
+      const message2 = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Restart failed", detail: message2 }, 500);
     }
   });
   app.post("/api/project/:name/launch", async (c) => {
@@ -101943,8 +101964,8 @@ function createApp(options = {}) {
       });
       return c.json({ ok: true, session: name, status: "launched" });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "Launch failed", detail: message }, 500);
+      const message2 = err instanceof Error ? err.message : String(err);
+      return c.json({ error: "Launch failed", detail: message2 }, 500);
     }
   });
   app.post("/api/project/:name/stop", async (c) => {
@@ -102620,11 +102641,11 @@ function takeoverTimeoutMs() {
   const override = globalThis[TAKEOVER_DEADLINE_TEST_OVERRIDE];
   return typeof override === "number" ? override : TAKEOVER_TIMEOUT_MS;
 }
-function throwTakeoverTimeout(message) {
-  throw new DaemonStartupError(message, "canonical_takeover_timeout");
+function throwTakeoverTimeout(message2) {
+  throw new DaemonStartupError(message2, "canonical_takeover_timeout");
 }
-function assertTakeoverDeadline(deadline, message) {
-  if (deadline.signal.aborted || deadline.remainingMs() <= 0) throwTakeoverTimeout(message);
+function assertTakeoverDeadline(deadline, message2) {
+  if (deadline.signal.aborted || deadline.remainingMs() <= 0) throwTakeoverTimeout(message2);
 }
 async function waitForTakeoverPoll(deadline) {
   assertTakeoverDeadline(deadline, "Canonical daemon did not quiesce before the takeover deadline");
@@ -105597,10 +105618,10 @@ async function openBrowser(url, options = {}, dependencies = {}) {
     url,
     options
   );
-  const message = await nativeControlsNotice(run, result2.pane, executable, dependencies.wait);
-  if (message)
+  const message2 = await nativeControlsNotice(run, result2.pane, executable, dependencies.wait);
+  if (message2)
     (dependencies.notice ?? ((line) => process.stderr.write(`${line}
-`)))(message);
+`)))(message2);
   return result2;
 }
 function createPinnedBrowserPane(executable, url, options) {
@@ -106063,8 +106084,8 @@ function defaults() {
     waitMs: 3e4
   };
 }
-function refused(message) {
-  throw new IdeError(message, { code: "DAEMON_SERVICE_REFUSED" });
+function refused(message2) {
+  throw new IdeError(message2, { code: "DAEMON_SERVICE_REFUSED" });
 }
 function ownedFile(path2) {
   let descriptor;
@@ -106399,7 +106420,7 @@ var init_restart_canonical_daemon = __esm({
         else signal.addEventListener("abort", abort, { once: true });
       })
     };
-    failure2 = (code2, message) => new IdeError(message, { code: code2 });
+    failure2 = (code2, message2) => new IdeError(message2, { code: code2 });
   }
 });
 
@@ -107199,12 +107220,11 @@ function tmuxServerSocketRow(environment, uid) {
   };
 }
 function nodeVersionRow(version) {
-  const major = Number(version.split(".")[0]);
-  const pass = Number.isInteger(major) && major >= 20;
+  const pass = isSupportedNodeVersion(version);
   return {
-    label: "Node.js \u2265 20",
+    label: `Node.js \u2265 ${MINIMUM_NODE_MAJOR}`,
     pass,
-    detail: pass ? `v${version}` : `Node ${version} (need \u2265 20)`,
+    detail: pass ? `v${version}` : `Node ${version} (need \u2265 ${MINIMUM_NODE_MAJOR})`,
     optional: false
   };
 }
@@ -107405,6 +107425,7 @@ var init_doctor = __esm({
     init_claude();
     init_notify();
     init_resolved_config();
+    init_node_requirement();
     init_daemon_provenance();
     DAY_MS = 24 * 60 * 60 * 1e3;
   }
@@ -107822,8 +107843,8 @@ __export(ssh_daemon_transport_exports, {
 import { spawn as spawn12 } from "node:child_process";
 import { createServer as createServer4 } from "node:net";
 import { z as z144 } from "zod";
-function failure3(message, code2 = "unavailable") {
-  return new SshConnectionError(message, code2);
+function failure3(message2, code2 = "unavailable") {
+  return new SshConnectionError(message2, code2);
 }
 function observeSshFailure(child) {
   let tail = "";
@@ -108114,8 +108135,8 @@ var init_ssh_daemon_transport = __esm({
       error: z144.strictObject({ code: z144.enum(["daemon-missing", "incompatible", "unavailable"]) })
     });
     SshConnectionError = class extends Error {
-      constructor(message, code2 = "unavailable") {
-        super(`SSH daemon connection: ${message}`);
+      constructor(message2, code2 = "unavailable") {
+        super(`SSH daemon connection: ${message2}`);
         this.code = code2;
       }
       code;
@@ -108185,8 +108206,8 @@ var init_remote_daemon_info = __esm({
     init_canonical_daemon();
     init_ssh_daemon_transport();
     RemoteDaemonInfoError = class extends Error {
-      constructor(message, code2) {
-        super(message);
+      constructor(message2, code2) {
+        super(message2);
         this.code = code2;
       }
       code;
@@ -108583,9 +108604,9 @@ function readWorkerResult(path2) {
   }
 }
 function writeWorkerResult(path2, result2) {
-  const { status: status2, message, restored, failed } = result2;
+  const { status: status2, message: message2, restored, failed } = result2;
   const temporary = `${path2}.${process.pid}.tmp`;
-  writeFileSync31(temporary, JSON.stringify({ status: status2, message, restored, failed }) + "\n", {
+  writeFileSync31(temporary, JSON.stringify({ status: status2, message: message2, restored, failed }) + "\n", {
     mode: 384
   });
   renameSync23(temporary, path2);
@@ -109093,7 +109114,7 @@ var init_run = __esm({
     init_errors2();
     init_plan();
     retryCommand = (snapshotPath2, resumeAgents) => `tmux-ide restore --from ${snapshotPath2}${resumeAgents ? " --resume-agents" : ""}`;
-    nothingChanged = (message, code2) => new IdeError(`${message} Nothing was stopped.`, { code: code2, exitCode: 1 });
+    nothingChanged = (message2, code2) => new IdeError(`${message2} Nothing was stopped.`, { code: code2, exitCode: 1 });
   }
 });
 
@@ -111202,8 +111223,8 @@ async function callDaemon(io, method, path2, body) {
     throw new PluginCliError(`The daemon answered ${response3.status} without JSON`);
   }
   if (!response3.ok) {
-    const message = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `HTTP ${response3.status}`;
-    throw new PluginCliError(message);
+    const message2 = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : `HTTP ${response3.status}`;
+    throw new PluginCliError(message2);
   }
   return payload;
 }
@@ -111641,8 +111662,8 @@ var init_cli2 = __esm({
     init_protocol();
     PluginCliError = class extends Error {
       exitCode;
-      constructor(message, exitCode = 1) {
-        super(message);
+      constructor(message2, exitCode = 1) {
+        super(message2);
         this.name = "PluginCliError";
         this.exitCode = exitCode;
       }
@@ -112662,8 +112683,8 @@ var init_worktree = __esm({
     "use strict";
     init_errors2();
     WorktreeError = class extends IdeError {
-      constructor(message, code2) {
-        super(message, { code: code2, exitCode: 1 });
+      constructor(message2, code2) {
+        super(message2, { code: code2, exitCode: 1 });
         this.name = "WorktreeError";
       }
     };
@@ -112904,8 +112925,8 @@ function renderPlan2(plan, {
   ].join("\n");
 }
 function updateFailure(what, error) {
-  const { status: status2, signal, message } = error;
-  const how = typeof status2 === "number" ? `exited with status ${status2}` : typeof signal === "string" ? `was stopped by ${signal}` : `could not run (${String(message).split("\n")[0]})`;
+  const { status: status2, signal, message: message2 } = error;
+  const how = typeof status2 === "number" ? `exited with status ${status2}` : typeof signal === "string" ? `was stopped by ${signal}` : `could not run (${String(message2).split("\n")[0]})`;
   return new IdeError(
     `The update did not finish: ${what} ${how}. Its own message is above. Retry with: tmux-ide update`,
     { code: "UPDATE_FAILED", cause: error instanceof Error ? error : void 0 }
@@ -113092,8 +113113,8 @@ var init_pane_widget = __esm({
     "use strict";
     init_src2();
     PaneWidgetRefusal = class extends Error {
-      constructor(reason, message) {
-        super(message);
+      constructor(reason, message2) {
+        super(message2);
         this.reason = reason;
         this.name = "PaneWidgetRefusal";
       }
@@ -113218,6 +113239,14 @@ var init_server3 = __esm({
     SERVER_BIND_HOST = "127.0.0.1";
   }
 });
+
+// packages/daemon/src/lib/require-supported-node.ts
+init_node_requirement();
+var message = unsupportedNodeMessage(process.versions);
+if (message !== null) {
+  process.stderr.write(message);
+  process.exit(1);
+}
 
 // bin/cli.ts
 init_src();
@@ -113581,7 +113610,7 @@ async function execBunWidget(surface, scriptPath, args, commandLabel, extraEnv =
       compiledBinary: findCompiledTui(),
       preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
     },
-    { log: (message) => process.stderr.write(`[tmux-ide] ${message}
+    { log: (message2) => process.stderr.write(`[tmux-ide] ${message2}
 `) }
   );
   if (launch2.mode === "unavailable") {
@@ -113808,7 +113837,7 @@ async function runApp(appArgs) {
       compiledBinary: findCompiledTui(),
       preferSource: process.env.TMUX_IDE_TUI_SOURCE === "1"
     },
-    { log: (message) => process.stderr.write(`[tmux-ide] ${message}
+    { log: (message2) => process.stderr.write(`[tmux-ide] ${message2}
 `) }
   );
   try {
@@ -114242,12 +114271,12 @@ try {
     case "send": {
       const target = values.to ?? positionals[1];
       const messageStart = values.to ? 1 : 2;
-      let message = positionals.slice(messageStart).join(" ");
-      if (!message && !process.stdin.isTTY) {
+      let message2 = positionals.slice(messageStart).join(" ");
+      if (!message2 && !process.stdin.isTTY) {
         const { readFileSync: readFileSync50 } = await import("node:fs");
-        message = readFileSync50(0, "utf-8").trim();
+        message2 = readFileSync50(0, "utf-8").trim();
       }
-      await (await Promise.resolve().then(() => (init_send(), send_exports))).send(null, { json: json2, to: target, message, noEnter: values["no-enter"] });
+      await (await Promise.resolve().then(() => (init_send(), send_exports))).send(null, { json: json2, to: target, message: message2, noEnter: values["no-enter"] });
       break;
     }
     case "settings": {
@@ -115185,9 +115214,9 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
             );
           }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (json2) console.log(JSON.stringify({ ok: false, error: message }, null, 2));
-          else console.error(`manifest pack NOT installed: ${message}`);
+          const message2 = err instanceof Error ? err.message : String(err);
+          if (json2) console.log(JSON.stringify({ ok: false, error: message2 }, null, 2));
+          else console.error(`manifest pack NOT installed: ${message2}`);
           process.exitCode = 1;
         }
         break;
@@ -115288,11 +115317,11 @@ Known panels: ${POPUP_WIDGETS2.join(", ")}.`,
           announcement = buildCardAnnouncement2(JSON.parse(source));
         }
       } catch (error) {
-        const message = error instanceof PaneWidgetRefusal2 || error instanceof WidgetAssetStoreError2 ? error.message : `The widget input could not be read: ${error.message}`;
+        const message2 = error instanceof PaneWidgetRefusal2 || error instanceof WidgetAssetStoreError2 ? error.message : `The widget input could not be read: ${error.message}`;
         if (json2) {
-          console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+          console.log(JSON.stringify({ ok: false, error: message2 }, null, 2));
         } else {
-          console.error(message);
+          console.error(message2);
         }
         process.exit(1);
       }

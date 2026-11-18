@@ -22,7 +22,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      placeholder: macOS 15, zsh, tmux 3.4, Node 20
+      placeholder: macOS 15, zsh, tmux 3.4, Node 24
     validations:
       required: true
   - type: textarea

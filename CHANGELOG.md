@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- An npm install of tmux-ide needs Node.js 24 or newer (`engines` is `>=24`); Node.js 20 reached end of life on 30 April 2026, and Node.js 22 is no longer tested. On an older Node.js the CLI exits at once with a message naming Node.js 24 and the running version, instead of failing later with an unrelated error. `tmux-ide doctor` checks for Node.js 24. The website installer is unaffected: it brings its own Node.js 24 runtime.
+
 ## 2.9.26
 
 - A pane at tmux's `history-limit` no longer costs a capture of its whole history and a full seed to every client each time it pauses. At the limit tmux collects the oldest tenth of history at once; the replica now does the same instead of dropping one row at a time, so the history check 250 ms after output finds no gap and does not reseed (#430). Over the Mac app's SSH tunnel at 5 ms round trip, with three neighbour panes printing 20 lines a second at the limit, the slowest 1 in 10 single keys went from 268 ms to 24 ms (median of 3 runs).

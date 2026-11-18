@@ -17,6 +17,7 @@ import { findCompiledTui, hasDevelopmentTuiSource, isBunAvailable } from "./tui/
 import { claudeSettingsPath } from "./tui/integrations/claude.ts";
 import { readNotificationPrefs, resolveNativeMacosNotifierPath } from "./tui/chrome/notify.ts";
 import { resolveConfig } from "./lib/resolved-config.ts";
+import { MINIMUM_NODE_MAJOR, isSupportedNodeVersion } from "./lib/node-requirement.ts";
 import {
   collectDaemonProvenanceReport,
   type DaemonProvenanceReport,
@@ -436,12 +437,11 @@ export function tmuxServerSocketRow(environment: NodeJS.ProcessEnv, uid: number)
 }
 
 export function nodeVersionRow(version: string): CheckResult {
-  const major = Number(version.split(".")[0]);
-  const pass = Number.isInteger(major) && major >= 20;
+  const pass = isSupportedNodeVersion(version);
   return {
-    label: "Node.js ≥ 20",
+    label: `Node.js ≥ ${MINIMUM_NODE_MAJOR}`,
     pass,
-    detail: pass ? `v${version}` : `Node ${version} (need ≥ 20)`,
+    detail: pass ? `v${version}` : `Node ${version} (need ≥ ${MINIMUM_NODE_MAJOR})`,
     optional: false,
   };
 }
