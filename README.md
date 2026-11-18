@@ -30,7 +30,7 @@ curl -fsSL https://tmux-ide.com/install.sh | sh
 tmux-ide app
 ```
 
-Or, with Node.js 20+ already installed:
+Or, with Node.js 24+ already installed:
 
 ```bash
 npm install -g tmux-ide

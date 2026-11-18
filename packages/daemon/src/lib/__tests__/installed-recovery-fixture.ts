@@ -102,7 +102,7 @@ async function resolveCli(root: string): Promise<{ path: string; label: string }
     bundle: true,
     platform: "node",
     format: "esm",
-    target: "node20",
+    target: "node24",
     logLevel: "silent",
     plugins: [
       {

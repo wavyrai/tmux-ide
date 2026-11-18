@@ -3,7 +3,7 @@
 /**
  * Bounded daemon soak harness.
  *
- * Usage (Node 22.18+ / 24 — the script imports a `.ts` module):
+ * Usage (Node 24+ — the script imports a `.ts` module):
  *   pnpm build
  *   node packages/daemon/scripts/soak-daemon.mjs --duration 30m --out ./soak-artifacts
  *   node packages/daemon/scripts/soak-daemon.mjs --config soak.json --duration 24h

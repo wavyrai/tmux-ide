@@ -50,7 +50,7 @@ const result = await build({
   outfile,
   bundle: true,
   platform: "node",
-  target: "node20",
+  target: "node24",
   format: "esm",
   // Third-party deps (`zod`, `ws`, `node-pty`, `@hono/...`, …) stay
   // external — they're resolved from `node_modules` at runtime. The

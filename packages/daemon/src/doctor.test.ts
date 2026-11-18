@@ -178,11 +178,16 @@ describe("notifierRow", () => {
 });
 
 describe("runtime prerequisites", () => {
-  it("requires Node20 while accepting newer runtimes", async () => {
+  it("requires Node 24 while accepting newer runtimes", async () => {
     const { nodeVersionRow } = await import("./doctor.ts");
-    expect(nodeVersionRow("18.20.0").pass).toBe(false);
-    expect(nodeVersionRow("20.0.0").pass).toBe(true);
-    expect(nodeVersionRow("24.2.0").pass).toBe(true);
+    expect(nodeVersionRow("20.20.2").pass).toBe(false);
+    expect(nodeVersionRow("22.23.1")).toMatchObject({
+      pass: false,
+      label: "Node.js ≥ 24",
+      detail: "Node 22.23.1 (need ≥ 24)",
+    });
+    expect(nodeVersionRow("24.0.0").pass).toBe(true);
+    expect(nodeVersionRow("25.1.0").pass).toBe(true);
   });
   it("accepts absent optional configuration but fails malformed present configuration", async () => {
     const { workspaceConfigRow } = await import("./doctor.ts");
