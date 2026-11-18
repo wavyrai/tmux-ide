@@ -402,3 +402,98 @@ fn the_proof_of_a_route_has_one_bound() {
         "the proof took {took:?}"
     );
 }
+
+/// The remote daemon is updated underneath an open route: it restarts on the
+/// same port with a new version. The route no longer proves itself, a reset
+/// replaces it, and the replacement's clients get the new version's gates.
+#[test]
+fn a_reconnect_to_an_updated_daemon_takes_its_new_version() {
+    let versioned = |version: &str| {
+        let mut value = identity();
+        value["productVersion"] = version.into();
+        value
+    };
+    let descriptor = |version: &str| {
+        let mut value = versioned(version);
+        value.as_object_mut().unwrap().remove("ok");
+        value["port"] = 4111.into();
+        value["bindHostname"] = "127.0.0.1".into();
+        value["authToken"] = "fixture".into();
+        RemoteDescriptor::parse(
+            &serde_json::to_vec(&serde_json::json!({"version":1,"daemon":value})).unwrap(),
+            None,
+        )
+        .unwrap()
+    };
+    let scope = crate::tmux_handoff::ServerScope {
+        server_id: format!("tmux-server.{}", "a".repeat(32)),
+        generation: "d9c81ebd-5785-45a3-9206-a2aa497d68fc".into(),
+    };
+    let servers = serde_json::json!({"version":1,"servers":[{"state":"online","serverId":scope.server_id,"label":"Remote","generation":scope.generation}]});
+    // One port, one daemon at a time: a connection made to the old daemon
+    // closes once the new one runs, as a restarted process's would.
+    let running = Arc::new(Mutex::new(String::from("2.9.25")));
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let daemon = running.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let daemon = daemon.clone();
+            let (servers, versioned) = (servers.clone(), versioned);
+            thread::spawn(move || {
+                let started = daemon.lock().unwrap().clone();
+                loop {
+                    let mut bytes = Vec::new();
+                    while !bytes.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0];
+                        if stream.read_exact(&mut byte).is_err() {
+                            return;
+                        }
+                        bytes.push(byte[0]);
+                    }
+                    if *daemon.lock().unwrap() != started {
+                        return;
+                    }
+                    let line = String::from_utf8_lossy(&bytes);
+                    let line = line.lines().next().unwrap_or_default();
+                    if line.contains("/identity") {
+                        reply(&mut stream, versioned(&started));
+                    } else if line.contains("/api/v1/tmux-servers ") {
+                        reply(&mut stream, servers.clone());
+                    } else {
+                        reply(&mut stream, serde_json::json!({}));
+                    }
+                }
+            });
+        }
+    });
+    let source = CatalogSource::remote(
+        crate::tmux_ssh::SshTarget::parse("updated-daemon.invalid").unwrap(),
+        None,
+    );
+    let CatalogSource::Remote(shared) = &source else {
+        panic!("not remote")
+    };
+    *shared.route.lock().unwrap() =
+        Some(RemoteTransport::fixture(port, descriptor("2.9.25")).unwrap());
+    let old = source.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    let client = old.select_server(&scope).unwrap();
+    assert_eq!(client.product_version().as_deref(), Some("2.9.25"));
+    assert!(!client.window_streams());
+    *running.lock().unwrap() = String::from("2.9.27");
+    // The old route cannot reach the new daemon: its descriptor's version is
+    // not what the new daemon's identity says.
+    assert!(!shared.route.lock().unwrap().as_ref().unwrap().proven());
+    source.reset(Some(&old)).unwrap();
+    assert!(shared.route.lock().unwrap().is_none());
+    // In place of SSH discovery, which reads the new daemon's record.
+    *shared.route.lock().unwrap() =
+        Some(RemoteTransport::fixture(port, descriptor("2.9.27")).unwrap());
+    let new = source.discover(&Arc::new(AtomicBool::new(false))).unwrap();
+    let updated = new.select_server(&scope).unwrap();
+    assert_eq!(updated.product_version().as_deref(), Some("2.9.27"));
+    assert!(updated.window_streams());
+    drop((client, updated, old, new));
+    source.shutdown().unwrap();
+}

@@ -394,6 +394,9 @@ fn parse(
     }
     Ok(descriptor)
 }
+#[cfg(all(test, unix))]
+#[path = "capability_remote_version_tests.rs"]
+mod remote_version_tests;
 #[cfg(test)]
 #[path = "capability_tests.rs"]
 mod tests;
