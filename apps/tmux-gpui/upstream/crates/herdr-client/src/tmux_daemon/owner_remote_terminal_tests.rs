@@ -196,12 +196,25 @@ fn owned_openssh_real_daemon_terminal() {
         .collect();
     assert_eq!(scopes.len(), 1);
     let client = owner.select_server(scopes[0]).unwrap();
+    // The version gates follow the daemon behind the tunnel, and that daemon
+    // answers the sessions version they choose.
+    let version = client.product_version();
+    assert_eq!(version.as_deref(), Some(route.product_version()));
     let session = client
         .sessions()
         .unwrap()
         .into_iter()
         .find(|session| session.session_name == name)
         .unwrap();
+    assert_eq!(
+        session.largest_window_pane_count.is_some(),
+        client.window_streams()
+    );
+    println!(
+        "NATIVE_SSH_REMOTE_VERSION {} window_streams={}",
+        version.unwrap_or_default(),
+        client.window_streams()
+    );
     let workspace = client.open_session(&session.live_session_id).unwrap();
     let agents = client
         .observe_agents(&session.live_session_id, &workspace)
