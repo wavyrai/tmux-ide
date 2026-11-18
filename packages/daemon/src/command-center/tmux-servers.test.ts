@@ -24,6 +24,7 @@ async function fixture() {
     dispose: ReturnType<typeof vi.fn>;
     issue: ReturnType<typeof vi.fn>;
     openSession: ReturnType<typeof vi.fn>;
+    registryGet: ReturnType<typeof vi.fn>;
   }[] = [];
   const manager = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe: async (selector) => ({
@@ -72,6 +73,11 @@ async function fixture() {
         pane: "pane.same",
       }));
       const nativeBrowser = vi.fn(async () => null);
+      const registryGet = vi.fn((_name: string) => ({
+        name: "same",
+        sessionName: "same",
+        projectDir: "/private/project",
+      }));
       const openSession = vi.fn(async (liveSessionId: string) => ({
         workspaceName: "same",
         liveSessionId,
@@ -87,6 +93,7 @@ async function fixture() {
         discover,
         discoverShell,
         openSession,
+        registryGet,
       });
       return {
         nativeBrowser,
@@ -102,7 +109,7 @@ async function fixture() {
         dispose,
         workspaceRegistry: {
           list: () => [{ name: "workspace.alias", sessionName: "same" }],
-          get: () => ({ name: "same", sessionName: "same", projectDir: "/private/project" }),
+          get: registryGet,
         },
         paneStreamRuntime: { coordinator: { issue } },
       } as unknown as NativeTmuxServerOwner;
@@ -726,6 +733,9 @@ describe("attach: open, inventory and issue in one request (attach-rtt)", () => 
     });
     const [request] = owner.issue.mock.calls[0]!;
     expect(request).toMatchObject({ panes: ["pane.ccc"], semanticWindowId: "window.two" });
+    // The stream is bound to the session that was opened, never one the client names.
+    expect(request.workspaceName).toBe("same");
+    expect(owner.registryGet.mock.calls.map(([name]) => name)).not.toContain("other");
   });
 
   it("issues nothing when no window fits, and leaves the choice to the app", async () => {
@@ -751,6 +761,65 @@ describe("attach: open, inventory and issue in one request (attach-rtt)", () => 
     expect((await attach(f, {}, f.scope(f.a), null)).response.status).toBe(401);
     expect((await attach(f, { maxPanes: 0 })).response.status).toBe(400);
     expect((await attach(f, { extra: true })).response.status).toBe(400);
+    expect(owner.openSession).not.toHaveBeenCalled();
+    expect(owner.issue).not.toHaveBeenCalled();
+  });
+
+  it("refuses an open that answers another session or a workspace it does not know", async () => {
+    for (const fault of ["live", "registry"] as const) {
+      const f = await fixture();
+      const owner = f.ownersCreated[0]!;
+      owner.discover.mockResolvedValue(snapshot);
+      if (fault === "live")
+        owner.openSession.mockResolvedValue({
+          workspaceName: "same",
+          liveSessionId: `live-session.${"b".repeat(20)}`,
+        });
+      else owner.registryGet.mockReturnValue(undefined);
+      const { response } = await attach(f, {});
+      expect(response.status, fault).toBe(409);
+      expect(await response.json()).toEqual({ error: { code: "stale-generation" } });
+      expect(owner.discover).not.toHaveBeenCalled();
+      expect(owner.issue).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses another generation in the body or the header before opening anything", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue(snapshot);
+    const other = randomUUID();
+    const requestId = randomUUID();
+    const send = (bodyGeneration: string, headerGeneration: string) =>
+      f.app.request(`${base}${f.scope(f.a)}/sessions/${live}/attach`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Origin: "tmux-ide://app",
+          "X-Tmux-Ide-Request-Id": requestId,
+          "X-Tmux-Ide-Expected-Daemon-Instance-Id": headerGeneration,
+          "X-Tmux-Ide-Host-Client-Id": "host.a",
+        },
+        body: JSON.stringify({
+          version: 1,
+          preferredPane: null,
+          maxPanes: 24,
+          issue: {
+            requestId,
+            expectedDaemonInstanceId: bodyGeneration,
+            stream: { protocolVersion: PANE_STREAM_PROTOCOL_VERSION, viewerMode: "interactive" },
+          },
+        }),
+      });
+    for (const [body, header] of [
+      [other, f.a.generation!],
+      [f.a.generation!, other],
+    ]) {
+      const response = await send(body!, header!);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: { code: "stale-generation" } });
+    }
     expect(owner.openSession).not.toHaveBeenCalled();
     expect(owner.issue).not.toHaveBeenCalled();
   });

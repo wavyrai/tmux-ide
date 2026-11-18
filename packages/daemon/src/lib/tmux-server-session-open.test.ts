@@ -67,6 +67,22 @@ describe("re-opening an already adopted session", () => {
     expect(commands.length).toBeGreaterThan(1);
   });
 
+  it("promotes when a stamp holds a tab, whatever the field after the tab says", async () => {
+    const { opener, commands } = fixture(row({ pane: "pane.promoted.a\tpane.promoted.b" }));
+    await expect(opener.openSession(live)).rejects.toThrow();
+    expect(commands.length).toBeGreaterThan(1);
+  });
+
+  it("never skips the agent admission of an agent open", async () => {
+    const { opener, commands } = fixture([row(), row({ pane: "pane.promoted.b" })].join("\n"));
+    await expect(
+      opener.openAgent(live, { observedPaneId: "pane.promoted.a", observedAgentId: "agent.a" }),
+    ).rejects.toThrow("promotion attempted");
+    // The admission's own scan follows the identity read.
+    expect(commands.length).toBeGreaterThan(1);
+    expect(commands[1]![0]).toBe("if-shell");
+  });
+
   it("refuses a live id that names no current session", async () => {
     const { opener, commands } = fixture(row({ session: "$9" }));
     await expect(opener.openSession(live)).rejects.toThrow(/no longer available/);

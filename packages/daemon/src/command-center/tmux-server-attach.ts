@@ -16,6 +16,7 @@ export const TmuxServerAttachRequestSchemaZ = z
     maxPanes: z.number().int().min(1).max(256),
     issue: z
       .object({
+        expectedDaemonInstanceId: z.uuid(),
         stream: z.record(z.string(), z.unknown()),
       })
       .catchall(z.unknown()),

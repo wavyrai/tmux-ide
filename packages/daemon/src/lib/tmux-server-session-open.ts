@@ -49,6 +49,9 @@ export function createNativeTmuxSessionOpener(options: {
       .map((line) => line.split("\t"))
       .filter((fields) => fields.length >= 7)
       .map((fields) => ({
+        // A tab can only come from a window or pane stamp: such a row never
+        // takes the fast path below.
+        exact: fields.length === 7,
         pid: fields[0]!,
         id: fields[1]!,
         created: fields[2]!,
@@ -80,7 +83,8 @@ export function createNativeTmuxSessionOpener(options: {
       aliases.length === 1 &&
       !options.registry.isVolatile(aliases[0]!.name) &&
       rows.every(
-        (row) => row.adopted === "1" && row.window.length > 0 && hasValidPaneStamp(row.pane),
+        (row) =>
+          row.exact && row.adopted === "1" && row.window.length > 0 && hasValidPaneStamp(row.pane),
       )
     ) {
       assertOpen();

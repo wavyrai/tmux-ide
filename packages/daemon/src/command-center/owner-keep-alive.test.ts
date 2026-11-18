@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ownerKeepAlive } from "./owner-keep-alive.ts";
 
 const token = "owner-token-for-keep-alive";
+const OWNER_IDLE = 30_000;
 let server: Server | null = null;
 afterEach(async () => {
   server?.closeAllConnections();
@@ -13,70 +14,81 @@ afterEach(async () => {
   server = null;
 });
 
-async function serve(): Promise<number> {
+/** A server whose accepted sockets are kept, in order, for their idle bound. */
+async function serve(): Promise<{ port: number; accepted: Socket[] }> {
   const app = new Hono();
-  app.use("*", ownerKeepAlive(token, 4_000));
+  app.use("*", ownerKeepAlive(token, OWNER_IDLE));
   app.get("/api/ping", (c) => c.text("pong"));
   server = createServer(getRequestListener(app.fetch));
-  // Node closes an idle connection after keepAliveTimeout plus its 1 s buffer.
+  // Node closes an idle connection after keepAliveTimeout plus its buffer.
   server.keepAliveTimeout = 100;
+  const accepted: Socket[] = [];
+  server.on("connection", (socket) => accepted.push(socket));
   await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", () => resolve()));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("no port");
-  return address.port;
+  return { port: address.port, accepted };
 }
 
-/** One keep-alive request; resolves with the socket and when it closed. */
-async function request(port: number, authorization: string | null) {
-  const socket: Socket = connect(port, "127.0.0.1");
-  let closedAt: number | null = null;
-  socket.on("close", () => (closedAt = Date.now()));
-  await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
+/** One keep-alive request; resolves once the answer arrived. */
+async function request(port: number, authorization: string | null, socket?: Socket) {
+  const client = socket ?? connect(port, "127.0.0.1");
+  if (!socket) await new Promise<void>((resolve) => client.once("connect", () => resolve()));
   const answered = new Promise<void>((resolve) => {
     let text = "";
-    socket.on("data", (chunk) => {
+    const onData = (chunk: Buffer) => {
       text += chunk.toString();
-      if (text.includes("pong")) resolve();
-    });
+      if (text.includes("pong")) {
+        client.off("data", onData);
+        resolve();
+      }
+    };
+    client.on("data", onData);
   });
-  socket.write(
+  client.write(
     `GET /api/ping HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n${
       authorization ? `Authorization: ${authorization}\r\n` : ""
     }\r\n`,
   );
   await answered;
-  return { socket, closed: () => closedAt };
+  // The server's own finish handlers run before the bytes reach the client.
+  await new Promise((resolve) => setImmediate(resolve));
+  return client;
 }
 
 describe("owner keep-alive", () => {
-  it("keeps an idle owner connection open past Node's bound; others close as before", async () => {
-    const port = await serve();
+  it("gives an idle owner connection the long bound and every other one Node's", async () => {
+    const { port, accepted } = await serve();
     const owner = await request(port, `Bearer ${token}`);
     const anonymous = await request(port, null);
     const wrong = await request(port, "Bearer not-the-owner");
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    expect(anonymous.closed()).not.toBeNull();
-    expect(wrong.closed()).not.toBeNull();
-    expect(owner.closed()).toBeNull();
-    owner.socket.destroy();
+    expect(accepted.map((socket) => socket.timeout)).toEqual([
+      OWNER_IDLE,
+      expect.any(Number),
+      expect.any(Number),
+    ]);
+    expect(accepted[1]!.timeout).toBeLessThan(5_000);
+    expect(accepted[2]!.timeout).toBe(accepted[1]!.timeout);
+    for (const socket of [owner, anonymous, wrong]) socket.destroy();
   });
 
-  it("lets the next request on the same owner connection succeed after the pause", async () => {
-    const port = await serve();
+  it("keeps the owner bound for each later owner request on the same connection", async () => {
+    const { port, accepted } = await serve();
     const owner = await request(port, `Bearer ${token}`);
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
-    const again = new Promise<void>((resolve) => {
-      let text = "";
-      owner.socket.on("data", (chunk) => {
-        text += chunk.toString();
-        if (text.includes("pong")) resolve();
-      });
-    });
-    owner.socket.write(
-      `GET /api/ping HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${token}\r\n\r\n`,
-    );
-    await again;
-    expect(owner.closed()).toBeNull();
-    owner.socket.destroy();
+    await request(port, `Bearer ${token}`, owner);
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]!.timeout).toBe(OWNER_IDLE);
+    owner.destroy();
+  });
+
+  it("closes an idle anonymous connection while an owner connection stays open", async () => {
+    const { port } = await serve();
+    const owner = await request(port, `Bearer ${token}`);
+    const anonymous = await request(port, null);
+    let ownerClosed = false;
+    owner.on("close", () => (ownerClosed = true));
+    await new Promise<void>((resolve) => anonymous.once("close", () => resolve()));
+    expect(ownerClosed).toBe(false);
+    owner.destroy();
   });
 });

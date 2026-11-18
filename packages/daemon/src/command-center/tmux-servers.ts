@@ -305,6 +305,13 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
       const server = scope(c);
       const liveSessionId = workspaceSchema.parse(c.req.param("liveSessionId"));
       const request = TmuxServerAttachRequestSchemaZ.parse(await boundedJson(c.req.raw));
+      // The issue below checks the same, but only after the open: refuse a
+      // request for another generation before it can promote anything.
+      if (
+        request.issue.expectedDaemonInstanceId !== server.generation ||
+        c.req.header("X-Tmux-Ide-Expected-Daemon-Instance-Id") !== server.generation
+      )
+        throw new TmuxServerScopeError("stale-generation");
       const result = await options.owners.withOwner(server, async (owner) => {
         const opened = await owner.openSession(liveSessionId);
         const workspace = owner.workspaceRegistry.get(opened.workspaceName);
@@ -347,7 +354,9 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
         const issued = await issueApp.request(
           new Request(url, { method: "POST", headers, body: JSON.stringify(body) }),
         );
-        // A refusal before issue (auth, malformed body) answers as issue would.
+        // The issue route answers a refused issue as 200 with an error
+        // envelope, which goes back in `issue` with the open and inventory
+        // (the app then issues again). A non-200 is an auth or body refusal.
         if (issued.status !== 200) return { kind: "refused" as const, refused: issued };
         return {
           kind: "attached" as const,
