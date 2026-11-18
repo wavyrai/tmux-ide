@@ -1,7 +1,7 @@
 # Isolated development CI
 
 `.github/workflows/development-instances.yml` runs fast development contracts on
-pull requests with Node 22 and 24, pinned Bun from `.bun-version`, at most two
+pull requests with Node 24, pinned Bun from `.bun-version`, at most two
 matrix jobs and one Vitest worker per job. The helper inventory is explicit;
 development daemon tests are selected by `development-*.test.ts`. This adds CI
 coverage without replacing `pnpm check` or `pnpm release:opentui:check`.

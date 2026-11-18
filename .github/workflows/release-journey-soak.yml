@@ -2,7 +2,7 @@ name: Release journey soak
 
 # Runs the packed OpenTUI installed-package journey (scripts/pack-check-run.mjs)
 # several times in one job, in the configurations the release and CI use:
-# Node 22 or 24, and the system tmux ("system-fallback", as CI's OpenTUI
+# Node 24, and the system tmux ("system-fallback", as CI's OpenTUI
 # qualification) or the bundled patched tmux ("bundled", as the npm publish job
 # and the installed-package lane). It publishes nothing. Card #764.
 on:

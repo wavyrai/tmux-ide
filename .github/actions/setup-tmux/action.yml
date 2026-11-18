@@ -3,7 +3,7 @@ description: Build upstream tmux 3.7c for system-fallback CI tests (bundled capt
 inputs:
   test-node-version:
     description: Node version to restore after building native prerequisites
-    default: "22"
+    default: "24"
 runs:
   using: composite
   steps:

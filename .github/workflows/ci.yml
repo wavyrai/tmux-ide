@@ -35,12 +35,8 @@ jobs:
         run: npm run test:installer-native
 
   cli:
-    name: CLI checks (Node ${{ matrix.node }})
+    name: CLI checks (Node 24)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [20, 22]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,7 +47,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           cache: pnpm
 
       - name: Setup Bun
@@ -62,7 +58,7 @@ jobs:
       - name: Install supported tmux for installed ownership smoke
         uses: ./.github/actions/setup-tmux
         with:
-          test-node-version: ${{ matrix.node }}
+          test-node-version: 24
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -77,7 +73,7 @@ jobs:
       # must commit the build of its own sources. Other pull requests leave the
       # committed copy alone; the release workflow checks the tagged commit.
       - name: Committed bin/cli.js is the build of this commit
-        if: github.event_name == 'pull_request' && matrix.node == 22
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -99,29 +95,25 @@ jobs:
       # is kept below. A call to a shared socket path, or one from a test that
       # did not declare a daemon without a server, fails the run.
       - name: Run test suite
-        if: matrix.node >= 22
         env:
           TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:unit
 
       - name: Run comparative benchmark contract tests
-        if: matrix.node >= 22
         run: pnpm test:benchmark-comparative
 
       - name: Run canonical daemon and authentication suites
-        if: matrix.node >= 22
         env:
           TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:daemon-bun
 
       - name: Run TUI renderer suite
-        if: matrix.node >= 22
         env:
           TMUX_IDE_TEST_TMUX_GUARD_REPORT: ${{ runner.temp }}/tmux-guard
         run: pnpm test:tui-renderer
 
       - name: Summarize tmux guard records
-        if: always() && matrix.node >= 22
+        if: always()
         run: |
           dir="$RUNNER_TEMP/tmux-guard"
           mkdir -p "$dir"
@@ -146,16 +138,15 @@ jobs:
           test "$refused" = 0 && test "$undeclared" = 0
 
       - name: Upload tmux guard records
-        if: always() && matrix.node >= 22
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tmux-guard-node-${{ matrix.node }}
+          name: tmux-guard-node-24
           path: ${{ runner.temp }}/tmux-guard
           if-no-files-found: ignore
           retention-days: 14
 
       - name: Validate isolated production-component gallery
-        if: matrix.node >= 22
         run: |
           pnpm typecheck:tui-gallery
           pnpm exec eslint scripts/tui-gallery
@@ -165,7 +156,6 @@ jobs:
         run: pnpm pack:check
 
       - name: Install tarball and smoke canonical headless ownership
-        if: matrix.node >= 22
         env:
           TMUX_IDE_PACK_NATIVE_MODE: system-fallback
         run: pnpm test:pack-installed
@@ -190,7 +180,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Setup Bun
@@ -217,7 +207,7 @@ jobs:
           node --version > "$proof/node-version.txt"
           cp native/tmux/provenance.json "$proof/provenance.json"
           # setup-tmux retains this exact upstream checkout; build a separate
-          # patched bundle, preserving system-fallback and Node 22 coverage.
+          # patched bundle, preserving system-fallback and Node 24 coverage.
           bundle="$RUNNER_TEMP/tmux-boundary-bundle"
           node scripts/build-bundled-tmux.mjs --source "$RUNNER_TEMP/tmux-supported-source" --output "$bundle" --jobs 2 2>&1 | tee "$proof/build.log"
           cp "$bundle/manifest.json" "$proof/bundle-manifest.json"
@@ -295,7 +285,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -349,7 +339,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
@@ -386,7 +376,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies

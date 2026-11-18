@@ -30,7 +30,7 @@ export const INSTALL_METHODS: readonly InstallMethod[] = [
     id: "npm",
     label: "npm",
     command: "npm install -g tmux-ide",
-    note: "Requires Node.js 20 or newer",
+    note: "Requires Node.js 24 or newer",
   },
 ] as const;
 
@@ -48,7 +48,7 @@ export const LANDING_FAQ: readonly LandingFaqItem[] = [
   {
     question: "How do I install tmux-ide?",
     answer:
-      "Run `curl -fsSL https://tmux-ide.com/install.sh | sh`, then `tmux-ide app`. The installer works on macOS and glibc Linux, needs no sudo, and bundles tmux 3.7c and its own Node.js runtime. With Node.js 20 or newer you can use `npm install -g tmux-ide` instead.",
+      "Run `curl -fsSL https://tmux-ide.com/install.sh | sh`, then `tmux-ide app`. The installer works on macOS and glibc Linux, needs no sudo, and bundles tmux 3.7c and its own Node.js runtime. With Node.js 24 or newer you can use `npm install -g tmux-ide` instead.",
   },
   {
     question: "Is tmux-ide a new terminal multiplexer?",
