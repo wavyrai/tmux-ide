@@ -7416,7 +7416,7 @@ var init_causal_cell = __esm({
 
 // packages/contracts/src/terminal-delivery.ts
 import { z as z48 } from "zod";
-var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ;
+var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION, TERMINAL_DELIVERY_HISTORY_TAIL_ROWS, TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS, TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, TERMINAL_HISTORY_EMPTY_DIGEST, TerminalDeliveryHistoryCommitmentSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryHistoryRequestSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ, TerminalSemanticHistoryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
     "use strict";
@@ -7429,6 +7429,9 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION = /* @__PURE__ */ (() => 109)();
     TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION = /* @__PURE__ */ (() => 110)();
     TERMINAL_DELIVERY_PROTOCOL_VERSION = /* @__PURE__ */ (() => 1)();
+    TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION = /* @__PURE__ */ (() => 122)();
+    TERMINAL_DELIVERY_HISTORY_TAIL_ROWS = /* @__PURE__ */ (() => 200)();
+    TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS = /* @__PURE__ */ (() => 2e3)();
     TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = /* @__PURE__ */ (() => 16)();
     TERMINAL_DELIVERY_CHUNK_BYTES = /* @__PURE__ */ (() => 256 * 1024)();
     TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES = /* @__PURE__ */ (() => 512 * 1024)();
@@ -7457,12 +7460,19 @@ var init_terminal_delivery = __esm({
       encoding: TerminalDeliveryEncodingSchemaZ,
       fallbackEncoding: z48.literal("semantic-v1").nullable().optional(),
       alternateScreenProjection: z48.literal("deferred-history-v1").optional(),
+      /** Capability 122: history on demand. */
+      partialHistory: z48.literal("tail-v1").optional(),
       richPlacements: z48.boolean(),
       generation: SessionRuntimeGenerationSchemaZ,
       deliveryNonce: z48.uuid()
     }).strict().superRefine((value, context) => {
       if (value.alternateScreenProjection && value.encoding !== "semantic-binary-v1")
         context.addIssue({ code: "custom", message: "projection requires binary semantic delivery" });
+      if (value.partialHistory && (value.encoding !== "semantic-compact-v1" && value.encoding !== "semantic-binary-v1" || value.alternateScreenProjection))
+        context.addIssue({
+          code: "custom",
+          message: "partial history requires compact or binary semantic delivery and no projection"
+        });
       if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
         context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
       if (value.richPlacements && value.encoding !== "semantic-v1" && value.encoding !== "semantic-compact-v1" && value.encoding !== "semantic-binary-v1")
@@ -7479,6 +7489,14 @@ var init_terminal_delivery = __esm({
         ])
       }).strict()
     ]))();
+    TERMINAL_HISTORY_EMPTY_DIGEST = /* @__PURE__ */ (() => "0000000000000000")();
+    TerminalDeliveryHistoryCommitmentSchemaZ = /* @__PURE__ */ (() => z48.object({
+      rows: z48.number().int().nonnegative().max(1e6),
+      digest: z48.string().regex(/^[0-9a-f]{16}$/u)
+    }).strict().refine(
+      (value) => value.rows > 0 || value.digest === TERMINAL_HISTORY_EMPTY_DIGEST,
+      "an empty commitment has the empty digest"
+    ))();
     DeliveryAddressSchemaZ = /* @__PURE__ */ (() => z48.object({
       workspaceName: WorkspaceIdSchemaZ,
       semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -7499,7 +7517,7 @@ var init_terminal_delivery = __esm({
       causalCellProof: CausalCellProofV1SchemaZ.optional(),
       protocolVersion: z48.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
       encoding: TerminalDeliveryEncodingSchemaZ,
-      frame: z48.enum(["seed", "patch", "tombstone"]),
+      frame: z48.enum(["seed", "patch", "tombstone", "history"]),
       baseRevision: z48.number().int().min(-1).nullable(),
       canonicalRevision: z48.number().int().nonnegative(),
       canonicalStateHash: z48.string().regex(/^[0-9a-f]{16}$/u),
@@ -7507,7 +7525,9 @@ var init_terminal_delivery = __esm({
       representationBytes: z48.number().int().nonnegative().max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
       chunkCount: z48.number().int().positive().max(256),
       canonicalEquivalent: z48.boolean(),
-      history: z48.enum(["complete", "truncated", "not-applicable"]),
+      history: z48.enum(["complete", "partial", "truncated", "not-applicable"]),
+      /** Capability 122: the history rows the client does not hold, oldest first. */
+      historyUnloaded: TerminalDeliveryHistoryCommitmentSchemaZ.optional(),
       richPlacements: z48.boolean()
     }).strict().superRefine((value, context) => {
       const semantic = value.encoding === "semantic-v1" || value.encoding === "semantic-compact-v1" || value.encoding === "semantic-binary-v1";
@@ -7522,12 +7542,27 @@ var init_terminal_delivery = __esm({
         });
       if (value.frame === "seed" && value.baseRevision !== null)
         context.addIssue({ code: "custom", message: "seed baseRevision must be null" });
-      if (value.frame !== "seed" && (value.baseRevision === null || value.canonicalRevision <= value.baseRevision))
+      if (value.frame === "history" && (value.baseRevision !== value.canonicalRevision || value.history !== "partial"))
+        context.addIssue({
+          code: "custom",
+          message: "a history frame is partial and stays at the client's revision"
+        });
+      if (value.frame !== "seed" && value.frame !== "history" && (value.baseRevision === null || value.canonicalRevision <= value.baseRevision))
         context.addIssue({
           code: "custom",
           message: "patch/tombstone requires an earlier baseRevision"
         });
-      if (semantic && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete"))
+      if (value.history === "partial" !== (value.historyUnloaded !== void 0))
+        context.addIssue({
+          code: "custom",
+          message: "a partial history carries its unloaded commitment, and only it does"
+        });
+      if (value.history === "partial" && (!semantic || value.frame === "tombstone"))
+        context.addIssue({
+          code: "custom",
+          message: "partial history is semantic and not a tombstone"
+        });
+      if (semantic && (!value.canonicalEquivalent || value.frame !== "tombstone" && value.history !== "complete" && value.history !== "partial"))
         context.addIssue({
           code: "custom",
           message: "semantic delivery must be complete canonical truth"
@@ -7568,6 +7603,12 @@ var init_terminal_delivery = __esm({
       ]),
       appliedRevision: z48.number().int().min(-1)
     }).strict())();
+    TerminalDeliveryHistoryRequestSchemaZ = /* @__PURE__ */ (() => DeliveryAddressSchemaZ.extend({
+      type: z48.literal("terminal.delivery.history-request"),
+      canonicalRevision: z48.number().int().nonnegative(),
+      unloadedRows: z48.number().int().nonnegative().max(1e6),
+      maxRows: z48.number().int().min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS)
+    }).strict())();
     TerminalDeliveryVisibilitySchemaZ = /* @__PURE__ */ (() => z48.enum([
       "visible",
       "background",
@@ -7593,6 +7634,11 @@ var init_terminal_delivery = __esm({
         tombstone: TerminalReplicaTombstonePayloadSchemaZ
       }).strict().refine((value) => value.revision > value.baseRevision, "tombstone revision must advance")
     ]))();
+    TerminalSemanticHistoryPayloadSchemaZ = /* @__PURE__ */ (() => z48.object({
+      frame: z48.literal("history"),
+      revision: z48.number().int().nonnegative(),
+      rows: z48.array(TerminalReplicaRowSchemaZ).min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS)
+    }).strict())();
   }
 });
 
@@ -7971,7 +8017,7 @@ var init_terminal_graphics = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z52 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8115,6 +8161,10 @@ var init_pane_stream = __esm({
       type: z52.literal("terminal-projection-materialize"),
       request: TerminalProjectionMaterializeSchemaZ
     }).strict())();
+    PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ = /* @__PURE__ */ (() => z52.object({
+      type: z52.literal("terminal-delivery-history-request"),
+      request: TerminalDeliveryHistoryRequestSchemaZ
+    }).strict())();
     PaneStreamTerminalDeliveryNackFrameSchemaZ = /* @__PURE__ */ (() => z52.object({ type: z52.literal("terminal-delivery-nack"), nack: TerminalDeliveryNackSchemaZ }).strict())();
     PaneStreamTerminalDeliveryVisibilityFrameSchemaZ = /* @__PURE__ */ (() => z52.object({
       type: z52.literal("terminal-delivery-visibility"),
@@ -8200,6 +8250,7 @@ var init_pane_stream = __esm({
       PaneStreamTerminalProjectionReceiptFrameSchemaZ,
       PaneStreamTerminalProjectionMaterializeFrameSchemaZ,
       PaneStreamTerminalDeliveryNackFrameSchemaZ,
+      PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ,
       PaneStreamTerminalDeliveryVisibilityFrameSchemaZ,
       PaneStreamSemanticIntentFrameSchemaZ,
       PaneStreamViewportFrameSchemaZ,
@@ -48295,14 +48346,30 @@ function terminalReplicaRowsEqualProfiled(left, right, profile) {
 function hashTerminalReplicaSnapshot(snapshot3) {
   return hashTerminalReplicaSnapshotProfiled(snapshot3);
 }
-function hashTerminalReplicaSnapshotProfiled(snapshot3, profile, instrumentation) {
+function dropTerminalReplicaRowsDigestPrefix(digest3, prefix, remaining) {
+  if (!/^[0-9a-f]{16}$/u.test(digest3)) throw new TypeError("Invalid rows digest");
+  const hash = BigInt.asUintN(
+    64,
+    BigInt(`0x${digest3}`) - BigInt(`0x${hashTerminalReplicaRows(prefix)}`) * pow64(ROW_SEQUENCE_BASE, remaining)
+  );
+  return hash.toString(16).padStart(16, "0");
+}
+function popTerminalReplicaRowsDigestSuffix(digest3, suffix) {
+  if (!/^[0-9a-f]{16}$/u.test(digest3)) throw new TypeError("Invalid rows digest");
+  const hash = BigInt.asUintN(
+    64,
+    (BigInt(`0x${digest3}`) - BigInt(`0x${hashTerminalReplicaRows(suffix)}`)) * pow64(ROW_SEQUENCE_BASE_INVERSE, suffix.length)
+  );
+  return hash.toString(16).padStart(16, "0");
+}
+function hashTerminalReplicaSnapshotProfiled(snapshot3, profile, instrumentation, historyDigest) {
   const started = readProfileClock(instrumentation);
   const hash = hashStable([
     "terminal-replica-v1",
     snapshot3.cols,
     snapshot3.rows,
     hashTerminalReplicaRows(snapshot3.grid, profile, instrumentation),
-    hashTerminalReplicaRows(snapshot3.history, profile, instrumentation),
+    historyDigest ?? hashTerminalReplicaRows(snapshot3.history, profile, instrumentation),
     snapshot3.cursor,
     snapshot3.modes,
     snapshot3.placements,
@@ -48597,7 +48664,7 @@ function terminalReplicaRowIsValid(row) {
   }
   return true;
 }
-var VALIDATED_PATCH_ROWS, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE, verifiedTombstoneBases, TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
+var VALIDATED_PATCH_ROWS, ROW_ARRAY_HASH_CACHE, ROW_SEQUENCE_BASE, ROW_SEQUENCE_BASE_INVERSE, verifiedTombstoneBases, TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS;
 var init_terminal_replica2 = __esm({
   "packages/core/src/terminal-replica.ts"() {
     "use strict";
@@ -48608,6 +48675,12 @@ var init_terminal_replica2 = __esm({
     VALIDATED_PATCH_ROWS = /* @__PURE__ */ new WeakSet();
     ROW_ARRAY_HASH_CACHE = /* @__PURE__ */ new WeakMap();
     ROW_SEQUENCE_BASE = 0x100000001b3n;
+    ROW_SEQUENCE_BASE_INVERSE = (() => {
+      let inverse = ROW_SEQUENCE_BASE;
+      for (let step = 0; step < 6; step++)
+        inverse = BigInt.asUintN(64, inverse * (2n - ROW_SEQUENCE_BASE * inverse));
+      return inverse;
+    })();
     verifiedTombstoneBases = /* @__PURE__ */ new WeakMap();
     TERMINAL_REPLICA_COOPERATIVE_SEED_CELLS = 8192;
   }
@@ -48691,9 +48764,9 @@ var init_terminal_delivery_binary = __esm({
       }
       header(frame, revision, base2, magic = "TCB1") {
         for (const b of magic === "TCP1" ? [84, 67, 80, 49] : [84, 67, 66, 49]) this.byte(b);
-        this.byte(frame === "seed" ? 0 : frame === "patch" ? 1 : 2);
+        this.byte(frame === "seed" ? 0 : frame === "patch" ? 1 : frame === "tombstone" ? 2 : 3);
         this.uint(revision);
-        if (frame !== "seed") this.uint(base2);
+        if (frame !== "seed" && frame !== "history") this.uint(base2);
       }
       get byteLength() {
         return this.length;
@@ -48702,6 +48775,53 @@ var init_terminal_delivery_binary = __esm({
         return this.data.slice(0, this.length);
       }
     };
+  }
+});
+
+// packages/core/src/terminal-partial-history.ts
+function terminalHistoryPrefixCommitment(history, unloadedRows) {
+  if (!Number.isSafeInteger(unloadedRows) || unloadedRows < 0 || unloadedRows > history.length)
+    throw new RangeError("Unloaded rows outside the history");
+  const cache3 = Object.isFrozen(history) ? PREFIX_COMMITMENTS.get(history) : void 0;
+  const cached2 = cache3?.get(unloadedRows);
+  if (cached2) return cached2;
+  const commitment = Object.freeze({
+    rows: unloadedRows,
+    digest: hashTerminalReplicaRows(
+      unloadedRows === history.length ? history : history.slice(0, unloadedRows)
+    )
+  });
+  if (Object.isFrozen(history)) {
+    const entries = cache3 ?? /* @__PURE__ */ new Map();
+    if (entries.size >= 8) entries.delete(entries.keys().next().value);
+    entries.set(unloadedRows, commitment);
+    PREFIX_COMMITMENTS.set(history, entries);
+  }
+  return commitment;
+}
+function dropTerminalHistoryCommitmentPrefix(commitment, dropped) {
+  if (dropped.length > commitment.rows) throw new RangeError("Dropped rows exceed the commitment");
+  const rows = commitment.rows - dropped.length;
+  return Object.freeze({
+    rows,
+    digest: rows === 0 ? TERMINAL_HISTORY_EMPTY_DIGEST : dropTerminalReplicaRowsDigestPrefix(commitment.digest, dropped, rows)
+  });
+}
+function popTerminalHistoryCommitmentSuffix(commitment, taken) {
+  if (taken.length > commitment.rows) throw new RangeError("Taken rows exceed the commitment");
+  const rows = commitment.rows - taken.length;
+  return Object.freeze({
+    rows,
+    digest: rows === 0 ? TERMINAL_HISTORY_EMPTY_DIGEST : popTerminalReplicaRowsDigestSuffix(commitment.digest, taken)
+  });
+}
+var PREFIX_COMMITMENTS;
+var init_terminal_partial_history = __esm({
+  "packages/core/src/terminal-partial-history.ts"() {
+    "use strict";
+    init_src2();
+    init_terminal_replica2();
+    PREFIX_COMMITMENTS = /* @__PURE__ */ new WeakMap();
   }
 });
 
@@ -48719,12 +48839,14 @@ function negotiateTerminalDelivery(offer, generation, deliveryNonce) {
   if (!encoding) return { accepted: false, reason: "encoding-mismatch" };
   if (offer.richPlacements && encoding !== "semantic-v1" && encoding !== "semantic-compact-v1" && encoding !== "semantic-binary-v1")
     return { accepted: false, reason: "unsupported-capability-combination" };
+  const partialHistory = offer.protocolVersions.includes(TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION) && (encoding === "semantic-compact-v1" || encoding === "semantic-binary-v1");
   return {
     accepted: true,
     negotiated: {
       protocolVersion: TERMINAL_DELIVERY_PROTOCOL_VERSION,
       encoding,
-      ...binary && offer.protocolVersions.some(
+      ...partialHistory ? { partialHistory: "tail-v1" } : {},
+      ...binary && !partialHistory && offer.protocolVersions.some(
         (v) => v === TERMINAL_PROJECTION_CAPABILITY_VERSION || v === TERMINAL_PROJECTION_LOCAL_CAPABILITY_VERSION || v === TERMINAL_GRAPHICS_COMPRESSED_CAPABILITY_VERSION || v === TERMINAL_GRAPHICS_COMPRESSED_LOCAL_CAPABILITY_VERSION
       ) ? { alternateScreenProjection: "deferred-history-v1" } : {},
       ...encoding === "semantic-compact-v1" && offer.encodings.includes("semantic-v1") ? { fallbackEncoding: "semantic-v1" } : {},
@@ -48868,6 +48990,43 @@ function compactSemanticWire(input) {
     v: 1
   };
   return wire;
+}
+function encodeSemanticTerminalHistory(input, encoding) {
+  const payload = TerminalSemanticHistoryPayloadSchemaZ.parse(input);
+  if (encoding === "semantic-v1") {
+    const bytes = UTF8_ENCODER2.encode(canonicalJson(payload));
+    assertRepresentationSize(bytes);
+    return bytes;
+  }
+  const rows = compactRows(payload.rows, null, {
+    rows: 0,
+    runs: 0,
+    cells: 0,
+    placements: 0,
+    maxCells: COMPACT_MAX_EXPANDED_CELLS,
+    reusedRows: 0,
+    allocatedCells: 0,
+    canonicalUtf8Allocations: 0,
+    canonicalUtf8Bytes: 0,
+    validatedCellAllocations: 0
+  });
+  if (encoding === "semantic-compact-v1") {
+    const bytes = UTF8_ENCODER2.encode(
+      JSON.stringify({ f: "h", h: rows, k: COMPACT_SEMANTIC_KIND, r: payload.revision, v: 1 })
+    );
+    assertRepresentationSize(bytes);
+    return bytes;
+  }
+  const writer = new BinaryTerminalWriter();
+  try {
+    writer.header("history", payload.revision);
+    writer.value(rows);
+    return writer.finish();
+  } catch (error) {
+    if (error instanceof BinaryTerminalLimitError)
+      throw new TerminalDeliveryStateTooLargeError(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES + 1);
+    throw error;
+  }
 }
 function encodeBinarySemanticTerminalUpdate(input) {
   const wire = compactSemanticWire(input);
@@ -49543,6 +49702,7 @@ var init_terminal_delivery2 = __esm({
     init_src2();
     init_terminal_replica2();
     init_terminal_compact_capability();
+    init_terminal_partial_history();
     init_terminal_replica_hash_cache();
     TerminalDeliveryStateTooLargeError = class extends Error {
       bytes;
@@ -50179,6 +50339,7 @@ var init_src3 = __esm({
     init_resize_transaction();
     init_kitty_placeholders();
     init_terminal_projection2();
+    init_terminal_partial_history();
   }
 });
 
@@ -66103,7 +66264,7 @@ function logDeliveryFault(client, reason, cause) {
     workspace: client.deliveryWorkspaceName
   });
 }
-var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES, TERMINAL_DELIVERY_CONNECTION_HOLD_MS, TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
+var MAX_CANONICAL_REVISIONS, MAX_RAW_JOURNAL_BYTES, MAX_REPRESENTATION_CACHE_ENTRIES, MAX_REPRESENTATION_CACHE_BYTES, MAX_CLIENTS, HISTORY_FRAME_MAX_BYTES, MAX_PANES, MAX_PENDING_CANONICAL_CELLS, MAX_CONNECTIONS, BACKGROUND_CADENCE_MS, TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES, TERMINAL_DELIVERY_CONNECTION_HOLD_MS, TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS, DeferredProjectionEncoding, DeferredSeedEncoding, ExactSemanticRepresentationSelectionError, TerminalDeliveryRepresentationSelectionError, TerminalDeliveryPreaccountLimitError, SessionRuntimeTerminalDeliveryHub;
 var init_terminal_delivery_hub = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-delivery-hub.ts"() {
     "use strict";
@@ -66123,6 +66284,7 @@ var init_terminal_delivery_hub = __esm({
     MAX_REPRESENTATION_CACHE_ENTRIES = 8;
     MAX_REPRESENTATION_CACHE_BYTES = 16 * 1024 * 1024;
     MAX_CLIENTS = 64;
+    HISTORY_FRAME_MAX_BYTES = 128 * 1024;
     MAX_PANES = 32;
     MAX_PENDING_CANONICAL_CELLS = 1e6;
     MAX_CONNECTIONS = MAX_CLIENTS * MAX_PANES;
@@ -66138,11 +66300,13 @@ var init_terminal_delivery_hub = __esm({
       payload;
     };
     DeferredSeedEncoding = class extends Error {
-      constructor(payload) {
+      constructor(payload, variant = "complete") {
         super("Deferred compact seed encoding");
         this.payload = payload;
+        this.variant = variant;
       }
       payload;
+      variant;
     };
     ExactSemanticRepresentationSelectionError = class extends TerminalDeliveryStateTooLargeError {
       selectionObservation;
@@ -66262,6 +66426,11 @@ var init_terminal_delivery_hub = __esm({
             lastProjectionReceipt: null,
             lastMaterialize: null,
             reseedRequired: false,
+            historyUnloadedRows: 0,
+            historyUnloadedDigest: TERMINAL_HISTORY_EMPTY_DIGEST,
+            historyLoadedRows: 0,
+            pendingHistoryRows: null,
+            revisionSinceHistoryRequest: false,
             inFlight: null,
             latestRevision: pane.latest?.update.revision ?? null,
             encoding: null,
@@ -66291,6 +66460,7 @@ var init_terminal_delivery_hub = __esm({
             projectionReceipt: (receipt) => this.#projectionReceipt(client, receipt),
             materialize: (request3) => this.#materialize(client, request3),
             nack: (nack) => this.#nack(client, nack),
+            historyRequest: (request3) => this.#historyRequest(client, request3),
             prioritize: () => {
               if (client.closed) return;
               this.#priority.set(client.clientId, client.paneId);
@@ -66785,13 +66955,13 @@ var init_terminal_delivery_hub = __esm({
         }
       }
       #schedule(client) {
-        if (client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.latestRevision === null || client.latestRevision === client.baselineRevision || client.visibility === "hidden" || client.visibility === "frozen")
+        if (client.closed || client.captureUnavailable || client.inFlight || client.encoding || (client.latestRevision === null || client.latestRevision === client.baselineRevision) && client.pendingHistoryRows === null || client.visibility === "hidden" || client.visibility === "frozen")
           return;
         if (client.visibility === "background") {
           if (client.backgroundTimer) return;
           client.backgroundTimer = this.#scheduler.timer(() => {
             client.backgroundTimer = null;
-            if (!client.closed && !client.inFlight && client.latestRevision !== null)
+            if (!client.closed && !client.inFlight && (client.latestRevision !== null || client.pendingHistoryRows !== null))
               this.#deliver(client);
           }, BACKGROUND_CADENCE_MS);
           return;
@@ -66806,23 +66976,15 @@ var init_terminal_delivery_hub = __esm({
       }
       #deliver(client, completed) {
         const pane = this.#panes.get(client.paneId);
+        if (!completed && pane && this.#historyDue(client)) {
+          if (this.#holdForBudget(client)) return;
+          this.#deliverHistory(client, pane);
+          return;
+        }
         const target = completed?.target ?? pane?.latest;
         if (!pane || !target || client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
           return;
-        if (!completed && this.#overBudget(client)) {
-          client.budgetHeld = true;
-          client.budgetHeldSince ??= this.#scheduler.nowMs();
-          client.budgetTimer ??= this.#scheduler.timer(() => {
-            client.budgetTimer = null;
-            if (client.closed || !client.budgetHeld) return;
-            client.budgetHeld = false;
-            this.#schedule(client);
-          }, this.#holdMs);
-          return;
-        }
-        client.budgetHeldSince = null;
-        client.budgetTimer?.cancel();
-        client.budgetTimer = null;
+        if (!completed && this.#holdForBudget(client)) return;
         const traceStarted = completed?.traceStarted ?? (this.#observability.enabled ? this.#observability.nowMicros() : 0);
         let deferred = false;
         let encodedRepresentation = null;
@@ -66855,14 +67017,17 @@ var init_terminal_delivery_hub = __esm({
             chunkCount,
             canonicalEquivalent: representation.canonicalEquivalent,
             history: representation.history,
+            ...representation.historyUnloaded ? { historyUnloaded: representation.historyUnloaded } : {},
             richPlacements: client.negotiated.richPlacements
           });
           deliveryEnvelope = envelope;
           deliveryOrdinal = ++this.#deliveryOrdinal;
           registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
+          if (client.pendingHistoryRows !== null) client.revisionSinceHistoryRequest = true;
           client.inFlight = {
             envelope,
             projection: representation.projection ?? null,
+            historyRows: representation.historyRows ?? null,
             deliveryOrdinal,
             bytes: representation.bytes,
             nextChunk: 0,
@@ -66881,7 +67046,8 @@ var init_terminal_delivery_hub = __esm({
               target,
               error.payload,
               traceStarted,
-              error instanceof DeferredProjectionEncoding
+              error instanceof DeferredProjectionEncoding,
+              error instanceof DeferredSeedEncoding ? error.variant : "complete"
             );
             return;
           }
@@ -66940,7 +67106,7 @@ var init_terminal_delivery_hub = __esm({
             }
         }
       }
-      #startEncoding(client, pane, target, payload, traceStarted, projection = false) {
+      #startEncoding(client, pane, target, payload, traceStarted, projection = false, variant = "complete") {
         const key2 = cacheKey([
           target.update.workspaceName,
           client.paneId,
@@ -66950,7 +67116,7 @@ var init_terminal_delivery_hub = __esm({
           target.update.stateHash,
           client.negotiated.encoding,
           client.negotiated.richPlacements ? "rich" : "plain",
-          projection ? `projection:${client.projectionBaseline?.revision ?? -1}:${client.projectionBaseline?.hash ?? "none"}` : "complete"
+          projection ? `projection:${client.projectionBaseline?.revision ?? -1}:${client.projectionBaseline?.hash ?? "none"}` : variant
         ]);
         let job = this.#pendingEncodings.get(key2);
         let created = false;
@@ -66980,6 +67146,7 @@ var init_terminal_delivery_hub = __esm({
           baselineRevision: client.baselineRevision,
           baselineHash: client.baselineHash,
           reseedRequired: client.reseedRequired,
+          historyUnloadedRows: client.historyUnloadedRows,
           traceStarted
         };
         owned.clients.add(client);
@@ -67019,7 +67186,7 @@ var init_terminal_delivery_hub = __esm({
           const encoding = client.encoding;
           if (!encoding || encoding.job !== job) continue;
           client.encoding = null;
-          if (job.abort.signal.aborted || this.#closed || client.closed || this.#clients.get(client.key) !== client || this.#panes.get(client.paneId) !== job.pane || client.baselineRevision !== encoding.baselineRevision || client.baselineHash !== encoding.baselineHash || client.reseedRequired !== encoding.reseedRequired || client.inFlight || client.visibility === "hidden" || client.visibility === "frozen" || job.pane.latest?.update.incarnation !== encoding.target.update.incarnation)
+          if (job.abort.signal.aborted || this.#closed || client.closed || this.#clients.get(client.key) !== client || this.#panes.get(client.paneId) !== job.pane || client.baselineRevision !== encoding.baselineRevision || client.baselineHash !== encoding.baselineHash || client.reseedRequired !== encoding.reseedRequired || client.historyUnloadedRows !== encoding.historyUnloadedRows || client.inFlight || client.visibility === "hidden" || client.visibility === "frozen" || job.pane.latest?.update.incarnation !== encoding.target.update.incarnation)
             continue;
           this.#deliver(client, {
             target: encoding.target,
@@ -67063,6 +67230,8 @@ var init_terminal_delivery_hub = __esm({
             projectionBaseRevision: payload.frame === "seed" ? null : payload.baseRevision
           };
         }
+        if (client.negotiated.partialHistory === "tail-v1" && target.state.snapshot)
+          return this.#partialRepresentation(client, pane, target, seedOutcome);
         const key2 = cacheKey([
           target.update.workspaceName,
           target.update.semanticPaneId,
@@ -67390,6 +67559,12 @@ var init_terminal_delivery_hub = __esm({
         client.baselineRevision = ack.canonicalRevision;
         client.baselineHash = ack.canonicalStateHash;
         client.reseedRequired = false;
+        if (flight.historyRows) {
+          client.historyUnloadedRows = flight.historyRows.unloaded;
+          client.historyUnloadedDigest = flight.historyRows.digest;
+          client.historyLoadedRows = flight.historyRows.loaded;
+          this.#pushHistoryTail(client);
+        }
         client.inFlight = null;
         this.#releaseBudget(client.clientId);
         client.lastAck = ack;
@@ -67440,6 +67615,225 @@ var init_terminal_delivery_hub = __esm({
           }
         this.#schedule(client);
         this.#recordDeliveryStatus(client, this.#panes.get(client.paneId));
+      }
+      /**
+       * Capability 122: the client's partial view of `target`. Its unloaded rows
+       * follow the baseline's (a trim takes unloaded rows first); a seed carries
+       * the newest TERMINAL_DELIVERY_HISTORY_TAIL_ROWS rows (none on the alternate
+       * screen) or, after a reseed, as many rows as the client held. The full
+       * canonical hash still verifies: the commitment covers the rest.
+       */
+      #partialRepresentation(client, pane, target, seedOutcome) {
+        const full = target.state.snapshot;
+        const baselineRecord = client.reseedRequired || client.baselineRevision < 0 ? void 0 : pane.revisions.get(client.baselineRevision);
+        const baselineFull = baselineRecord?.state.snapshot ?? null;
+        const tail = full.modes.alternateScreen ? 0 : TERMINAL_DELIVERY_HISTORY_TAIL_ROWS;
+        const loadedDepth = () => Math.max(
+          0,
+          full.history.length - Math.max(tail, client.baselineRevision >= 0 ? client.historyLoadedRows : 0)
+        );
+        let unloadedRows;
+        let unloaded = null;
+        let baseline = null;
+        if (baselineFull && baselineRecord.update.incarnation === target.update.incarnation) {
+          baseline = client.historyUnloadedRows === 0 ? baselineFull : { ...baselineFull, history: baselineFull.history.slice(client.historyUnloadedRows) };
+          const trim = historyTrim(baselineFull.history, full.history);
+          const kept = Math.max(0, client.historyUnloadedRows - trim);
+          let same7 = kept <= full.history.length;
+          for (let index = 0; same7 && index < kept; index++)
+            if (baselineFull.history[trim + index] !== full.history[index]) same7 = false;
+          if (same7) {
+            unloadedRows = kept;
+            const before = { rows: client.historyUnloadedRows, digest: client.historyUnloadedDigest };
+            unloaded = trim === 0 ? before : dropTerminalHistoryCommitmentPrefix(
+              before,
+              baselineFull.history.slice(0, Math.min(trim, client.historyUnloadedRows))
+            );
+          } else {
+            unloadedRows = loadedDepth();
+            baseline = null;
+          }
+        } else {
+          unloadedRows = loadedDepth();
+        }
+        const partial = unloadedRows === 0 ? full : { ...full, history: full.history.slice(unloadedRows) };
+        const view = unloadedRows === 0 && client.historyUnloadedRows === 0 ? target : {
+          ...target,
+          state: { ...target.state, snapshot: partial },
+          update: { ...target.update, type: "terminal.seed" }
+        };
+        const payload = baseline ? semanticPayload(client.baselineRevision, baseline, view, baselineRecord.update.incarnation) : semanticSeed(view);
+        const encode = (value) => {
+          if (value.frame === "seed" && (client.negotiated.encoding === "semantic-binary-v1" || terminalSemanticUpdateNeedsCooperativeEncoding(value))) {
+            if (!seedOutcome) throw new DeferredSeedEncoding(value, `partial:${unloadedRows}`);
+            if ("error" in seedOutcome) throw seedOutcome.error;
+            return seedOutcome.bytes;
+          }
+          return client.negotiated.encoding === "semantic-binary-v1" ? encodeBinarySemanticTerminalUpdate(value) : encodeCompactSemanticTerminalUpdate(value);
+        };
+        let frame = payload.frame;
+        let bytes;
+        try {
+          bytes = encode(payload);
+        } catch (error) {
+          if (!(error instanceof TerminalDeliveryStateTooLargeError) || payload.frame !== "patch")
+            throw error;
+          frame = "seed";
+          bytes = encode(semanticSeed(view));
+        }
+        if (frame === "seed") this.#reseeds += client.reseedRequired ? 1 : 0;
+        const commitment = unloaded ?? terminalHistoryPrefixCommitment(full.history, unloadedRows);
+        return {
+          bytes,
+          encoding: client.negotiated.encoding,
+          frame,
+          canonicalEquivalent: true,
+          history: "partial",
+          historyUnloaded: commitment,
+          historyRows: {
+            unloaded: unloadedRows,
+            digest: commitment.digest,
+            loaded: full.history.length - unloadedRows
+          }
+        };
+      }
+      /** Hold the client while its connection's other panes are congested; true if held. */
+      #holdForBudget(client) {
+        if (this.#overBudget(client)) {
+          client.budgetHeld = true;
+          client.budgetHeldSince ??= this.#scheduler.nowMs();
+          client.budgetTimer ??= this.#scheduler.timer(() => {
+            client.budgetTimer = null;
+            if (client.closed || !client.budgetHeld) return;
+            client.budgetHeld = false;
+            this.#schedule(client);
+          }, this.#holdMs);
+          return true;
+        }
+        client.budgetHeldSince = null;
+        client.budgetTimer?.cancel();
+        client.budgetTimer = null;
+        return false;
+      }
+      /** Capability 122: a history frame goes next if asked for and no newer output waits (or one just went). */
+      #historyDue(client) {
+        return client.pendingHistoryRows !== null && !client.inFlight && !client.encoding && client.baselineRevision >= 0 && !client.reseedRequired && (client.latestRevision === null || client.latestRevision === client.baselineRevision || client.revisionSinceHistoryRequest) && // Live output of another pane held by the connection's budget goes first.
+        ![...this.#clients.values()].some(
+          (other) => other !== client && other.clientId === client.clientId && other.budgetHeld
+        );
+      }
+      #deliverHistory(client, pane) {
+        const asked = client.pendingHistoryRows;
+        client.pendingHistoryRows = null;
+        client.revisionSinceHistoryRequest = false;
+        const record2 = pane.revisions.get(client.baselineRevision);
+        const full = record2?.state.snapshot;
+        if (!record2 || !full || client.historyUnloadedRows === 0) {
+          this.#schedule(client);
+          return;
+        }
+        const encoding = client.negotiated.encoding;
+        const unloadedRows = client.historyUnloadedRows;
+        try {
+          let count = Math.max(
+            1,
+            Math.min(asked, unloadedRows, Math.floor(HISTORY_FRAME_MAX_BYTES / Math.max(1, full.cols)))
+          );
+          let rows = full.history.slice(unloadedRows - count, unloadedRows);
+          let bytes = encodeSemanticTerminalHistory(
+            { frame: "history", revision: record2.update.revision, rows },
+            encoding
+          );
+          while (bytes.byteLength > HISTORY_FRAME_MAX_BYTES && count > 1) {
+            count = Math.max(
+              1,
+              Math.min(
+                count - 1,
+                Math.floor(count * HISTORY_FRAME_MAX_BYTES * 0.9 / bytes.byteLength)
+              )
+            );
+            rows = full.history.slice(unloadedRows - count, unloadedRows);
+            bytes = encodeSemanticTerminalHistory(
+              { frame: "history", revision: record2.update.revision, rows },
+              encoding
+            );
+          }
+          const chunk = {
+            rows,
+            unloaded: popTerminalHistoryCommitmentSuffix(
+              { rows: unloadedRows, digest: client.historyUnloadedDigest },
+              rows
+            )
+          };
+          const envelope = TerminalDeliveryEnvelopeSchemaZ.parse({
+            type: "terminal.delivery",
+            workspaceName: client.deliveryWorkspaceName,
+            semanticPaneId: record2.update.semanticPaneId,
+            generation: record2.update.generation,
+            incarnation: record2.update.incarnation,
+            deliveryNonce: client.negotiated.deliveryNonce,
+            transactionId: this.#scheduler.createId(),
+            protocolVersion: 1,
+            encoding,
+            frame: "history",
+            baseRevision: record2.update.revision,
+            canonicalRevision: record2.update.revision,
+            canonicalStateHash: record2.update.stateHash,
+            representationHash: hashTerminalDeliveryRepresentation(bytes),
+            representationBytes: bytes.byteLength,
+            chunkCount: Math.max(1, Math.ceil(bytes.byteLength / (256 * 1024))),
+            canonicalEquivalent: true,
+            history: "partial",
+            historyUnloaded: chunk.unloaded,
+            richPlacements: client.negotiated.richPlacements
+          });
+          const deliveryOrdinal = ++this.#deliveryOrdinal;
+          registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
+          client.inFlight = {
+            envelope,
+            projection: null,
+            historyRows: {
+              unloaded: chunk.unloaded.rows,
+              digest: chunk.unloaded.digest,
+              loaded: full.history.length - chunk.unloaded.rows
+            },
+            deliveryOrdinal,
+            bytes,
+            nextChunk: 0,
+            sentAt: this.#scheduler.nowMs()
+          };
+          this.#enqueue(client, envelope);
+          this.#recordDeliveryStatus(client, pane);
+        } catch (error) {
+          this.#fault(
+            client,
+            error instanceof TerminalDeliveryStateTooLargeError ? "state-too-large" : "protocol-violation",
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      }
+      /** Back on the normal screen with less than the tail loaded: send the tail unasked. */
+      #pushHistoryTail(client) {
+        if (client.pendingHistoryRows !== null || client.historyUnloadedRows === 0) return;
+        const full = this.#panes.get(client.paneId)?.revisions.get(client.baselineRevision)?.state.snapshot;
+        if (!full || full.modes.alternateScreen) return;
+        if (client.historyLoadedRows >= TERMINAL_DELIVERY_HISTORY_TAIL_ROWS) return;
+        client.pendingHistoryRows = Math.min(
+          client.historyUnloadedRows,
+          TERMINAL_DELIVERY_HISTORY_TAIL_ROWS - client.historyLoadedRows
+        );
+        client.revisionSinceHistoryRequest = false;
+      }
+      #historyRequest(client, input) {
+        if (client.closed) return;
+        const parsed = TerminalDeliveryHistoryRequestSchemaZ.safeParse(input);
+        if (!parsed.success || client.negotiated.partialHistory !== "tail-v1" || parsed.data.workspaceName !== client.deliveryWorkspaceName || parsed.data.semanticPaneId !== client.paneId || parsed.data.generation !== client.negotiated.generation || parsed.data.deliveryNonce !== client.negotiated.deliveryNonce) {
+          this.#fault(client, "protocol-violation", "History request does not identify this delivery");
+          return;
+        }
+        client.pendingHistoryRows = parsed.data.maxRows;
+        client.revisionSinceHistoryRequest = false;
+        this.#schedule(client);
       }
       #projectionReceipt(client, input) {
         const receipt = TerminalProjectionReceiptSchemaZ.parse(input);
@@ -69808,6 +70202,7 @@ var init_registry2 = __esm({
           ack: (ack) => upstream.ack(ack),
           ...upstream.projectionReceipt ? { projectionReceipt: upstream.projectionReceipt } : {},
           ...upstream.materialize ? { materialize: upstream.materialize } : {},
+          ...upstream.historyRequest ? { historyRequest: upstream.historyRequest } : {},
           ...upstream.prioritize ? { prioritize: upstream.prioritize } : {},
           nack: (nack) => upstream.nack(nack),
           setVisibility: (visibility) => upstream.setVisibility(visibility),
@@ -79027,6 +79422,14 @@ var init_pane_stream_websocket = __esm({
           if (!channel) return;
           if (!channel.delivery?.projectionReceipt) return this.#failProtocol("protocol-error");
           channel.delivery.projectionReceipt(frame.receipt);
+          return;
+        }
+        if (frame.type === "terminal-delivery-history-request") {
+          const channel = this.#deliveryChannel(frame.request);
+          if (!channel) return;
+          if (!channel.delivery?.historyRequest || !channel.delivery.negotiation.accepted || channel.delivery.negotiation.negotiated.partialHistory !== "tail-v1")
+            return this.#failProtocol("protocol-error");
+          channel.delivery.historyRequest(frame.request);
           return;
         }
         if (frame.type === "terminal-projection-materialize") {
