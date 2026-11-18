@@ -17,6 +17,7 @@ import {
 } from "@tmux-ide/core";
 import {
   SessionRuntimeTerminalDeliveryHub,
+  TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
   type TerminalDeliverySourceOwner,
 } from "./terminal-delivery-hub.ts";
 
@@ -316,6 +317,112 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
     });
   },
 );
+
+describe("pipelining behind a large patch", () => {
+  it(
+    "holds the echo behind a patch over the byte budget, then keeps envelopes and chunks in order",
+    { timeout: 60_000 },
+    async () => {
+      const owner = new Owner();
+      const hub = new SessionRuntimeTerminalDeliveryHub(generation, "w", () => owner);
+      const messages: TerminalDeliveryServerMessage[] = [];
+      // The socket takes one frame at a time; chunks can be held back.
+      let hold: (() => void) | null = null;
+      let holding = false;
+      const c = await hub.open(
+        "client",
+        "pane",
+        { protocolVersions: [1], encodings: ["semantic-v1"], richPlacements: false },
+        (m) => {
+          messages.push(m);
+          if (holding && m.type === "terminal.delivery.chunk")
+            return new Promise<void>((resolve) => (hold = resolve));
+        },
+      );
+      try {
+        const blank = structuredClone(blankTerminalReplicaSnapshot(300, 30));
+        blank.history = Array.from({ length: 400 }, () => structuredClone(blank.grid[0]!));
+        let screen = blank;
+        owner.seed(screen, 0);
+        await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(1), { timeout: 20_000 });
+        let client = apply(
+          createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
+          deliveries(messages)[0]!,
+          messages,
+        );
+        c.ack(client.ack);
+        await settle();
+        // A full-screen redraw: a patch of several chunks.
+        const redraw = structuredClone(screen);
+        for (const [y, row] of redraw.grid.entries())
+          for (const [x, cell] of row.cells.entries()) {
+            cell.grapheme = String.fromCharCode(65 + ((x + y) % 26));
+            cell.foreground = { kind: "rgb", value: 0xabcdef };
+            cell.background = { kind: "rgb", value: 0x123456 };
+          }
+        holding = true;
+        owner.listener!({
+          type: "terminal.patch",
+          workspaceName: "w",
+          semanticPaneId: "pane",
+          generation,
+          incarnation,
+          baseRevision: 0,
+          revision: 1,
+          cols: redraw.cols,
+          rows: redraw.rows,
+          patch: { rows: redraw.grid.map((row, index) => ({ index, row: structuredClone(row) })) },
+          stateHash: hashTerminalReplicaSnapshot(redraw),
+          hashAlgorithm: "fnv1a64-v1",
+        } as CanonicalTerminalReplicaUpdate);
+        screen = redraw;
+        await vi.waitFor(() => expect(hold).not.toBeNull(), { timeout: 20_000 });
+        const big = deliveries(messages)[1]!;
+        expect(big).toMatchObject({ frame: "patch" });
+        expect(big.chunkCount).toBeGreaterThan(1);
+        // An echo commits while the redraw's chunks are still going out.
+        screen = owner.type(screen, 2, "e");
+        await settle();
+        holding = false;
+        for (let i = 0; i < 20 && hold; i++) {
+          const release: () => void = hold;
+          hold = null;
+          release();
+          await settle();
+        }
+        await new Promise((r) => setTimeout(r, 100));
+        // The redraw alone fills the connection's unacknowledged budget.
+        expect(big.representationBytes).toBeGreaterThanOrEqual(
+          TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
+        );
+        expect(deliveries(messages)).toHaveLength(2);
+        client = apply(client.state, big, messages);
+        c.ack(client.ack);
+        await vi.waitFor(() => expect(deliveries(messages)).toHaveLength(3), { timeout: 20_000 });
+        // Every envelope's chunks follow it with no other envelope between.
+        let open: TerminalDeliveryEnvelope | null = null;
+        let received = 0;
+        for (const m of messages) {
+          if (m.type === "terminal.delivery") {
+            expect(open === null || received === open.chunkCount).toBe(true);
+            open = m;
+            received = 0;
+          } else if (m.type === "terminal.delivery.chunk") {
+            expect(m.transactionId).toBe(open!.transactionId);
+            received += 1;
+          }
+        }
+        client = apply(client.state, deliveries(messages)[2]!, messages);
+        c.ack(client.ack);
+        expect(client.state.canonicalSnapshot).toEqual(screen);
+        expect(faults(messages)).toEqual([]);
+      } finally {
+        await c.close();
+        await hub.close();
+      }
+    },
+  );
+});
 
 describe("pipelined patches with partial history (capability 122)", () => {
   it("patches each pipelined echo on the history the client will hold", async () => {
