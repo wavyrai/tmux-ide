@@ -31,13 +31,13 @@ discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
 
-In 0.1.20, a machine you reach over SSH gets the same features as this Mac for its
-CLI/daemon version. With 2.9.26 or later on that machine, a session there with more than 24
+In 0.1.20, a machine you reach over SSH gets the version-gated features of its CLI/daemon
+version. With 2.9.26 or later on that machine, a session there with more than 24
 panes opens one window at a time instead of being refused, and plain terminal browser panes
 say that they have no Tmux IDE controls. The terminal cursor glides to its new cell instead
 of jumping; macOS Reduce Motion or "Turn off cursor animation" in Commands turns that off.
 The sidebar builds only the rows near what it shows, so Home stays quick with many sessions:
-in our measurement at 100 sessions, a Home redraw went from about 6.4 ms to 3.0 ms of CPU
+in our measurement at 100 sessions, a Home redraw went from about 6.7 ms to 3.0 ms of CPU
 time. A Markdown reader at the right or bottom edge of the window follows a resize or a
 divider drag on every frame.
 
