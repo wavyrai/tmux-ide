@@ -43,6 +43,13 @@ const ROW_ARRAY_HASH_CACHE = new WeakMap<
   { readonly hash: bigint; readonly length: number }
 >();
 const ROW_SEQUENCE_BASE = 0x100000001b3n;
+/** ROW_SEQUENCE_BASE⁻¹ mod 2^64 (Newton's iteration; the base is odd). */
+const ROW_SEQUENCE_BASE_INVERSE = (() => {
+  let inverse = ROW_SEQUENCE_BASE;
+  for (let step = 0; step < 6; step++)
+    inverse = BigInt.asUintN(64, inverse * (2n - ROW_SEQUENCE_BASE * inverse));
+  return inverse;
+})();
 
 export interface TerminalReplicaState extends TerminalReplicaAddress {
   readonly generation: SessionRuntimeGeneration;
@@ -782,10 +789,72 @@ export function hashTerminalReplicaSnapshot(snapshot: TerminalReplicaSnapshot): 
   return hashTerminalReplicaSnapshotProfiled(snapshot);
 }
 
+/**
+ * Capability 122: the canonical hash of a snapshot whose `history` holds only
+ * the newest rows, given the digest of the whole history (see
+ * concatTerminalReplicaRowsDigest). Equal to the full snapshot's hash.
+ */
+export function hashTerminalReplicaSnapshotWithHistoryDigest(
+  snapshot: TerminalReplicaSnapshot,
+  historyDigest: string,
+): string {
+  return hashTerminalReplicaSnapshotProfiled(snapshot, undefined, undefined, historyDigest);
+}
+
+/**
+ * The rows digest is a polynomial fold, H(A ++ B) = H(A)·P^|B| + H(B) mod 2^64,
+ * so the digest of older rows extends by newer rows without the older ones.
+ */
+export function concatTerminalReplicaRowsDigest(
+  prefixDigest: string,
+  suffix: readonly TerminalReplicaRow[],
+): string {
+  if (!/^[0-9a-f]{16}$/u.test(prefixDigest)) throw new TypeError("Invalid rows digest");
+  const hash = BigInt.asUintN(
+    64,
+    BigInt(`0x${prefixDigest}`) * pow64(ROW_SEQUENCE_BASE, suffix.length) +
+      BigInt(`0x${hashTerminalReplicaRows(suffix)}`),
+  );
+  return hash.toString(16).padStart(16, "0");
+}
+
+/**
+ * H(B) from H(A ++ B) and A: the digest left after dropping the oldest rows
+ * A of a rows sequence of `remaining` + |A| rows. H(A ++ B) = H(A)·P^|B| + H(B).
+ */
+export function dropTerminalReplicaRowsDigestPrefix(
+  digest: string,
+  prefix: readonly TerminalReplicaRow[],
+  remaining: number,
+): string {
+  if (!/^[0-9a-f]{16}$/u.test(digest)) throw new TypeError("Invalid rows digest");
+  const hash = BigInt.asUintN(
+    64,
+    BigInt(`0x${digest}`) -
+      BigInt(`0x${hashTerminalReplicaRows(prefix)}`) * pow64(ROW_SEQUENCE_BASE, remaining),
+  );
+  return hash.toString(16).padStart(16, "0");
+}
+
+/** H(A) from H(A ++ B) and B: P is odd, so P^|B| is invertible mod 2^64. */
+export function popTerminalReplicaRowsDigestSuffix(
+  digest: string,
+  suffix: readonly TerminalReplicaRow[],
+): string {
+  if (!/^[0-9a-f]{16}$/u.test(digest)) throw new TypeError("Invalid rows digest");
+  const hash = BigInt.asUintN(
+    64,
+    (BigInt(`0x${digest}`) - BigInt(`0x${hashTerminalReplicaRows(suffix)}`)) *
+      pow64(ROW_SEQUENCE_BASE_INVERSE, suffix.length),
+  );
+  return hash.toString(16).padStart(16, "0");
+}
+
 function hashTerminalReplicaSnapshotProfiled(
   snapshot: TerminalReplicaSnapshot,
   profile?: MutableTerminalReplicaApplyProfile,
   instrumentation?: TerminalReplicaApplyOptions["instrumentation"],
+  historyDigest?: string,
 ): string {
   // Cross-language Merkle stream: each immutable row is FNV-1a over the
   // type-tagged UTF-8 cell stream, then the snapshot hashes fixed-order row
@@ -797,7 +866,7 @@ function hashTerminalReplicaSnapshotProfiled(
     snapshot.cols,
     snapshot.rows,
     hashTerminalReplicaRows(snapshot.grid, profile, instrumentation),
-    hashTerminalReplicaRows(snapshot.history, profile, instrumentation),
+    historyDigest ?? hashTerminalReplicaRows(snapshot.history, profile, instrumentation),
     snapshot.cursor,
     snapshot.modes,
     snapshot.placements,

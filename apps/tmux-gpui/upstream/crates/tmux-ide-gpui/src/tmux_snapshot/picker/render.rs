@@ -113,11 +113,17 @@ impl SnapshotView {
             .flex_col()
             .gap_1()
             .when(picker.mode == Mode::Commands, |panel| {
-                panel.children(
-                    self.developer_mode
-                        .note
-                        .map(|note| div().id("developer-mode-note").px_2().py_1().child(note)),
-                )
+                panel
+                    .children(
+                        self.developer_mode
+                            .note
+                            .map(|note| div().id("developer-mode-note").px_2().py_1().child(note)),
+                    )
+                    .children(
+                        self.cursor_motion
+                            .note
+                            .map(|note| div().id("cursor-motion-note").px_2().py_1().child(note)),
+                    )
             })
             .when(picker.mode == Mode::Theme, |panel| {
                 panel.child(theme_style::heading(self))
@@ -197,6 +203,9 @@ impl SnapshotView {
                     Target::Font(choice) => self.terminal_font.can_choose(choice),
                     Target::Command(Action::DeveloperMode(_)) => {
                         self.developer_mode.ready && !self.developer_mode.saving
+                    }
+                    Target::Command(Action::CursorMotion(_)) => {
+                        self.cursor_motion.ready && !self.cursor_motion.saving
                     }
                     _ => true,
                 }

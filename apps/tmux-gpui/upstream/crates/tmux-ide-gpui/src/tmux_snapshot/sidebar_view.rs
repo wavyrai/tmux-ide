@@ -38,6 +38,8 @@ pub(in crate::tmux_snapshot) struct Cache {
     /// replayed, until then. The fade's own first frame clears it: that
     /// frame is drawn, since a sidebar that was not shown holds no key.
     faded_in: Rc<Cell<bool>>,
+    /// The sizes of the rows, for the ones built as placeholders.
+    rows: sidebar::window::RowWindow,
 }
 
 #[cfg(test)]
@@ -50,16 +52,23 @@ pub(in crate::tmux_snapshot) fn renders(_: &App) -> usize {
     RENDERS.with(Cell::get)
 }
 impl Render for SidebarView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         RENDERS.with(|renders| renders.set(renders.get() + 1));
         let owner = cx.entity_id();
         // Hover washes ask their painter for the frames of their fade: that
         // must be this view, or those frames would replay it.
         let painter = bezel_motion::Painter::of(cx);
+        let frame = sidebar::window::Frame {
+            rem: window.rem_size(),
+            viewport: window.viewport_size().height,
+            every: window.is_a11y_active(),
+            reveal: None,
+        };
         self.parent
             .update(cx, |view, cx| {
-                view.sidebar_viewport(owner, painter, cx).into_any_element()
+                view.sidebar_viewport(owner, painter, frame, cx)
+                    .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -229,6 +238,7 @@ impl SnapshotView {
         &mut self,
         owner: EntityId,
         painter: bezel_motion::Painter,
+        frame: sidebar::window::Frame,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         self.agent_animation.begin_render(owner);
@@ -252,10 +262,8 @@ impl SnapshotView {
         let request = self.browser_request;
         let now = (self.connection.clock)().0;
         let local_last_known = self.agents_shown_last_known();
-        for (index, mut row) in sidebar::rows_at(&self.browser_state, now)
-            .into_iter()
-            .enumerate()
-        {
+        let mut rows = sidebar::rows_at(&self.browser_state, now);
+        for row in &mut rows {
             // #362: agent state on this row may be old: this Mac's lane is
             // marked, or the row's machine (or its agent's) is away.
             row.last_known = local_last_known
@@ -268,6 +276,36 @@ impl SnapshotView {
                     sidebar::panes::pane_agent(&self.browser_state, pane)
                         .is_some_and(|(agent, _)| self.agent_last_known(agent))
                 });
+        }
+        // Rows far from the visible part are placeholders of their size
+        // (`sidebar::window`).
+        let shapes: Vec<u64> = rows
+            .iter()
+            .map(|row| {
+                let agent = row.agent.as_ref().is_some_and(|key| {
+                    sidebar::activity::row_agent(&self.browser_state, key).is_some()
+                });
+                let pane = row.pane.as_deref().is_some_and(|pane| {
+                    sidebar::panes::pane_agent(&self.browser_state, pane).is_some()
+                });
+                row_shape(row, agent, pane)
+            })
+            .collect();
+        let list = self.sidebar_keyboard.scroll.clone();
+        let keyboard_row = self.sidebar_keyboard.selected.clone();
+        let frame = sidebar::window::Frame {
+            reveal: self.sidebar_keyboard.revealing.take(),
+            ..frame
+        };
+        let plan = self.sidebar_view.rows.plan(&shapes, frame, &list, |index| {
+            rows[index].selected
+                || (rows[index].target.is_some() && rows[index].target == keyboard_row)
+        });
+        for (index, (row, placeholder)) in rows.into_iter().zip(plan).enumerate() {
+            if let Some(space) = placeholder {
+                sidebar = sidebar.child(sidebar::window::placeholder(space));
+                continue;
+            }
             let mut element = sidebar::render_row(
                 index,
                 &row,
@@ -374,7 +412,17 @@ impl SnapshotView {
                     .fill(),
             )
             .child(self.sidebar_footer(cx))
+            .child(self.sidebar_view.rows.measure(shapes, &list, owner))
     }
+}
+
+/// A digest of everything a row draws, and whether its agents resolve: the
+/// key its remembered size is kept under (`sidebar::window`).
+pub(in crate::tmux_snapshot) fn row_shape(row: &sidebar::Row, agent: bool, pane: bool) -> u64 {
+    digest(|hash| {
+        row_hash(row, hash);
+        (agent, pane).hash(hash);
+    })
 }
 
 /// What the sidebar shows, one field per thing its render reads.

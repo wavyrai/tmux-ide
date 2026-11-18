@@ -209,3 +209,6 @@ mod pane_row_tests;
 
 #[path = "footer_tests.rs"]
 mod footer_tests;
+
+#[path = "window_tests.rs"]
+mod window_tests;

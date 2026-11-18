@@ -5,6 +5,7 @@ import { TerminalAttachmentSemanticPaneIdSchemaZ } from "./semantic-identity.ts"
 import { SessionRuntimeGenerationSchemaZ } from "./session-runtime.ts";
 import { WorkspaceIdSchemaZ } from "./workspace-state.ts";
 import {
+  TerminalReplicaRowSchemaZ,
   TerminalReplicaPatchPayloadSchemaZ,
   TerminalReplicaSnapshotSchemaZ,
   TerminalReplicaTombstonePayloadSchemaZ,
@@ -20,6 +21,19 @@ export const TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION = 109;
 export const TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION = 110;
 
 export const TERMINAL_DELIVERY_PROTOCOL_VERSION = 1 as const;
+
+/**
+ * History on demand (owner's decision 17 Nov, 2.9.26). With capability 122 a
+ * seed carries the screen plus the newest TERMINAL_DELIVERY_HISTORY_TAIL_ROWS
+ * history rows and a commitment `{rows, digest}` to the older, unloaded rows.
+ * The rows digest is a polynomial fold, so the loaded rows and the commitment
+ * still verify against the full canonical state hash. The client asks for
+ * older rows with a history request; they come newest first in a "history"
+ * frame at its current revision. It replaces deferred-history-v1 (111/112).
+ */
+export const TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION = 122;
+export const TERMINAL_DELIVERY_HISTORY_TAIL_ROWS = 200;
+export const TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS = 2000;
 /** Capability numbers one offer may carry (nine before 2.9.26). */
 export const TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = 16;
 export const TERMINAL_DELIVERY_CHUNK_BYTES = 256 * 1024;
@@ -61,6 +75,8 @@ export const TerminalDeliveryNegotiatedSchemaZ = z
     encoding: TerminalDeliveryEncodingSchemaZ,
     fallbackEncoding: z.literal("semantic-v1").nullable().optional(),
     alternateScreenProjection: z.literal("deferred-history-v1").optional(),
+    /** Capability 122: history on demand. */
+    partialHistory: z.literal("tail-v1").optional(),
     richPlacements: z.boolean(),
     generation: SessionRuntimeGenerationSchemaZ,
     deliveryNonce: z.uuid(),
@@ -69,6 +85,15 @@ export const TerminalDeliveryNegotiatedSchemaZ = z
   .superRefine((value, context) => {
     if (value.alternateScreenProjection && value.encoding !== "semantic-binary-v1")
       context.addIssue({ code: "custom", message: "projection requires binary semantic delivery" });
+    if (
+      value.partialHistory &&
+      ((value.encoding !== "semantic-compact-v1" && value.encoding !== "semantic-binary-v1") ||
+        value.alternateScreenProjection)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "partial history requires compact or binary semantic delivery and no projection",
+      });
     if (value.fallbackEncoding && value.encoding !== "semantic-compact-v1")
       context.addIssue({ code: "custom", message: "fallback encoding requires compact semantic" });
     if (
@@ -98,6 +123,28 @@ export type TerminalDeliveryNegotiationResult = z.infer<
   typeof TerminalDeliveryNegotiationResultSchemaZ
 >;
 
+/** The rows digest of no rows. */
+export const TERMINAL_HISTORY_EMPTY_DIGEST = "0000000000000000";
+
+/**
+ * Pinned at `rows: 0` to the digest of no rows: with that anchor, each history
+ * chunk's chain check is an induction proof (review of #435). Without it a
+ * forged chain of chunks could end in any digest and still match the hash.
+ */
+export const TerminalDeliveryHistoryCommitmentSchemaZ = z
+  .object({
+    rows: z.number().int().nonnegative().max(1_000_000),
+    digest: z.string().regex(/^[0-9a-f]{16}$/u),
+  })
+  .strict()
+  .refine(
+    (value) => value.rows > 0 || value.digest === TERMINAL_HISTORY_EMPTY_DIGEST,
+    "an empty commitment has the empty digest",
+  );
+export type TerminalDeliveryHistoryCommitment = z.infer<
+  typeof TerminalDeliveryHistoryCommitmentSchemaZ
+>;
+
 const DeliveryAddressSchemaZ = z.object({
   workspaceName: WorkspaceIdSchemaZ,
   semanticPaneId: TerminalAttachmentSemanticPaneIdSchemaZ,
@@ -119,7 +166,7 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
   causalCellProof: CausalCellProofV1SchemaZ.optional(),
   protocolVersion: z.literal(TERMINAL_DELIVERY_PROTOCOL_VERSION),
   encoding: TerminalDeliveryEncodingSchemaZ,
-  frame: z.enum(["seed", "patch", "tombstone"]),
+  frame: z.enum(["seed", "patch", "tombstone", "history"]),
   baseRevision: z.number().int().min(-1).nullable(),
   canonicalRevision: z.number().int().nonnegative(),
   canonicalStateHash: z.string().regex(/^[0-9a-f]{16}$/u),
@@ -131,7 +178,9 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
     .max(TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES),
   chunkCount: z.number().int().positive().max(256),
   canonicalEquivalent: z.boolean(),
-  history: z.enum(["complete", "truncated", "not-applicable"]),
+  history: z.enum(["complete", "partial", "truncated", "not-applicable"]),
+  /** Capability 122: the history rows the client does not hold, oldest first. */
+  historyUnloaded: TerminalDeliveryHistoryCommitmentSchemaZ.optional(),
   richPlacements: z.boolean(),
 })
   .strict()
@@ -152,16 +201,38 @@ export const TerminalDeliveryEnvelopeSchemaZ = DeliveryAddressSchemaZ.extend({
     if (value.frame === "seed" && value.baseRevision !== null)
       context.addIssue({ code: "custom", message: "seed baseRevision must be null" });
     if (
+      value.frame === "history" &&
+      (value.baseRevision !== value.canonicalRevision || value.history !== "partial")
+    )
+      context.addIssue({
+        code: "custom",
+        message: "a history frame is partial and stays at the client's revision",
+      });
+    if (
       value.frame !== "seed" &&
+      value.frame !== "history" &&
       (value.baseRevision === null || value.canonicalRevision <= value.baseRevision)
     )
       context.addIssue({
         code: "custom",
         message: "patch/tombstone requires an earlier baseRevision",
       });
+    if ((value.history === "partial") !== (value.historyUnloaded !== undefined))
+      context.addIssue({
+        code: "custom",
+        message: "a partial history carries its unloaded commitment, and only it does",
+      });
+    if (value.history === "partial" && (!semantic || value.frame === "tombstone"))
+      context.addIssue({
+        code: "custom",
+        message: "partial history is semantic and not a tombstone",
+      });
     if (
       semantic &&
-      (!value.canonicalEquivalent || (value.frame !== "tombstone" && value.history !== "complete"))
+      (!value.canonicalEquivalent ||
+        (value.frame !== "tombstone" &&
+          value.history !== "complete" &&
+          value.history !== "partial"))
     )
       context.addIssue({
         code: "custom",
@@ -225,6 +296,19 @@ export const TerminalDeliveryNackSchemaZ = DeliveryAddressSchemaZ.extend({
 }).strict();
 export type TerminalDeliveryNack = z.infer<typeof TerminalDeliveryNackSchemaZ>;
 
+/**
+ * Capability 122: the client asks for the newest `maxRows` of its unloaded
+ * history. It names its committed revision and unloaded row count; a request
+ * that no longer matches the daemon's view of that baseline is dropped.
+ */
+export const TerminalDeliveryHistoryRequestSchemaZ = DeliveryAddressSchemaZ.extend({
+  type: z.literal("terminal.delivery.history-request"),
+  canonicalRevision: z.number().int().nonnegative(),
+  unloadedRows: z.number().int().nonnegative().max(1_000_000),
+  maxRows: z.number().int().min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS),
+}).strict();
+export type TerminalDeliveryHistoryRequest = z.infer<typeof TerminalDeliveryHistoryRequestSchemaZ>;
+
 export type TerminalDeliveryServerMessage =
   | TerminalDeliveryEnvelope
   | TerminalProjectionEnvelope
@@ -269,3 +353,17 @@ export const TerminalSemanticDeliveryPayloadSchemaZ = z.discriminatedUnion("fram
 export type TerminalSemanticDeliveryPayload = z.infer<
   typeof TerminalSemanticDeliveryPayloadSchemaZ
 >;
+
+/**
+ * Capability 122: a "history" frame's payload, the newest unloaded rows,
+ * oldest first, at the client's revision. Kept apart from the seed, patch and
+ * tombstone union: it changes no revision and no canonical state.
+ */
+export const TerminalSemanticHistoryPayloadSchemaZ = z
+  .object({
+    frame: z.literal("history"),
+    revision: z.number().int().nonnegative(),
+    rows: z.array(TerminalReplicaRowSchemaZ).min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS),
+  })
+  .strict();
+export type TerminalSemanticHistoryPayload = z.infer<typeof TerminalSemanticHistoryPayloadSchemaZ>;

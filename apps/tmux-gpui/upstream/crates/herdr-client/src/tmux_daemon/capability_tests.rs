@@ -233,6 +233,70 @@ fn released_daemons_before_2_9_25_keep_118_and_2_9_25_gets_120() {
     }
 }
 
+/// #718: capability 123 (each layout pane's browser kind) is offered to a
+/// daemon release that knows it, 2.9.26 or later, which also takes up to 16
+/// numbers. Released daemons refuse a tenth number, so for them, for a
+/// remote daemon (no version) and for anything that is not a plain release
+/// number the offer stays exactly as it was. A surface source, which has no
+/// header, never asks for it.
+#[test]
+fn the_browser_kind_is_offered_only_to_a_daemon_that_knows_it() {
+    for graphics in [false, true] {
+        for local_images in [false, true] {
+            for native_surfaces in [false, true] {
+                for interactive in [false, true] {
+                    for version in [
+                        None,
+                        Some("2.9.24"),
+                        Some("2.9.25"),
+                        Some("2.9.26"),
+                        Some("2.10.0"),
+                        Some("3.0.0"),
+                        Some("2.9.26-rc.1"),
+                        Some("dev"),
+                    ] {
+                        let case = (
+                            graphics,
+                            local_images,
+                            native_surfaces,
+                            interactive,
+                            version,
+                        );
+                        let before = offered_versions(
+                            graphics,
+                            local_images,
+                            native_surfaces,
+                            interactive,
+                            knows_topology_bundle(version),
+                        );
+                        let offer = with_browser_kind(before.clone(), graphics, version);
+                        let knows = matches!(version, Some("2.9.26" | "2.10.0" | "3.0.0"));
+                        if graphics && knows {
+                            assert_eq!(offer[..offer.len() - 1], before[..], "{case:?}");
+                            assert_eq!(offer.last(), Some(&123), "{case:?}");
+                            assert!(offer.len() <= 16, "{case:?}: {offer:?}");
+                        } else {
+                            assert_eq!(offer, before, "{case:?}");
+                            assert!(offer.len() <= 9, "{case:?}: {offer:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // A full 2.9.26 offer gets no 17th number.
+    let full: Vec<u32> = (200..216).collect();
+    assert_eq!(with_browser_kind(full.clone(), true, Some("2.9.26")), full);
+    assert_eq!(
+        with_browser_kind(
+            offered_versions(true, true, true, true, true),
+            true,
+            Some("2.9.26")
+        ),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123]
+    );
+}
+
 /// #806: a window-scoped selection names its window only to a daemon that
 /// knows window-scoped streams; a released daemon would refuse the field, so
 /// the selection fails here instead. A whole-session selection is unchanged.

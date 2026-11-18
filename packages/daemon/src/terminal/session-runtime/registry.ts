@@ -2530,6 +2530,7 @@ class SessionRuntimeConsumerImpl implements SessionRuntimeConsumer {
       ack: (ack: TerminalDeliveryAck) => upstream.ack(ack),
       ...(upstream.projectionReceipt ? { projectionReceipt: upstream.projectionReceipt } : {}),
       ...(upstream.materialize ? { materialize: upstream.materialize } : {}),
+      ...(upstream.historyRequest ? { historyRequest: upstream.historyRequest } : {}),
       ...(upstream.prioritize ? { prioritize: upstream.prioritize } : {}),
       nack: (nack: TerminalDeliveryNack) => upstream.nack(nack),
       setVisibility: (visibility: TerminalDeliveryVisibility) => upstream.setVisibility(visibility),

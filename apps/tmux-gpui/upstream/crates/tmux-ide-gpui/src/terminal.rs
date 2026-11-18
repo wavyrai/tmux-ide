@@ -4,8 +4,8 @@ pub(crate) use links::logical_web_link;
 pub(crate) use selection::MAX_SELECTION_BYTES;
 
 use crate::config::Theme;
-use gpui::{Bounds, Pixels, Point, point, px, size};
-use herdr_client::protocol::{CellData, CursorState, PaneSurfacePane, SurfaceRect};
+use gpui::{Bounds, Pixels, point, px, size};
+use herdr_client::protocol::{CellData, PaneSurfacePane, SurfaceRect};
 
 #[cfg(test)]
 pub const BACKGROUND: u32 = 0x101419;
@@ -21,17 +21,6 @@ pub(crate) const UNDERLINE: u16 = 1 << 3;
 pub(crate) const REVERSED: u16 = 1 << 6;
 pub(crate) const HIDDEN: u16 = 1 << 7;
 pub(crate) const STRIKETHROUGH: u16 = 1 << 8;
-
-pub(crate) fn cursor_offset(
-    cursor: &CursorState,
-    cell_width: f32,
-    cell_height: f32,
-) -> Point<Pixels> {
-    point(
-        px(cursor.x as f32 * cell_width),
-        px(cursor.y as f32 * cell_height),
-    )
-}
 
 /// Sub-step motion kept between events on one axis.
 #[derive(Default)]
