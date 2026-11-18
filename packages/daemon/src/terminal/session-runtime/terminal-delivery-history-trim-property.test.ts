@@ -128,7 +128,8 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
           messages: TerminalDeliveryServerMessage[];
           state: ReturnType<typeof createTerminalDeliveryClientState> | null;
           processed: number;
-          pendingAck: unknown;
+          /** ACKs not yet sent, oldest first: a client ACKs every delivery, in order. */
+          pendingAcks: unknown[];
           id: string;
         };
         const open = async (id: string): Promise<Client> => {
@@ -146,7 +147,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
             messages,
             state: createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
             processed: 0,
-            pendingAck: null,
+            pendingAcks: [],
             id,
           };
         };
@@ -191,7 +192,7 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
             expect(expected, `revision ${e.canonicalRevision} known`).toBeDefined();
             expect(result.state.canonicalSnapshot).toEqual(expected);
             stats.checked += 1;
-            cl.pendingAck = result.ack;
+            cl.pendingAcks.push(result.ack);
           }
         };
 
@@ -273,9 +274,8 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
             for (const cl of clients) drain(cl);
             // Ack only sometimes, so deliveries coalesce over skipped revisions.
             for (const cl of clients)
-              if (cl.pendingAck && rand() < 0.35) {
-                cl.c.ack(cl.pendingAck as never);
-                cl.pendingAck = null;
+              if (cl.pendingAcks.length && rand() < 0.35) {
+                cl.c.ack(cl.pendingAcks.shift() as never);
               }
             await settle();
             for (const cl of clients) drain(cl);
@@ -283,9 +283,8 @@ describe.each(["semantic-v1", "semantic-compact-v1"] as const)(
           // Converge: ack until each client holds the latest revision.
           for (let round = 0; round < 20; round++) {
             for (const cl of clients)
-              if (cl.pendingAck) {
-                cl.c.ack(cl.pendingAck as never);
-                cl.pendingAck = null;
+              while (cl.pendingAcks.length) {
+                cl.c.ack(cl.pendingAcks.shift() as never);
               }
             await settle();
             for (const cl of clients) drain(cl);

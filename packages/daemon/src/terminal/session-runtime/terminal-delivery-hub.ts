@@ -117,6 +117,16 @@ export const TERMINAL_DELIVERY_CONNECTION_HOLD_MS = 250;
  * there only bunches panes up behind each other.
  */
 export const TERMINAL_DELIVERY_CONNECTION_CONGESTED_MS = 30;
+/**
+ * Deliveries one visible pane may have unacknowledged. Over a long link an
+ * echo commits while the previous echo's delivery is still unacknowledged;
+ * waiting for that ACK costs up to one more round trip per key. Clients apply
+ * patches in order against their last applied revision, so later patches go
+ * out behind unacknowledged ones. After a NACK each such patch draws one more
+ * NACK, and the shipped app fails a stream on its fourth NACK in a row: keep
+ * this at 3 or below. Daemon policy only: nothing on the wire changes.
+ */
+export const TERMINAL_DELIVERY_MAX_PIPELINED = 3;
 
 export interface TerminalDeliveryMetrics {
   /** Unique delivery subscribers, independent of their pane count. */
@@ -275,6 +285,7 @@ interface ClientState {
   pendingHistoryRows: number | null;
   /** New output went out since the request: the history frame goes next. */
   revisionSinceHistoryRequest: boolean;
+  /** The oldest unacknowledged delivery; `pipelined` holds the ones sent after it. */
   inFlight: {
     envelope: DeliveryEnvelope;
     projection: ProjectionBaseline | null;
@@ -289,6 +300,16 @@ interface ClientState {
     nextChunk: number;
     sentAt: number;
   } | null;
+  /**
+   * Patches sent after `inFlight`, oldest first, each based on the one before
+   * (TERMINAL_DELIVERY_MAX_PIPELINED). ACKs settle `inFlight` first.
+   */
+  pipelined: DeliveryFlight[];
+  /**
+   * Transactions dropped unacknowledged (by a NACK of an earlier flight, or a
+   * fault). The client may still ACK or NACK them; that feedback is inert.
+   */
+  droppedTransactions: Set<string>;
   latestRevision: number | null;
   encoding: PendingClientEncoding | null;
   scheduled: boolean;
@@ -311,6 +332,7 @@ interface ClientState {
   budgetTimer: SessionRuntimeTimer | null;
 }
 
+type DeliveryFlight = NonNullable<ClientState["inFlight"]>;
 type SeedEncodingOutcome = { readonly bytes: Uint8Array } | { readonly error: unknown };
 interface PendingSeedEncoding {
   readonly key: string;
@@ -557,6 +579,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         pendingHistoryRows: null,
         revisionSinceHistoryRequest: false,
         inFlight: null,
+        pipelined: [],
+        droppedTransactions: new Set(),
         latestRevision: pane.latest?.update.revision ?? null,
         encoding: null,
         scheduled: false,
@@ -754,7 +778,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       ),
       maxQueueDepth: this.#maxQueueDepth,
       inFlightBytes: [...this.#clients.values()].reduce(
-        (sum, client) => sum + (client.inFlight?.envelope.representationBytes ?? 0),
+        (sum, client) => sum + this.#unackedBytes(client),
         0,
       ),
     });
@@ -798,6 +822,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       this.#cancelEncoding(client);
       client.outgoing.length = 0;
       client.inFlight = null;
+      client.pipelined.length = 0;
       client.budgetHeld = false;
       logDeliveryFault(client, "source-closed", "source-restarted");
       this.#enqueue(client, {
@@ -1177,7 +1202,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     let oldest = now;
     for (const other of this.#clients.values())
       if (other !== client && other.clientId === client.clientId && other.inFlight) {
-        bytes += other.inFlight.envelope.representationBytes;
+        bytes += this.#unackedBytes(other);
         oldest = Math.min(oldest, other.inFlight.sentAt);
       }
     return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES && now - oldest >= this.#congestedMs;
@@ -1196,13 +1221,123 @@ export class SessionRuntimeTerminalDeliveryHub {
     }
   }
 
+  /** Bytes the client has not acknowledged: every flight, pipelined ones included. */
+  #unackedBytes(client: ClientState): number {
+    let bytes = client.inFlight?.envelope.representationBytes ?? 0;
+    for (const flight of client.pipelined) bytes += flight.envelope.representationBytes;
+    return bytes;
+  }
+
+  /** The revision the client holds once every flight applies (its ACKed baseline if none). */
+  #sentRevision(client: ClientState): number {
+    const newest = client.pipelined.at(-1) ?? client.inFlight;
+    return newest?.envelope.type === "terminal.delivery" && newest.envelope.frame !== "history"
+      ? newest.envelope.canonicalRevision
+      : client.baselineRevision;
+  }
+
+  /**
+   * Whether another delivery may go out behind the unacknowledged ones. Only a
+   * visible pane, only behind canonical patches whose chunks have all been
+   * handed to the socket (a client takes one envelope's chunks at a time), and
+   * within TERMINAL_DELIVERY_MAX_PIPELINED and the connection's unacknowledged
+   * byte budget. Seeds, projections, history frames and history requests keep
+   * one delivery in flight.
+   */
+  #canPipeline(client: ClientState): boolean {
+    if (
+      !client.inFlight ||
+      client.pipelined.length + 1 >= TERMINAL_DELIVERY_MAX_PIPELINED ||
+      client.visibility !== "visible" ||
+      client.reseedRequired ||
+      client.materializeRequested ||
+      client.pendingHistoryRows !== null ||
+      client.encoding ||
+      (client.negotiated.encoding !== "semantic-v1" &&
+        client.negotiated.encoding !== "semantic-compact-v1" &&
+        client.negotiated.encoding !== "semantic-binary-v1")
+    )
+      return false;
+    for (const flight of [client.inFlight, ...client.pipelined])
+      if (
+        flight.envelope.type !== "terminal.delivery" ||
+        flight.projection ||
+        flight.envelope.frame !== "patch" ||
+        !flight.envelope.canonicalEquivalent ||
+        flight.nextChunk < flight.envelope.chunkCount
+      )
+        return false;
+    return this.#unackedBytes(client) < TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES;
+  }
+
+  /**
+   * The client as it will be once every flight applies: what its ACKs would
+   * set (see #ack). Representations for a pipelined patch are based on it.
+   */
+  #pipelineBase(client: ClientState): ClientState {
+    const newest = client.pipelined.at(-1) ?? client.inFlight!;
+    const rows = newest.historyRows;
+    return {
+      ...client,
+      baselineRevision: newest.envelope.canonicalRevision,
+      baselineHash: newest.envelope.canonicalStateHash,
+      projectionBaseline: null,
+      lastProjectionReceipt: null,
+      reseedRequired: false,
+      ...(rows
+        ? {
+            historyUnloadedRows: rows.unloaded,
+            historyUnloadedDigest: rows.digest,
+            historyLoadedRows: rows.loaded,
+          }
+        : {}),
+    };
+  }
+
+  /** A patch on `base`'s projected state, or null when only a seed (or an encoding job) would do. */
+  #pipelinedRepresentation(
+    base: ClientState,
+    pane: PaneState,
+    target: RevisionRecord,
+  ): CachedRepresentation | null {
+    if (
+      target.update.type !== "terminal.patch" ||
+      target.update.revision <= base.baselineRevision ||
+      pane.revisions.get(base.baselineRevision)?.update.incarnation !== target.update.incarnation
+    )
+      return null;
+    const reseeds = this.#reseeds;
+    try {
+      const representation = this.#representation(base, pane, target);
+      if (
+        representation.frame === "patch" &&
+        representation.canonicalEquivalent &&
+        !representation.projection
+      )
+        return representation;
+    } catch (error) {
+      if (!(error instanceof DeferredSeedEncoding || error instanceof DeferredProjectionEncoding))
+        throw error;
+    }
+    // A seed waits for the ACKs and is then chosen again; it is counted then.
+    this.#reseeds = reseeds;
+    return null;
+  }
+
+  /** Flights behind a NACKed or faulted one: the client gets a reseed; their feedback is inert. */
+  #dropPipelined(client: ClientState): void {
+    for (const flight of client.pipelined)
+      client.droppedTransactions.add(flight.envelope.transactionId);
+    client.pipelined.length = 0;
+  }
+
   #schedule(client: ClientState): void {
     if (
       client.closed ||
       client.captureUnavailable ||
-      client.inFlight ||
+      (client.inFlight && !this.#canPipeline(client)) ||
       client.encoding ||
-      ((client.latestRevision === null || client.latestRevision === client.baselineRevision) &&
+      ((client.latestRevision === null || client.latestRevision === this.#sentRevision(client)) &&
         client.pendingHistoryRows === null) ||
       client.visibility === "hidden" ||
       client.visibility === "frozen"
@@ -1225,7 +1360,11 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.scheduled = true;
     this.#scheduler.microtask(() => {
       client.scheduled = false;
-      if (!client.closed && client.visibility === "visible" && !client.inFlight)
+      if (
+        !client.closed &&
+        client.visibility === "visible" &&
+        (!client.inFlight || this.#canPipeline(client))
+      )
         this.#deliver(client);
     });
   }
@@ -1246,12 +1385,14 @@ export class SessionRuntimeTerminalDeliveryHub {
       return;
     }
     const target = completed?.target ?? pane?.latest;
+    // Behind an unacknowledged delivery only a patch on the client's projected state goes out.
+    const pipelining = !completed && client.inFlight !== null;
     if (
       !pane ||
       !target ||
       client.closed ||
       client.captureUnavailable ||
-      client.inFlight ||
+      (client.inFlight && (completed || !this.#canPipeline(client))) ||
       client.encoding ||
       client.visibility === "hidden" ||
       client.visibility === "frozen" ||
@@ -1268,7 +1409,15 @@ export class SessionRuntimeTerminalDeliveryHub {
     let deliveryEnvelope: DeliveryEnvelope | null = null;
     let deliveryOrdinal: number | null = null;
     try {
-      const representation = this.#representation(client, pane, target, completed?.outcome);
+      const base = pipelining ? this.#pipelineBase(client) : client;
+      const representation = pipelining
+        ? this.#pipelinedRepresentation(base, pane, target)
+        : this.#representation(client, pane, target, completed?.outcome);
+      if (!representation) {
+        // Not a patch: it waits for the outstanding ACKs, then goes out as usual.
+        deferred = true;
+        return;
+      }
       encodedRepresentation = representation;
       const transactionId = this.#scheduler.createId();
       const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
@@ -1295,7 +1444,7 @@ export class SessionRuntimeTerminalDeliveryHub {
           ? representation.projectionBaseRevision
           : representation.frame === "seed"
             ? null
-            : Math.max(0, client.baselineRevision),
+            : Math.max(0, base.baselineRevision),
         canonicalRevision: target.update.revision,
         canonicalStateHash: target.update.stateHash,
         representationHash:
@@ -1314,7 +1463,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       deliveryOrdinal = ++this.#deliveryOrdinal;
       registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
       if (client.pendingHistoryRows !== null) client.revisionSinceHistoryRequest = true;
-      client.inFlight = {
+      const flight: DeliveryFlight = {
         envelope,
         projection: representation.projection ?? null,
         historyRows: representation.historyRows ?? null,
@@ -1323,6 +1472,8 @@ export class SessionRuntimeTerminalDeliveryHub {
         nextChunk: 0,
         sentAt: this.#scheduler.nowMs(),
       };
+      if (pipelining) client.pipelined.push(flight);
+      else client.inFlight = flight;
       this.#enqueue(client, envelope);
       this.#recordDeliveryStatus(client, pane);
       if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
@@ -1938,6 +2089,7 @@ export class SessionRuntimeTerminalDeliveryHub {
   #ack(client: ClientState, input: TerminalDeliveryAck): void {
     const ack = TerminalDeliveryAckSchemaZ.parse(input);
     const flight = client.inFlight;
+    if (client.droppedTransactions.has(ack.transactionId)) return;
     if (!flight) {
       if (client.lastAck && JSON.stringify(client.lastAck) === JSON.stringify(ack)) return;
       const closed = client.sourceClosedFlight;
@@ -1992,7 +2144,8 @@ export class SessionRuntimeTerminalDeliveryHub {
       client.historyLoadedRows = flight.historyRows.loaded;
       this.#pushHistoryTail(client);
     }
-    client.inFlight = null;
+    client.inFlight = client.pipelined.shift() ?? null;
+    client.droppedTransactions.clear();
     this.#releaseBudget(client.clientId);
     client.lastAck = ack;
     if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
@@ -2428,6 +2581,7 @@ export class SessionRuntimeTerminalDeliveryHub {
       nack.transactionId === closed.transactionId
     )
       return;
+    if (nack.transactionId !== null && client.droppedTransactions.has(nack.transactionId)) return;
     const envelope = client.inFlight?.envelope;
     if (
       !envelope ||
@@ -2444,6 +2598,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     this.#nacks += 1;
     client.reseedRequired = true;
     client.inFlight = null;
+    this.#dropPipelined(client);
     this.#releaseBudget(client.clientId);
     this.#pruneCanonicalRevisions(client.paneId);
     this.#schedule(client);
@@ -2499,6 +2654,7 @@ export class SessionRuntimeTerminalDeliveryHub {
     client.outgoing.length = 0;
     if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
     client.inFlight = null;
+    this.#dropPipelined(client);
     this.#releaseBudget(client.clientId);
     const fault: TerminalDeliveryServerMessage = {
       type: "terminal.delivery.fault",
@@ -2536,10 +2692,15 @@ export class SessionRuntimeTerminalDeliveryHub {
         while (!client.closed) {
           const queued = client.outgoing.shift();
           let next = queued?.();
-          const flight = client.inFlight;
+          // Only the newest flight can still have chunks: a pipelined
+          // delivery is created only once every earlier one is fully out.
+          const flight = client.pipelined.at(-1) ?? client.inFlight;
           if (!next && flight && flight.nextChunk < flight.envelope.chunkCount) {
             const index = flight.nextChunk;
             flight.nextChunk += 1;
+            // A newer revision may be waiting for this flight's last chunk.
+            if (flight.nextChunk === flight.envelope.chunkCount && client.latestRevision !== null)
+              this.#schedule(client);
             next = {
               type: "terminal.delivery.chunk",
               transactionId: flight.envelope.transactionId,
@@ -2741,13 +2902,15 @@ export class SessionRuntimeTerminalDeliveryHub {
         reachable.add(client.baselineRevision);
       const encoding = client.encoding?.target.update;
       if (encoding?.incarnation === latest.incarnation) reachable.add(encoding.revision);
-      const flight = client.inFlight?.envelope;
-      if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
+      for (const flight of [client.inFlight, ...client.pipelined])
+        if (flight?.envelope.incarnation === latest.incarnation)
+          reachable.add(flight.envelope.canonicalRevision);
     }
-    // A hidden or slow reader owns at most one baseline and one transaction.
-    // Historical redraws with no reader cannot help a future delivery: new
-    // readers and skipped revisions already receive an atomic current seed.
-    // MAX_CLIENTS bounds this set to 2 * MAX_CLIENTS + 1 per pane.
+    // A hidden or slow reader owns at most one baseline and its transactions
+    // (one, or TERMINAL_DELIVERY_MAX_PIPELINED for a visible pane). Historical
+    // redraws with no reader cannot help a future delivery: new readers and
+    // skipped revisions already receive an atomic current seed. MAX_CLIENTS
+    // bounds this set to (TERMINAL_DELIVERY_MAX_PIPELINED + 1) * MAX_CLIENTS + 1 per pane.
     for (const revision of pane.revisions.keys())
       if (!reachable.has(revision)) {
         this.#releaseNativeBacking(pane.revisions.get(revision)?.nativeBacking);
@@ -2766,7 +2929,10 @@ export class SessionRuntimeTerminalDeliveryHub {
           cached.cacheBaseRevision === candidate.baselineRevision ||
           (Number.isSafeInteger(cached.cacheTargetRevision) &&
             cached.cacheTargetRevision! > candidate.baselineRevision) ||
-          cached.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision,
+          cached.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision ||
+          candidate.pipelined.some(
+            (flight) => cached.cacheTargetRevision === flight.envelope.canonicalRevision,
+          ),
       );
       if (reachable) continue;
       this.#cache.delete(key);
