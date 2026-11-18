@@ -161,6 +161,7 @@ import { mountWorkspaceResourceRoutes } from "./resources/workspace-resource-rou
 import { mountFleetResourceRoute } from "./resources/fleet-resource-route.ts";
 import { mountWorkspaceMissionsRoute } from "./resources/workspace-missions-route.ts";
 import { ownerAuthorityGate, requireOwnerAuthority } from "./owner-authority.ts";
+import { ownerKeepAlive } from "./owner-keep-alive.ts";
 import { mountDiagnosticsRoute } from "./diagnostics.ts";
 import {
   mountStartupReadinessRoute,
@@ -569,6 +570,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   // Allow cross-origin (Next.js dashboard, Tailscale, etc.)
   app.use("/*", cors());
+  // An owner connection stays open while idle for longer than Node's 5 s.
+  app.use("/*", ownerKeepAlive(options.remoteAccess?.ownerToken ?? null));
 
   if (options.tmuxServerOwners) {
     mountAutomationRoutes(app, {

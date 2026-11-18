@@ -23,6 +23,7 @@ async function fixture() {
     mutate: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     issue: ReturnType<typeof vi.fn>;
+    openSession: ReturnType<typeof vi.fn>;
   }[] = [];
   const manager = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe: async (selector) => ({
@@ -71,6 +72,10 @@ async function fixture() {
         pane: "pane.same",
       }));
       const nativeBrowser = vi.fn(async () => null);
+      const openSession = vi.fn(async (liveSessionId: string) => ({
+        workspaceName: "same",
+        liveSessionId,
+      }));
       ownersCreated.push({
         nativeBrowser,
         surfaceContext,
@@ -81,12 +86,14 @@ async function fixture() {
         issue,
         discover,
         discoverShell,
+        openSession,
       });
       return {
         nativeBrowser,
         resolveNativeSurfaceContext: surfaceContext,
         readWindowSplitLayout: splitRead,
         catalog,
+        openSession,
         terminalInventoryRuntime: {
           discoverTerminalRuntimeSession: discover,
           discoverApplicationShellSession: discoverShell,
@@ -586,4 +593,174 @@ it("logs why a scoped route answered server-unavailable, and nothing for an expe
   } finally {
     warn.mockRestore();
   }
+});
+
+describe("attach: open, inventory and issue in one request (attach-rtt)", () => {
+  const live = `live-session.${"a".repeat(20)}`;
+  const pane = (windowId: string, id: string, stamp: string, count: number, active: boolean) => ({
+    windowId,
+    runtimePaneId: `%${id.length}${windowId.slice(1)}`,
+    windowPaneCount: count,
+    semanticPaneId: id,
+    windowStamp: stamp,
+    index: 0,
+    title: "t",
+    currentCommand: "zsh",
+    active,
+    role: null,
+    name: null,
+    type: null,
+    missionStamp: null,
+  });
+  const snapshot = {
+    workspaceName: "same",
+    name: "same",
+    runtimeSessionId: "$4",
+    catalogIssue: null,
+    dir: "/private/project",
+    panes: [
+      pane("@1", "pane.a", "window.one", 2, true),
+      pane("@1", "pane.bb", "window.one", 2, true),
+      pane("@2", "pane.ccc", "window.two", 1, false),
+    ],
+  };
+  async function attach(
+    f: Awaited<ReturnType<typeof fixture>>,
+    body: Record<string, unknown>,
+    path = f.scope(f.a),
+    auth: string | null = token,
+    stream: Record<string, unknown> = {},
+  ) {
+    const requestId = randomUUID();
+    const response = await f.app.request(`${base}${path}/sessions/${live}/attach`, {
+      method: "POST",
+      headers: {
+        ...(auth ? { Authorization: `Bearer ${auth}` } : {}),
+        "Content-Type": "application/json",
+        Origin: "tmux-ide://app",
+        "X-Tmux-Ide-Request-Id": requestId,
+        "X-Tmux-Ide-Expected-Daemon-Instance-Id": f.a.generation!,
+        "X-Tmux-Ide-Host-Client-Id": "host.a",
+      },
+      body: JSON.stringify({
+        version: 1,
+        preferredPane: null,
+        maxPanes: 24,
+        issue: {
+          requestId,
+          expectedDaemonInstanceId: f.a.generation,
+          stream: {
+            protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+            viewerMode: "interactive",
+            ...stream,
+          },
+        },
+        ...body,
+      }),
+    });
+    return { response, requestId };
+  }
+
+  it("answers the opened workspace, its inventory, the selection and the issued stream", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue(snapshot);
+    // A window the client names is not its to choose: the whole session fits.
+    const { response, requestId } = await attach(f, {}, f.scope(f.a), token, {
+      semanticWindowId: "window.one",
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      version: 1,
+      server: { serverId: f.a.serverId, generation: f.a.generation },
+      workspaceName: "same",
+      liveSessionId: live,
+      inventory: {
+        semanticPaneIds: ["pane.a", "pane.bb", "pane.ccc"],
+        windows: [
+          { semanticWindowId: "window.one", active: true },
+          { semanticWindowId: "window.two", active: false },
+        ],
+      },
+      selection: {
+        semanticWindowId: null,
+        panes: ["pane.a", "pane.bb", "pane.ccc"],
+        selectedPane: "pane.a",
+      },
+      issue: {
+        status: "issued",
+        descriptor: { requestId, panes: ["pane.a", "pane.bb", "pane.ccc"] },
+      },
+    });
+    expect(owner.openSession).toHaveBeenCalledExactlyOnceWith(live);
+    expect(owner.issue).toHaveBeenCalledOnce();
+    expect(owner.issue.mock.calls[0]![0].semanticWindowId).toBeUndefined();
+    expect(owner.issue.mock.calls[0]![1]).toEqual({
+      requestId,
+      projectIdentity: "same",
+      sessionName: "same",
+      rendererOrigin: "tmux-ide://app",
+      hostClientId: "host.a",
+    });
+    // The open already read the catalog: attach reads it no second time.
+    expect(owner.catalog).not.toHaveBeenCalled();
+  });
+
+  it("issues one window when the session does not fit, ignoring a window the client named", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue(snapshot);
+    const { response } = await attach(
+      f,
+      { preferredPane: "pane.ccc", maxPanes: 2 },
+      f.scope(f.a),
+      token,
+      { workspaceName: "other", panes: ["pane.a"], semanticWindowId: "window.one" },
+    );
+    const body = await response.json();
+    expect(body.selection).toEqual({
+      semanticWindowId: "window.two",
+      panes: ["pane.ccc"],
+      selectedPane: "pane.ccc",
+    });
+    const [request] = owner.issue.mock.calls[0]!;
+    expect(request).toMatchObject({ panes: ["pane.ccc"], semanticWindowId: "window.two" });
+  });
+
+  it("issues nothing when no window fits, and leaves the choice to the app", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue({
+      ...snapshot,
+      panes: [...snapshot.panes, pane("@2", "pane.dddd", "window.two", 2, false)],
+    });
+    const body = await (await attach(f, { maxPanes: 1, preferredPane: "pane.a" })).response.json();
+    expect(body.selection).toBeNull();
+    expect(body.issue).toBeNull();
+    expect(body.inventory.semanticPaneIds).toHaveLength(4);
+    expect(owner.issue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a stale generation, a missing owner bearer and a malformed body before opening", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue(snapshot);
+    const stale = `/${f.a.serverId}/${randomUUID()}`;
+    expect((await attach(f, {}, stale)).response.status).toBe(409);
+    expect((await attach(f, {}, f.scope(f.a), null)).response.status).toBe(401);
+    expect((await attach(f, { maxPanes: 0 })).response.status).toBe(400);
+    expect((await attach(f, { extra: true })).response.status).toBe(400);
+    expect(owner.openSession).not.toHaveBeenCalled();
+    expect(owner.issue).not.toHaveBeenCalled();
+  });
+
+  it("answers workspace-not-found when the opened session has no inventory", async () => {
+    const f = await fixture();
+    const owner = f.ownersCreated[0]!;
+    owner.discover.mockResolvedValue(null);
+    const { response } = await attach(f, {});
+    expect(response.status).toBe(404);
+    expect(owner.issue).not.toHaveBeenCalled();
+  });
 });

@@ -6061,3 +6061,69 @@ describe("input fenced to a pane lifetime that has ended", () => {
     await vi.waitFor(() => expect(socket.closed?.code).toBe(1011));
   });
 });
+
+describe("redemption carried by the upgrade request (attach-rtt)", () => {
+  async function reserve(h: ReturnType<typeof harness>) {
+    const requestId = freshRequestId();
+    const descriptor = await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.editor", "pane.shell"],
+        viewerMode: "read-only",
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const socket = new FakeSocket();
+    decision.admission.bind(socket);
+    const frame = {
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+    };
+    return { socket, admission: decision.admission, frame };
+  }
+
+  it("streams with no frame on the socket", async () => {
+    const h = harness();
+    const { socket, admission, frame } = await reserve(h);
+    admission.redeemFromUpgrade(Buffer.from(JSON.stringify(frame)));
+    await vi.waitFor(() =>
+      expect({ ready: socket.framesOfType("ready").length, closed: socket.closed }).toEqual({
+        ready: 1,
+        closed: null,
+      }),
+    );
+  });
+
+  it("closes a socket that also sends the frame: one ticket, one redemption", async () => {
+    const h = harness();
+    const { socket, admission, frame } = await reserve(h);
+    admission.redeemFromUpgrade(Buffer.from(JSON.stringify(frame)));
+    socket.message(frame);
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1008));
+    expect(socket.framesOfType("ready")).toHaveLength(0);
+  });
+
+  it("refuses a malformed carried frame like a malformed first message", async () => {
+    const h = harness();
+    const { socket, admission } = await reserve(h);
+    admission.redeemFromUpgrade(Buffer.from("{not json"));
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(1008));
+    expect(socket.framesOfType("ready")).toHaveLength(0);
+  });
+});
