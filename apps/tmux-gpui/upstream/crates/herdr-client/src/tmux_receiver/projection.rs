@@ -183,6 +183,8 @@ impl Receiver {
             Frame::Seed => "seed",
             Frame::Patch => "patch",
             Frame::Tombstone => "tombstone",
+            // A projection stream never negotiates history on demand.
+            Frame::History => return Err(Error::Ordering),
         };
         if update.frame() != frame
             || update.revision() != e.canonical_revision

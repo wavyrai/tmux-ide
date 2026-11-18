@@ -596,6 +596,10 @@ impl Active {
             let pane = self.controller.selected().to_owned();
             self.controller.materialize_history(&pane)?;
         }
+        if self.presentation.history_wanted() {
+            let pane = self.controller.selected().to_owned();
+            self.controller.request_history(&pane, Instant::now())?;
+        }
         self.history_notice = self.history.request(
             &mut self.presentation,
             &self.id,

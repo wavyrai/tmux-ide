@@ -846,6 +846,9 @@ mod agent_idle_live_tests;
 #[path = "browser_native_local_fault_log_live_tests.rs"]
 mod fault_log_live_tests;
 #[cfg(test)]
+#[path = "browser_native_local_history_live_tests.rs"]
+mod history_live_tests;
+#[cfg(test)]
 #[path = "browser_native_local_home_live_tests.rs"]
 mod home_live_tests;
 #[cfg(test)]

@@ -272,3 +272,46 @@ fn anchor_requests_match_capture_and_resolve_wire_contracts() {
     assert!(body["proof"].get("stateHash").is_none());
     assert!(restore.request_body("../owner").is_err());
 }
+
+/// Capability 122: indexes name rows of the whole history, so a partial
+/// history's unloaded rows come before its loaded ones, in a capture and in
+/// a restore alike.
+#[test]
+fn a_partial_history_captures_and_restores_whole_history_indexes() {
+    use crate::tmux_delivery::{DeferredHistory, History, PartialHistory};
+    let mut partial = (*snapshot(10, 2)).clone();
+    let loaded = partial.history.materialized().unwrap().to_vec();
+    partial.history = History::Partial(PartialHistory {
+        unloaded: DeferredHistory {
+            rows: 300,
+            digest: "0".repeat(16),
+        },
+        loaded: Arc::new(loaded),
+    });
+    let partial = Arc::new(partial);
+    let mut v = Viewport::default();
+    v.update(scope(), partial.clone());
+    let mut r = Restoration::default();
+    r.observe(proof(1), &mut v, 0);
+    v.scroll(Scroll::Wheel(3));
+    // The fourth-newest of ten loaded rows: index 7 of them, 307 of all.
+    assert_eq!(v.capture_index(), Some(307));
+    let capture = r.capture(proof(1), &v).unwrap();
+    assert!(matches!(
+        capture.operation,
+        AnchorOperation::Capture { history_index: 307 }
+    ));
+    v.scroll(Scroll::End);
+    let action = r.restore(proof(1), &v, UUID.into(), 100).unwrap();
+    assert!(r.complete(
+        &action.ticket,
+        Some(AnchorResult::Resolved {
+            proof: proof(1),
+            history_index: 307
+        }),
+        &mut v,
+        200
+    ));
+    assert_eq!(v.offset(), 3);
+    assert_eq!(r.state(), HistoryState::Historical);
+}

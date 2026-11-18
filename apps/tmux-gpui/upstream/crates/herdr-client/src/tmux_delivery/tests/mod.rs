@@ -2,6 +2,7 @@
 use super::*;
 use serde_json::{Value, json};
 use std::sync::Arc;
+mod partial;
 fn vectors() -> Vec<Value> {
     serde_json::from_str(include_str!("vectors.json")).unwrap()
 }

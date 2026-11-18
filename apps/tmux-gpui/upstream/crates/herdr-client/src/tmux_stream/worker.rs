@@ -63,6 +63,7 @@ impl Command {
                 | "terminal-projection-receipt"
                 | "terminal-projection-materialize"
                 | "terminal-delivery-nack"
+                | "terminal-delivery-history-request"
                 | "terminal-delivery-visibility"
                 | "terminal-cell-pixels"
                 | "terminal-graphics-request"

@@ -212,7 +212,7 @@ impl Mailbox {
         if committed
             .snapshot
             .as_ref()
-            .is_none_or(|s| s.history.is_complete())
+            .is_none_or(|s| !s.history.is_deferred())
         {
             self.materializing.remove(&pane);
         }
