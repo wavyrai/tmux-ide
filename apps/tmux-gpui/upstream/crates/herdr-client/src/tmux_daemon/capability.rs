@@ -404,6 +404,12 @@ impl ServerClient {
             *slot = Some(prepare(port, &peer));
         }
     }
+    /// Put back the socket an unused prelude was proving, for the next issue.
+    pub(super) fn keep_prepared(&self, prelude: IssuePrelude) {
+        if let (Some(prepared), Ok(mut slot)) = (prelude.prepared, self.prepared.lock()) {
+            *slot = Some(prepared);
+        }
+    }
     fn take_prepared(&self) -> Option<crate::tmux_stream::PreparedSocket> {
         self.prepared.lock().ok()?.take()
     }

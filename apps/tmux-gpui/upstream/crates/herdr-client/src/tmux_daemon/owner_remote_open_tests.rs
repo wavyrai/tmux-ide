@@ -2,7 +2,10 @@
 //! allows, and a pause longer than the daemon's idle timeout costs no failure.
 #![allow(clippy::unwrap_used, clippy::type_complexity)]
 use super::*;
-use crate::{tmux_daemon::TerminalSelection, tmux_handoff::ServerScope};
+use crate::{
+    tmux_daemon::{ServerClient, TerminalSelection},
+    tmux_handoff::ServerScope,
+};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -116,6 +119,37 @@ fn daemon(
     });
     (port, descriptor, requests)
 }
+/// A client on a fixture route that ends the route's forward when dropped,
+/// so no fixture forward outlives its test (the tunnel tests look for them).
+struct Remote {
+    client: Option<ServerClient>,
+    route: Option<Arc<crate::tmux_ssh::RemoteTransport>>,
+}
+impl Remote {
+    fn new(route: Arc<crate::tmux_ssh::RemoteTransport>) -> Self {
+        let client = Owner::Remote(route.clone())
+            .select_server(&scope())
+            .unwrap();
+        Self {
+            client: Some(client),
+            route: Some(route),
+        }
+    }
+}
+impl std::ops::Deref for Remote {
+    type Target = ServerClient;
+    fn deref(&self) -> &ServerClient {
+        self.client.as_ref().unwrap()
+    }
+}
+impl Drop for Remote {
+    fn drop(&mut self) {
+        drop(self.client.take());
+        if let Some(Ok(route)) = self.route.take().map(Arc::try_unwrap) {
+            let _ = route.shutdown_fixture();
+        }
+    }
+}
 fn servers() -> Value {
     let scope = scope();
     json!({"version":1,"servers":[{"state":"online","serverId":scope.server_id,"label":"Remote","generation":INSTANCE}]})
@@ -165,7 +199,7 @@ fn opening_sends_one_open_and_one_fenced_inventory_read_and_no_catalog_reads() {
         route_answer(line)
     });
     let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
-    let client = Owner::Remote(route).select_server(&scope()).unwrap();
+    let client = Remote::new(route);
     drained(&requests);
     let workspace = client.open_session(LIVE).unwrap();
     let panes = client.workspace_inventory(LIVE, &workspace).unwrap().panes;
@@ -199,7 +233,7 @@ fn a_refused_open_reads_the_catalog_once_to_tell_a_vanished_session() {
                 }
             });
         let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
-        let client = Owner::Remote(route).select_server(&scope()).unwrap();
+        let client = Remote::new(route);
         drained(&requests);
         let error = client.open_session(LIVE).unwrap_err();
         assert_eq!(
@@ -228,7 +262,7 @@ fn an_open_after_the_daemon_closed_the_idle_connection_succeeds_on_a_new_proven_
         route_answer(line)
     });
     let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
-    let client = Owner::Remote(route).select_server(&scope()).unwrap();
+    let client = Remote::new(route);
     assert_eq!(client.open_session(LIVE).unwrap(), "fixture");
     thread::sleep(Duration::from_millis(5_500));
     assert_eq!(client.open_session(LIVE).unwrap(), "fixture");
@@ -287,9 +321,7 @@ fn a_daemon_that_attaches_opens_inventories_and_issues_in_one_request() {
             issued(&body["issue"]["requestId"], &json!(["pane.a", "pane.b"])),
         )
     });
-    let client = Owner::Remote(route.clone())
-        .select_server(&scope())
-        .unwrap();
+    let client = Remote::new(route);
     drained(&requests);
     let attached = client.attach_session(LIVE, Some("pane.b"), 24).unwrap();
     assert_eq!(attached.workspace_name, "fixture");
@@ -391,7 +423,7 @@ fn an_attach_answer_must_name_this_session_and_pair_selection_with_issue() {
     ];
     for (shape, expected) in cases {
         let (route, _requests, _bodies) = attaching(shape);
-        let client = Owner::Remote(route).select_server(&scope()).unwrap();
+        let client = Remote::new(route);
         let result = client.attach_session(LIVE, None, 24);
         match expected {
             "changed" => assert!(matches!(result, Err(Error::ServerChanged)), "{expected}"),
@@ -412,7 +444,7 @@ fn a_daemon_before_attach_gets_the_open_and_the_inventory_and_a_frame_redeem() {
         }
     });
     let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
-    let client = Owner::Remote(route).select_server(&scope()).unwrap();
+    let client = Remote::new(route);
     drained(&requests);
     let attached = client.attach_session(LIVE, None, 24).unwrap();
     assert!(attached.stream.is_none());
@@ -436,4 +468,62 @@ fn a_daemon_before_attach_gets_the_open_and_the_inventory_and_a_frame_redeem() {
     assert!(!handoff.upgrade.redeem_in_upgrade);
     // The socket proven for the stream during the open is the one it gets.
     assert!(handoff.upgrade.prepared.is_some());
+}
+
+/// A daemon that reports the attach version without the route (404) is
+/// opened as before, and the stream's prepared socket is kept for the issue.
+#[test]
+fn an_attach_answered_404_falls_back_to_the_open_and_the_inventory() {
+    let (port, descriptor, requests) = daemon("2.9.27", Duration::from_secs(5), |line, body| {
+        if line.contains("/attach ") {
+            (404, json!({"error":"not found"}))
+        } else if line.contains("/pane-streams/issue") {
+            let body: Value = serde_json::from_slice(body).unwrap();
+            (200, issued(&body["requestId"], &json!(["pane.first"])))
+        } else {
+            route_answer(line)
+        }
+    });
+    let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
+    let client = Remote::new(route);
+    let mut all = drained(&requests);
+    let attached = client.attach_session(LIVE, None, 24).unwrap();
+    assert_eq!(attached.workspace_name, "fixture");
+    assert!(attached.stream.is_none());
+    let seen = drained(&requests);
+    all.extend(seen.iter().cloned());
+    let lanes: Vec<_> = seen
+        .into_iter()
+        .filter(|(_, l)| !l.starts_with("GET /identity "))
+        .map(|(_, l)| l)
+        .collect();
+    assert_eq!(lanes.len(), 3, "{lanes:?}");
+    assert!(
+        lanes[0].contains("/attach ")
+            && lanes[1].contains("/open ")
+            && lanes[2].contains("/inventory/")
+    );
+    let handoff = client
+        .issue_terminal(&TerminalSelection {
+            workspace_name: attached.workspace_name,
+            live_session_id: LIVE.into(),
+            selected_pane: "pane.first".into(),
+            visible_panes: vec!["pane.first".into()],
+            mode: crate::tmux_stream::ViewerMode::Interactive,
+            window: None,
+        })
+        .unwrap();
+    assert!(handoff.upgrade.prepared.is_some());
+    // The socket proven during the attach is the one the issue hands on:
+    // exactly one connection did nothing but prove the daemon's identity.
+    all.extend(drained(&requests));
+    let mut lines: HashMap<usize, Vec<String>> = HashMap::new();
+    for (connection, line) in all {
+        lines.entry(connection).or_default().push(line);
+    }
+    let proof_only = lines
+        .values()
+        .filter(|lines| lines.len() == 1 && lines[0].starts_with("GET /identity "))
+        .count();
+    assert_eq!(proof_only, 1, "{lines:?}");
 }

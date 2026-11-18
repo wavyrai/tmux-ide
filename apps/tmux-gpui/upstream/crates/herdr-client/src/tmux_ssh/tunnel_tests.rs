@@ -180,12 +180,14 @@ fn a_forward_that_ignores_term_is_killed_after_the_app_dies() {
 /// forward, and nothing is left under the guard.
 #[test]
 fn shutting_a_tunnel_down_ends_its_forward() {
-    let tunnel = Tunnel::spawn_command(shell("exec /bin/sleep 60"), 1234).unwrap();
+    // 59, not 60: `RemoteTransport::fixture` forwards are `sleep 60` under
+    // the same guard, and tests that run alongside must not be found here.
+    let tunnel = Tunnel::spawn_command(shell("exec /bin/sleep 59"), 1234).unwrap();
     let forward = {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let pids = Command::new("/usr/bin/pgrep")
-                .args(["-f", "^/bin/sleep 60$"])
+                .args(["-f", "^/bin/sleep 59$"])
                 .output()
                 .unwrap();
             let mut found: Vec<u32> = String::from_utf8_lossy(&pids.stdout)

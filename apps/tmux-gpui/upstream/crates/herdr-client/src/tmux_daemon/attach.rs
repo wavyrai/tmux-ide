@@ -44,6 +44,15 @@ struct Selection {
 }
 
 impl ServerClient {
+    fn open_then_inventory(&self, live_session_id: &str) -> Result<Attached, Error> {
+        let workspace_name = self.open_session(live_session_id)?;
+        let inventory = self.workspace_inventory(live_session_id, &workspace_name)?;
+        Ok(Attached {
+            workspace_name,
+            inventory,
+            stream: None,
+        })
+    }
     /// Whether this daemon answers the one-request attach.
     pub fn attaches(&self) -> bool {
         attaches(self.product_version().as_deref())
@@ -61,13 +70,7 @@ impl ServerClient {
         self.assert_current()?;
         self.prepare_stream();
         if !self.attaches() {
-            let workspace_name = self.open_session(live_session_id)?;
-            let inventory = self.workspace_inventory(live_session_id, &workspace_name)?;
-            return Ok(Attached {
-                workspace_name,
-                inventory,
-                stream: None,
-            });
+            return self.open_then_inventory(live_session_id);
         }
         let prelude = self.issue_prelude(true, true)?;
         let request_id = Uuid::new_v4().to_string();
@@ -111,7 +114,16 @@ impl ServerClient {
             &issue_headers(&request_id, &scope.generation, &host_client_id),
         );
         self.assert_current()?;
-        let bytes = result.map_err(|error| self.refused(error, live_session_id, None))?;
+        let bytes = match result {
+            Ok(bytes) => bytes,
+            // No attach route: a daemon that reports this version without it.
+            // Open as before, and keep the socket proven for the stream.
+            Err(Error::RequestStatus(404 | 405)) => {
+                self.keep_prepared(prelude);
+                return self.open_then_inventory(live_session_id);
+            }
+            Err(error) => return Err(self.refused(error, live_session_id, None)),
+        };
         let answer: Answer = serde_json::from_slice(&bytes).map_err(|_| Error::ResourceFormat)?;
         if answer.version != 1 || !crate::tmux_stream::valid_identity(&answer.workspace_name) {
             return Err(Error::ResourceFormat);
