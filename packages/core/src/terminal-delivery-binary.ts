@@ -70,15 +70,15 @@ export class BinaryTerminalWriter {
     throw new TypeError("Invalid binary tuple value");
   }
   header(
-    frame: "seed" | "patch" | "tombstone",
+    frame: "seed" | "patch" | "tombstone" | "history",
     revision: number,
     base?: number,
     magic: "TCB1" | "TCP1" = "TCB1",
   ) {
     for (const b of magic === "TCP1" ? [84, 67, 80, 49] : [84, 67, 66, 49]) this.byte(b);
-    this.byte(frame === "seed" ? 0 : frame === "patch" ? 1 : 2);
+    this.byte(frame === "seed" ? 0 : frame === "patch" ? 1 : frame === "tombstone" ? 2 : 3);
     this.uint(revision);
-    if (frame !== "seed") this.uint(base!);
+    if (frame !== "seed" && frame !== "history") this.uint(base!);
   }
   get byteLength(): number {
     return this.length;
@@ -91,7 +91,7 @@ export function decodeBinaryTerminalTuple(
   bytes: Uint8Array,
   magic: "TCB1" | "TCP1" = "TCB1",
 ): {
-  frame: "seed" | "patch" | "tombstone";
+  frame: "seed" | "patch" | "tombstone" | "history";
   revision: number;
   baseRevision?: number;
   value: unknown;
@@ -150,10 +150,11 @@ export function decodeBinaryTerminalTuple(
     throw new TypeError("Unknown binary value tag");
   };
   const kind = byte();
-  if (kind > 2) throw new TypeError("Unknown binary frame");
-  const frame = kind === 0 ? "seed" : kind === 1 ? "patch" : "tombstone";
+  // Frame 3 is a capability-122 history chunk: a revision and no base.
+  if (kind > 3) throw new TypeError("Unknown binary frame");
+  const frame = kind === 0 ? "seed" : kind === 1 ? "patch" : kind === 2 ? "tombstone" : "history";
   const revision = uint();
-  const baseRevision = kind === 0 ? undefined : uint();
+  const baseRevision = kind === 0 || kind === 3 ? undefined : uint();
   const value = read();
   if (offset !== bytes.length) throw new TypeError("Trailing binary data");
   return { frame, revision, ...(baseRevision === undefined ? {} : { baseRevision }), value };
