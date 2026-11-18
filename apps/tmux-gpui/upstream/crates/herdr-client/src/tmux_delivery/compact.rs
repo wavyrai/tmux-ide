@@ -265,6 +265,7 @@ pub fn decode_compact(bytes: &[u8]) -> Result<Update> {
         "s" => &["v", "k", "f", "r", "s"],
         "p" => &["v", "k", "f", "b", "r", "p"],
         "t" => &["v", "k", "f", "b", "r", "t"],
+        "h" => &["v", "k", "f", "r", "h"],
         _ => return invalid("frame"),
     };
     if o.len() != keys.len()
@@ -281,6 +282,14 @@ pub fn decode_compact(bytes: &[u8]) -> Result<Update> {
         cells: 0,
         max_cells: 1_000_000.min(bytes.len() * 64),
     };
+    if f == "h" {
+        // Capability 122: history rows, oldest first, widths checked by the store.
+        let rows = b.rows(&v["h"], None, 2000)?;
+        if rows.is_empty() {
+            return invalid("history chunk");
+        }
+        return Ok(Update::History { revision, rows });
+    }
     if f == "s" {
         return Ok(Update::Seed {
             revision,

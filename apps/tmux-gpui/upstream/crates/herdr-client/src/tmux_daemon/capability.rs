@@ -142,6 +142,39 @@ fn issue_body(
     }
     Ok(body.to_string())
 }
+/// Capability 122, history on demand: a seed carries the screen and the
+/// newest 200 history rows, and the app asks for older rows as it needs
+/// them. Only a daemon that knows it (2.9.27) gets it; its offer has more
+/// than nine numbers, which a daemon takes from 2.9.26 (#433). Every other
+/// daemon gets the offer unchanged.
+fn with_partial_history(mut versions: Vec<u32>, product_version: Option<&str>) -> Vec<u32> {
+    if release_at_least(product_version, PARTIAL_HISTORY_SINCE)
+        && versions.len() < MAX_OFFERED_VERSIONS_2_9_26
+    {
+        versions.push(PARTIAL_HISTORY);
+    }
+    versions
+}
+/// The protocol versions an issue request offers a daemon of this product
+/// version: the base offer, then 123 (#446), then 122, each only for a
+/// daemon that knows it.
+fn issue_versions(
+    graphics: bool,
+    local_images: bool,
+    native_surfaces: bool,
+    interactive: bool,
+    daemon_version: Option<&str>,
+) -> Vec<u32> {
+    let versions = offered_versions(
+        graphics,
+        local_images,
+        native_surfaces,
+        interactive,
+        knows_topology_bundle(daemon_version),
+    );
+    let versions = with_browser_kind(versions, graphics, daemon_version);
+    with_partial_history(versions, daemon_version)
+}
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
     let Some(version) = product_version else {
@@ -181,6 +214,10 @@ const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
 /// The first daemon release with window-scoped streams (#806). Not yet set
 /// by a release: the PM confirms it when the daemon side ships.
 const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
+/// Capability 122, history on demand (#435). 2.9.26 shipped without it, so a
+/// released 2.9.26 daemon must not be offered it (lead, 17 Nov).
+const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 27];
+const PARTIAL_HISTORY: u32 = 122;
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;
@@ -256,14 +293,13 @@ impl ServerClient {
         // nine-slot offer bound. Older daemons fall back to inflated image bytes.
         // 118 is 117 plus the reader pane badge (#756); a daemon that predates it
         // sends neither icons nor badges and serves inflated image bytes.
-        let versions = offered_versions(
+        let versions = issue_versions(
             graphics,
             local_images.is_some(),
             native_surfaces,
             selection.mode == ViewerMode::Interactive,
-            knows_topology_bundle(daemon_version.as_deref()),
+            daemon_version.as_deref(),
         );
-        let versions = with_browser_kind(versions, graphics, daemon_version.as_deref());
         let body = issue_body(
             &request_id,
             &scope.generation,
@@ -394,6 +430,9 @@ fn parse(
     }
     Ok(descriptor)
 }
+#[cfg(all(test, unix))]
+#[path = "capability_remote_version_tests.rs"]
+mod remote_version_tests;
 #[cfg(test)]
 #[path = "capability_tests.rs"]
 mod tests;

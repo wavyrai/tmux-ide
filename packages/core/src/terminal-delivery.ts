@@ -53,6 +53,7 @@ import {
 } from "@tmux-ide/contracts";
 import {
   applyTerminalReplicaPatch,
+  freezeTerminalReplicaRow,
   freezeTerminalReplicaSnapshot,
   hashTerminalReplicaSnapshot,
   hashTerminalReplicaTombstone,
@@ -473,12 +474,18 @@ function compactSemanticWire(input: TerminalSemanticDeliveryPayload) {
   return wire;
 }
 
+// History rows the daemon owns are strictly validated once, like patch rows,
+// with the strict schema's own issues; foreign rows are validated every time.
+const HistoryEncodingPayloadSchema = TerminalSemanticHistoryPayloadSchemaZ.extend({
+  rows: z.array(CompactPatchEncodingRowSchema).min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS),
+});
+
 /** Capability 122: encode a "history" frame's rows in the negotiated semantic encoding. */
 export function encodeSemanticTerminalHistory(
   input: TerminalSemanticHistoryPayload,
   encoding: "semantic-v1" | "semantic-compact-v1" | "semantic-binary-v1",
 ): Uint8Array {
-  const payload = TerminalSemanticHistoryPayloadSchemaZ.parse(input);
+  const payload = HistoryEncodingPayloadSchema.parse(input);
   if (encoding === "semantic-v1") {
     const bytes = UTF8_ENCODER.encode(canonicalJson(payload));
     assertRepresentationSize(bytes);
@@ -3523,19 +3530,26 @@ export function commitTerminalDelivery(
     const payload = decodeSemanticTerminalHistory(staged.bytes, envelope.encoding);
     if (payload.revision !== envelope.canonicalRevision)
       throw new TypeError("History frame revision mismatch");
-    canonicalSnapshot = freezeTerminalReplicaSnapshot(
-      prependVerifiedTerminalHistory(
-        canonicalSnapshot,
-        state.historyUnloaded,
-        payload.rows,
-        historyUnloaded,
-      ),
-    );
-    if (
-      hashPartialTerminalReplicaSnapshot(canonicalSnapshot, historyUnloaded) !==
-      envelope.canonicalStateHash
-    )
+    // The chunk chains to the old commitment, so the whole history's digest,
+    // and with it the canonical hash, is the one this state was verified
+    // against. Verify and freeze only the new rows: O(chunk), not O(loaded).
+    if (envelope.canonicalStateHash !== state.appliedHash)
       throw new TypeError("Canonical state hash mismatch");
+    const cols = canonicalSnapshot.cols;
+    const added = payload.rows.map((row) => {
+      if (row.cells.length !== cols) throw new TypeError("Malformed terminal replica row");
+      return freezeTerminalReplicaRow(row);
+    });
+    const prepended = prependVerifiedTerminalHistory(
+      canonicalSnapshot,
+      state.historyUnloaded,
+      added,
+      historyUnloaded,
+    );
+    canonicalSnapshot = Object.freeze({
+      ...prepended,
+      history: Object.freeze(prepended.history),
+    }) as TerminalReplicaSnapshot;
   } else if (
     historyUnloaded &&
     envelope.frame === "patch" &&

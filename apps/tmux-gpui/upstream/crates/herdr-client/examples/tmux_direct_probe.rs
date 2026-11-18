@@ -31,7 +31,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "deferredHistoryRows":update.snapshot.as_ref().and_then(|s| match &s.history {
                     herdr_client::tmux_delivery::History::Deferred(history) => Some(history.rows),
                     herdr_client::tmux_delivery::History::Complete(_) => None,
-                })})
+                    herdr_client::tmux_delivery::History::Partial(_) => None,
+                }),
+                "unloadedHistoryRows":update.snapshot.as_ref().map(|s| s.history.unloaded_rows())})
             );
             if commits >= 3 {
                 return Ok(());
