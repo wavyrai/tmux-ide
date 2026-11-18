@@ -527,3 +527,48 @@ fn an_attach_answered_404_falls_back_to_the_open_and_the_inventory() {
         .count();
     assert_eq!(proof_only, 1, "{lines:?}");
 }
+
+/// review-460 (M1): a request that reached the daemon and then failed (here
+/// the answer comes after the client's 2.5 s bound) is never sent again.
+#[test]
+fn a_received_request_that_then_fails_is_not_sent_again() {
+    let (port, descriptor, requests) = daemon("2.9.26", Duration::from_secs(10), |line, _| {
+        if line.contains("/open ") {
+            thread::sleep(Duration::from_millis(3_500));
+        }
+        route_answer(line)
+    });
+    let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
+    let client = Remote::new(route);
+    drained(&requests);
+    assert!(client.open_session(LIVE).is_err());
+    thread::sleep(Duration::from_millis(4_000));
+    let opens = drained(&requests)
+        .into_iter()
+        .filter(|(_, l)| l.contains("/open "))
+        .count();
+    assert_eq!(opens, 1);
+}
+
+/// review-460 (M6): a refused inventory read whose session is still listed
+/// under another workspace alias reports the change.
+#[test]
+fn a_refused_inventory_read_reports_a_changed_alias() {
+    let (port, descriptor, _requests) = daemon("2.9.12", Duration::from_secs(5), |line, _| {
+        if line.contains("/inventory/") {
+            (404, json!({"error":{"code":"workspace-not-found"}}))
+        } else if line.contains("/sessions?") {
+            let mut listed = sessions(true);
+            listed["sessions"][0]["workspaceName"] = "renamed".into();
+            (200, listed)
+        } else {
+            route_answer(line)
+        }
+    });
+    let route = Arc::new(crate::tmux_ssh::RemoteTransport::fixture(port, descriptor).unwrap());
+    let client = Remote::new(route);
+    assert!(matches!(
+        client.workspace_inventory(LIVE, "fixture"),
+        Err(Error::ServerChanged)
+    ));
+}

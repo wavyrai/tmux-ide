@@ -228,3 +228,21 @@ fn a_daemon_that_does_not_echo_gets_the_frame_on_the_socket_as_before() {
         assert_eq!(socket.unwrap()["ticket"], ticket);
     }
 }
+
+/// review-460 (M9): a socket proven longer ago than the daemon is sure to
+/// keep it is not used, even while it still looks open.
+#[test]
+fn a_prepared_socket_proven_too_long_ago_is_refused() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let prepared = PreparedSocket::spawn(port, peer(), Duration::from_secs(2));
+    let (mut accepted, _) = listener.accept().unwrap();
+    answer_identity(&mut accepted, &identity());
+    thread::sleep(FRESH + Duration::from_millis(300));
+    assert!(
+        prepared
+            .take(port, &peer(), Duration::from_secs(2))
+            .is_none()
+    );
+    drop(accepted);
+}
