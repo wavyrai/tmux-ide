@@ -14,12 +14,16 @@ struct Fixture {
     source: CatalogSource,
     identity: Value,
 }
+/// A daemon of the first release with the bridge.
 fn fixture() -> Fixture {
+    fixture_at("2.9.28")
+}
+fn fixture_at(version: &str) -> Fixture {
     let sandbox = super::super::tests::Sandbox::new();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let path = sandbox.0.join("daemon.json");
     let record = json!({"pid":123,"port":listener.local_addr().unwrap().port(),"protocolVersion":4,
-        "productVersion":"2.9.12","instanceId":"d9c81ebd-5785-45a3-9206-a2aa497d68fc",
+        "productVersion":version,"instanceId":"d9c81ebd-5785-45a3-9206-a2aa497d68fc",
         "startedAt":"2026-10-25T02:00:00Z","bindHostname":"127.0.0.1","authToken":"fixture-private"});
     std::fs::OpenOptions::new()
         .write(true)
@@ -29,7 +33,7 @@ fn fixture() -> Fixture {
         .unwrap()
         .write_all(record.to_string().as_bytes())
         .unwrap();
-    let identity = json!({"pid":123,"ok":true,"protocolVersion":4,"productVersion":"2.9.12",
+    let identity = json!({"pid":123,"ok":true,"protocolVersion":4,"productVersion":version,
         "instanceId":record["instanceId"],"startedAt":record["startedAt"]});
     Fixture {
         _sandbox: sandbox,
@@ -233,6 +237,53 @@ fn an_older_daemon_gets_no_bridge_connection() {
     );
     assert!(seen.iter().any(|line| line.contains("remoteBridge=1")));
     drop(server);
+}
+
+/// The bridge ships in 2.9.28. An earlier daemon, a pre-release or a
+/// version that is not a release number is never asked, even one that
+/// would answer the capabilities query with an offer.
+#[test]
+fn a_daemon_before_the_bridge_release_is_never_asked() {
+    for version in ["2.9.27", "2.9.28-rc.1", "2.9", "2.10.0x"] {
+        let fixture = fixture_at(version);
+        let (requests, server) = daemon(fixture.listener, fixture.identity, offer(), |_| {
+            panic!("a daemon before the bridge must not see an upgrade")
+        });
+        let worker = RemoteBridgeWorker::spawn(fixture.source, || {}).unwrap();
+        let end = until(|| worker.take_end());
+        assert!(matches!(end, BridgeEnd::Unsupported), "{version}: {end:?}");
+        assert!(!worker.live());
+        drop(worker);
+        let seen: Vec<String> = requests.try_iter().collect();
+        assert!(
+            seen.iter()
+                .all(|line| !line.contains("remoteBridge") && !line.contains("/api/v2/bridge")),
+            "{version}: {seen:?}"
+        );
+        drop(server);
+    }
+}
+
+/// From 2.9.28 on, later releases are asked too.
+#[test]
+fn a_later_release_is_asked() {
+    for version in ["2.9.28", "2.9.100", "2.10.0", "3.0.0"] {
+        let fixture = fixture_at(version);
+        let old = json!({"status":"ok","daemon":{},"capabilities":{}});
+        let (requests, server) = daemon(fixture.listener, fixture.identity, old, |_| {
+            panic!("no offer, no upgrade")
+        });
+        let worker = RemoteBridgeWorker::spawn(fixture.source, || {}).unwrap();
+        let end = until(|| worker.take_end());
+        assert!(matches!(end, BridgeEnd::Unsupported), "{version}: {end:?}");
+        drop(worker);
+        let seen: Vec<String> = requests.try_iter().collect();
+        assert!(
+            seen.iter().any(|line| line.contains("remoteBridge=1")),
+            "{version}: {seen:?}"
+        );
+        drop(server);
+    }
 }
 
 #[test]

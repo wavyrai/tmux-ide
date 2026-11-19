@@ -1,6 +1,7 @@
 //! One machine's bridge lane (protocol v1): copies made by programs in that
-//! machine's panes. The lane asks the daemon first; a daemon that does not
-//! offer the bridge gets no connection at all and the app behaves as before.
+//! machine's panes. Only a daemon of 2.9.28 or later is asked, and only one
+//! whose capabilities answer offers the bridge gets a connection; any other
+//! daemon gets none and the app behaves as before.
 //! Failure is sticky; reconnecting is the owner's decision, as for the
 //! catalog lane. The lane only receives reports: it sends the hello and
 //! nothing else, and never reads the pasteboard.
@@ -173,6 +174,9 @@ fn run(
 ) -> Result<Lane, RemoteBridgeError> {
     cancel.check()?;
     let owner = source.discover(&cancel.stopped)?;
+    if !super::capability::knows_remote_bridge(Some(owner.product_version())) {
+        return Ok(Lane::Unsupported);
+    }
     let offer = owner.post_resource(wire::CAPABILITY_PATH, b"{}")?;
     cancel.check()?;
     if !wire::offers_clipboard(&offer) {

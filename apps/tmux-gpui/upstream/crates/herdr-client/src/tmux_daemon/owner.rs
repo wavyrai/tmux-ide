@@ -23,6 +23,16 @@ impl Owner {
         }
     }
 
+    /// The daemon's product version. A remote one is proven on every socket
+    /// of the route (see `ServerClient::product_version`).
+    pub(super) fn product_version(&self) -> &str {
+        match self {
+            Self::Local(daemon) => daemon.product_version(),
+            #[cfg(unix)]
+            Self::Remote(remote) => remote.product_version(),
+        }
+    }
+
     pub(super) fn local(&self) -> Result<&LocalDaemon, Error> {
         match self {
             Self::Local(daemon) => Ok(daemon),
