@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   mkdirSync,
@@ -263,73 +263,89 @@ it("keeps a generation published after queued reset and never removes a replacem
   expect(readFileSync(join(instance.worktree, "unrelated"), "utf8")).toBe("preserve");
 });
 
-it("returns action-specific CLI JSON for live apps, confirmation and missing stored IDs", async () => {
-  const { instance } = await fixture();
-  const repo = fileURLToPath(new URL("../../../../", import.meta.url));
-  function rejected(args: string[]) {
-    try {
-      execFileSync(
-        process.execPath,
-        [
-          "--no-deprecation",
-          "--import",
-          join(repo, "node_modules/tsx/dist/loader.mjs"),
-          join(repo, "scripts/development-instance.ts"),
-          ...args,
-          "--store",
-          instance.store,
-          "--json",
-        ],
-        { encoding: "utf8", stdio: "pipe", timeout: 10000 },
+// Each CLI run is a cold `node --import tsx` start. Every run is bounded by its own
+// deadline, and the test budget covers the two sequential phases of runs below.
+const CLI_DEADLINE_MS = 10_000;
+it(
+  "returns action-specific CLI JSON for live apps, confirmation and missing stored IDs",
+  {
+    timeout: 2 * CLI_DEADLINE_MS + 5_000,
+  },
+  async () => {
+    const { instance } = await fixture();
+    const repo = fileURLToPath(new URL("../../../../", import.meta.url));
+    async function rejected(args: string[]) {
+      const result = await new Promise<{ status: number | null; stdout: string; stderr: string }>(
+        (resolve) => {
+          execFile(
+            process.execPath,
+            [
+              "--no-deprecation",
+              "--import",
+              join(repo, "node_modules/tsx/dist/loader.mjs"),
+              join(repo, "scripts/development-instance.ts"),
+              ...args,
+              "--store",
+              instance.store,
+              "--json",
+            ],
+            { encoding: "utf8", timeout: CLI_DEADLINE_MS },
+            (error, stdout, stderr) => {
+              const code = error && typeof error.code === "number" ? error.code : error ? null : 0;
+              resolve({ status: code, stdout, stderr });
+            },
+          );
+        },
       );
-      throw new Error("Expected rejected CLI command");
-    } catch (error) {
-      const result = error as { status?: number; stdout?: string; stderr?: string };
-      expect(result.status).toBe(1);
-      expect(result.stderr).toBe("");
-      return JSON.parse(result.stdout!);
+      expect(result).toMatchObject({ status: 1, stderr: "" });
+      return JSON.parse(result.stdout);
     }
-  }
-  expect(rejected(["reset", "--worktree", instance.worktree])).toMatchObject({
-    operation: "reset",
-    reason: "confirmation-required",
-  });
-  expect(rejected(["status", "--id", `dev-${"0".repeat(24)}`])).toMatchObject({
-    operation: "status",
-    reason: "identity-unavailable",
-  });
-  expect(rejected(["restart", "--worktree", instance.worktree, "--apply-build"])).toMatchObject({
-    operation: "restart",
-    reason: "owner-unverified",
-  });
-  const attempt = randomUUID();
-  mkdirSync(join(instance.root, "apps"), { mode: 0o700 });
-  writeDevelopmentRecord(join(instance.root, "apps", `${attempt}.json`), {
-    version: 1,
-    attempt,
-    managerPid: process.pid,
-    managerIncarnation: "test-manager",
-    pid: process.pid,
-    incarnation: await developmentProcessIdentity(process.pid),
-    generation: `build-${randomUUID()}`,
-  });
-  writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
-    status: "ready",
-    secret: "credential-must-not-leak",
-  });
-  const refused = rejected(["reset", "--worktree", instance.worktree, "--yes"]);
-  expect(refused).toMatchObject({ operation: "reset", reason: "app-live" });
-  expect(refused).not.toHaveProperty("receipt");
-  expect(JSON.stringify(refused)).not.toContain("credential-must-not-leak");
-  expect(
-    developmentFailureResult("down", new Error("Bearer credential-must-not-leak"), instance),
-  ).toMatchObject({ reason: "operation-failed", operation: "down" });
-  expect(
-    JSON.stringify(
+    const [confirmation, unavailable, unverified] = await Promise.all([
+      rejected(["reset", "--worktree", instance.worktree]),
+      rejected(["status", "--id", `dev-${"0".repeat(24)}`]),
+      rejected(["restart", "--worktree", instance.worktree, "--apply-build"]),
+    ]);
+    expect(confirmation).toMatchObject({
+      operation: "reset",
+      reason: "confirmation-required",
+    });
+    expect(unavailable).toMatchObject({
+      operation: "status",
+      reason: "identity-unavailable",
+    });
+    expect(unverified).toMatchObject({
+      operation: "restart",
+      reason: "owner-unverified",
+    });
+    const attempt = randomUUID();
+    mkdirSync(join(instance.root, "apps"), { mode: 0o700 });
+    writeDevelopmentRecord(join(instance.root, "apps", `${attempt}.json`), {
+      version: 1,
+      attempt,
+      managerPid: process.pid,
+      managerIncarnation: "test-manager",
+      pid: process.pid,
+      incarnation: await developmentProcessIdentity(process.pid),
+      generation: `build-${randomUUID()}`,
+    });
+    writeDevelopmentRecord(join(instance.root, "startup-receipt.json"), {
+      status: "ready",
+      secret: "credential-must-not-leak",
+    });
+    const refused = await rejected(["reset", "--worktree", instance.worktree, "--yes"]);
+    expect(refused).toMatchObject({ operation: "reset", reason: "app-live" });
+    expect(refused).not.toHaveProperty("receipt");
+    expect(JSON.stringify(refused)).not.toContain("credential-must-not-leak");
+    expect(
       developmentFailureResult("down", new Error("Bearer credential-must-not-leak"), instance),
-    ),
-  ).not.toContain("credential-must-not-leak");
-});
+    ).toMatchObject({ reason: "operation-failed", operation: "down" });
+    expect(
+      JSON.stringify(
+        developmentFailureResult("down", new Error("Bearer credential-must-not-leak"), instance),
+      ),
+    ).not.toContain("credential-must-not-leak");
+  },
+);
 
 it("refuses missing/replaced worktree activation before publishing a transition", async () => {
   const { instance } = await fixture();
