@@ -20,7 +20,7 @@ fn exit_success_is_required_and_diagnostics_are_not_returned() {
         Err(DiscoveryError::MissingCli)
     ));
     let error = run("printf secret >&2; exit 1").unwrap_err();
-    assert!(matches!(error, DiscoveryError::Exit));
+    assert!(matches!(error, DiscoveryError::Exit(_)));
     assert!(!format!("{error:?}").contains("secret"));
 }
 #[test]
@@ -67,18 +67,18 @@ fn cancellation_precedes_spawn_and_interrupts_busy_stderr() {
 fn ssh_failure_classification_is_bounded_and_redacted() {
     assert!(matches!(
         run("printf 'Permission denied (publickey). secret' >&2; exit 255"),
-        Err(DiscoveryError::Authentication)
+        Err(DiscoveryError::Authentication(_))
     ));
     assert!(matches!(
         run("printf 'Host key verification failed. secret' >&2; exit 255"),
-        Err(DiscoveryError::HostKey)
+        Err(DiscoveryError::HostKey(_))
     ));
     let mut diagnostics = Diagnostics::default();
     diagnostics.observe(b"REMOTE HOST IDENT");
     diagnostics.observe(b"IFICATION HAS CHANGED");
     diagnostics.observe(&[b'x'; 8192]);
     assert!(diagnostics.tail.len() <= 4096);
-    assert!(matches!(diagnostics.failure(), DiscoveryError::HostKey));
+    assert!(matches!(diagnostics.failure(), DiscoveryError::HostKey(_)));
 }
 
 /// r4 review (owner decision): a machine that is off or away is retried, but
@@ -99,7 +99,7 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
         "ssh: connect to host spark port 22: Operation timed out",
     ] {
         assert!(
-            matches!(failure(stderr), DiscoveryError::Unreachable),
+            matches!(failure(stderr), DiscoveryError::Unreachable(_)),
             "{stderr}"
         );
     }
@@ -113,7 +113,10 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
         "Error: getaddrinfo: Could not resolve hostname db",
         "connect to host db port 5432: Operation timed out",
     ] {
-        assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
+        assert!(
+            matches!(failure(stderr), DiscoveryError::Exit(_)),
+            "{stderr}"
+        );
     }
     // Auth and host-key failures are read first and stay final, even beside
     // a line that alone would be retried.
@@ -122,32 +125,35 @@ fn ssh_saying_the_machine_cant_be_reached_is_unreachable_and_nothing_else_is() {
             "ssh: connect to host spark port 22: Connection refused\n\
              user@spark: Permission denied (publickey)."
         ),
-        DiscoveryError::Authentication
+        DiscoveryError::Authentication(_)
     ));
     assert!(matches!(
         failure(
             "ssh: connect to host spark port 22: No route to host\n\
              Host key verification failed."
         ),
-        DiscoveryError::HostKey
+        DiscoveryError::HostKey(_)
     ));
     assert!(matches!(
         failure(
             "channel 0: open failed: connect failed: Connection refused\n\
              Host key verification failed."
         ),
-        DiscoveryError::HostKey
+        DiscoveryError::HostKey(_)
     ));
     // ssh's line still counts after the remote's output, and when it arrives
     // in two reads.
     assert!(matches!(
         failure("remote noise\nssh: connect to host spark port 22: No route to host\n"),
-        DiscoveryError::Unreachable
+        DiscoveryError::Unreachable(_)
     ));
     let mut diagnostics = Diagnostics::default();
     diagnostics.observe(b"ssh: connect to host spark port 22: Connec");
     diagnostics.observe(b"tion refused\r\n");
-    assert!(matches!(diagnostics.failure(), DiscoveryError::Unreachable));
+    assert!(matches!(
+        diagnostics.failure(),
+        DiscoveryError::Unreachable(_)
+    ));
 }
 
 /// #368 review: through a jump host that is reachable, the target being away
@@ -175,13 +181,13 @@ fn a_jump_host_that_cannot_reach_the_target_is_unreachable() {
              Connection closed by UNKNOWN port 65535\r\n"
         );
         assert!(
-            matches!(failure(&stderr), DiscoveryError::Unreachable),
+            matches!(failure(&stderr), DiscoveryError::Unreachable(_)),
             "{error}"
         );
     }
     assert!(matches!(
         failure("channel 12: open failed: connect failed: No route to host"),
-        DiscoveryError::Unreachable
+        DiscoveryError::Unreachable(_)
     ));
     // Only ssh's exact form: anchored at the line start, a numeric channel,
     // "connect failed", one of the phrases. A remote command's output, or
@@ -196,6 +202,9 @@ fn a_jump_host_that_cannot_reach_the_target_is_unreachable() {
         "  ssh: connect to host spark port 22: Connection refused",
         "stdio forwarding failed\nConnection closed by UNKNOWN port 65535",
     ] {
-        assert!(matches!(failure(stderr), DiscoveryError::Exit), "{stderr}");
+        assert!(
+            matches!(failure(stderr), DiscoveryError::Exit(_)),
+            "{stderr}"
+        );
     }
 }

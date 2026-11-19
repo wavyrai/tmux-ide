@@ -324,3 +324,36 @@ fn the_stopped_sentence_follows_the_latest_failed_try() {
     assert!(events.try_recv().is_err());
     assert_eq!(local.state.status, reconnect::UPDATE_APP);
 }
+
+/// Onboarding phase 2: a saved machine that ssh could not reach says why in
+/// ssh's own words, for that machine only; a new attempt clears it.
+#[test]
+fn a_machine_ssh_could_not_reach_publishes_ssh_s_own_reason() {
+    use herdr_client::tmux_ssh::{DiscoveryError, Said, TransportError};
+    let (mut local, events) = attached();
+    local.state.surface = Surface::Home;
+    local.active = None;
+    let said = "ssh: connect to host spark port 22: No route to host";
+    let error = herdr_client::tmux_daemon::Error::Remote(Box::new(TransportError::Discovery(
+        DiscoveryError::Unreachable(Said::from_stderr(format!("secret\n{said}\n").as_bytes())),
+    )));
+    // This Mac's own failures carry no ssh reason.
+    local.stage_failed(Stage::Servers, &error).unwrap();
+    assert_eq!(last_catalog(&events).ssh_failure, None);
+    local.machine_id = "8d7e5c1a-58a4-4f61-a3c4-0d7c8b3e6a10".into();
+    local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
+        id: local.machine_id.clone(),
+        label: "spark".into(),
+        ssh_target: "spark".into(),
+        expected_environment_id: None,
+        enabled: true,
+    });
+    local.stage_failed(Stage::Servers, &error).unwrap();
+    let seen = last_catalog(&events).ssh_failure.unwrap();
+    assert_eq!(seen.machine, local.machine_id);
+    assert_eq!(seen.said, said);
+    // A failure without ssh's words clears it.
+    let timeout = herdr_client::tmux_daemon::Error::Remote(Box::new(TransportError::Timeout));
+    local.stage_failed(Stage::Servers, &timeout).unwrap();
+    assert_eq!(last_catalog(&events).ssh_failure, None);
+}

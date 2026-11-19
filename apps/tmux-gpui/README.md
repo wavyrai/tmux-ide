@@ -89,6 +89,16 @@ sidebar, Commands and terminals keep working while it is open.
 - **Set up** is the welcome: the command-line tool, the background service and
   the sessions already there, with Set up / Try again / I've installed it. When
   setup can't finish here, **Continue without it** goes on.
+- **Machines** lists this Mac first, then each saved machine with its status
+  (Connecting…, Connected · N sessions, Couldn't connect). Type `user@host` or
+  an SSH alias, or click a Host suggested from `~/.ssh/config` (literal `Host`
+  names only, read-only; Includes are followed once; nothing runs and nothing
+  connects until you click). Adding goes through the same path as **Commands →
+  Connect to machine…**, so the machine is saved, then connected, and its
+  sessions join Home and the sidebar. A machine that can't connect stays saved,
+  shows ssh's own one-line reason (only lines in ssh's own forms, never the
+  remote's output), and has Copy details and Try again. Without the background
+  service the step says so and adds nothing.
 - **Look** has Match macOS / Light / Dark and the themes drawn in their own
   colours. Picking one applies it to the window and saves it at once, as
   **Appearance…** does. Under Match macOS you choose the theme for light mode

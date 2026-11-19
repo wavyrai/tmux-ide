@@ -48,7 +48,7 @@ fn transient(error: &Error) -> bool {
                     | TransportError::Discovery(
                         DiscoveryError::Timeout
                             | DiscoveryError::Io(_)
-                            | DiscoveryError::Unreachable
+                            | DiscoveryError::Unreachable(_)
                     )
                     | TransportError::Connection(ConnectionError::Network(
                         ureq::Error::Io(_) | ureq::Error::Timeout(_)

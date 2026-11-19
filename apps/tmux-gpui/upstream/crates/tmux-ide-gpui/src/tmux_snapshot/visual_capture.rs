@@ -659,8 +659,13 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     // `+welcome` is first run with setup needed (onboarding A1), with
     // `+running` or `+failed` its states; `+welcome-existing` the welcome
     // opened from Commands over sessions; `+whatsnew` What's new's card (A5).
-    // `+guide-look` and `+guide-keys` open the setup guide at that step.
-    let guide_step = if extras.contains(&"guide-look") {
+    // `+guide-look`, `+guide-keys` and `+guide-machines` open the setup
+    // guide at that step; Machines with spark connected, build-box failed
+    // and two suggested Hosts.
+    let guide_step = if extras.contains(&"guide-machines") {
+        super::welcome::capture_machines(&mut state)?;
+        Some(super::welcome::guide::Step::Machines)
+    } else if extras.contains(&"guide-look") {
         Some(super::welcome::guide::Step::Look)
     } else if extras.contains(&"guide-keys") {
         Some(super::welcome::guide::Step::Keys)
@@ -735,6 +740,8 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                         if let Some(step) = guide_step {
                             view.welcome.guide.step = step;
                             view.welcome.guide.reached = step.place();
+                            view.welcome.guide.machines.hosts =
+                                Some(vec!["devbox".into(), "gpu-1".into()]);
                         }
                     }
                     if spark {

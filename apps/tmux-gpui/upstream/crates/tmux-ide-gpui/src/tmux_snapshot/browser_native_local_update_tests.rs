@@ -509,10 +509,10 @@ fn only_an_environment_mismatch_is_an_identity_failure_over_ssh() {
     use herdr_client::tmux_ssh::{DiscoveryError, Error as SshError, TransportError};
     let discovery = |error| E::Remote(Box::new(TransportError::Discovery(error)));
     for error in [
-        DiscoveryError::Unreachable,
+        DiscoveryError::Unreachable(Default::default()),
         DiscoveryError::Timeout,
         DiscoveryError::Cancelled,
-        DiscoveryError::Exit,
+        DiscoveryError::Exit(Default::default()),
         DiscoveryError::OutputLimit,
         DiscoveryError::MissingCli,
         DiscoveryError::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),

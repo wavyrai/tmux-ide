@@ -78,6 +78,7 @@ impl SnapshotView {
         let accent = accented(&bezel, &self.theme());
         let (body, body_stops, start) = match step {
             Step::SetUp => self.setup_body(stage, &bezel, &accent, cx),
+            Step::Machines => self.machines_body(&bezel, window, cx),
             Step::Look => self.look_body(&bezel, window, cx),
             Step::Keys => self.keys_body(&bezel, cx),
         };
@@ -132,6 +133,10 @@ impl SnapshotView {
         let (title, lede) = match step {
             Step::SetUp if matches!(stage, Stage::Ready { sessions: 0 }) => (READY_TITLE, LEDE),
             Step::SetUp => (TITLE, LEDE),
+            Step::Machines => (
+                guide_machines::MACHINES_TITLE,
+                guide_machines::MACHINES_LEDE,
+            ),
             Step::Look => (LOOK_TITLE, LOOK_LEDE),
             Step::Keys => (KEYS_TITLE, KEYS_LEDE),
         };
@@ -392,10 +397,10 @@ impl SnapshotView {
         let next = self.guide_button(
             slot::NEXT,
             "welcome-next",
-            if step == Step::Keys {
-                START_USING
-            } else {
-                "Continue"
+            match step {
+                Step::Keys => START_USING,
+                Step::Machines => self.machines_next_label(),
+                _ => "Continue",
             },
             Act::Guide(GuideAct::Next),
             ButtonStyle::Prominent,

@@ -317,6 +317,8 @@ impl Local {
             request: self.state.request,
             home_phase: HomePhase::Unavailable,
             status: status.into(),
+            // Why ssh could not reach the machine stays until the next try.
+            ssh_failure: self.state.ssh_failure.take(),
             ..State::default()
         };
         self.publish()

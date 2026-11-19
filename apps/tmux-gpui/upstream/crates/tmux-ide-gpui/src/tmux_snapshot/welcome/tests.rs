@@ -614,9 +614,9 @@ fn the_keyboard_moves_between_and_presses_the_buttons(cx: &mut TestAppContext) {
     // Continue is disabled until set up, so it is never a stop.
     assert!(!focused(cx, guide::slot::NEXT));
     cx.simulate_keystrokes("tab space");
-    assert!(shown(cx), "Continue without it goes on to Look");
+    assert!(shown(cx), "Continue without it goes on to Machines");
     view.read_with(cx, |v, _| {
-        assert_eq!(v.welcome.guide.step, guide::Step::Look);
+        assert_eq!(v.welcome.guide.step, guide::Step::Machines);
         assert!(v.welcome.guide.setup_skipped);
     });
     assert!(saved(&dir, cx).guide.setup_skipped, "saved as it is chosen");
@@ -629,8 +629,9 @@ fn start_using_opens_the_most_recent_session_and_closes_the_guide(cx: &mut TestA
     assert!(shown(cx));
     cx.update(|window, cx| {
         view.update(cx, |v, cx| {
-            v.guide_act(guide::Act::Next, window, cx);
-            v.guide_act(guide::Act::Next, window, cx);
+            for _ in 0..3 {
+                v.guide_act(guide::Act::Next, window, cx);
+            }
         })
     });
     draw(cx);

@@ -199,8 +199,8 @@ impl Tunnel {
                     match child.0.try_wait() {
                         Ok(Some(_)) => {
                             break match diagnostics.failure() {
-                                super::DiscoveryError::HostKey => TunnelError::HostKey,
-                                super::DiscoveryError::Authentication => {
+                                super::DiscoveryError::HostKey(_) => TunnelError::HostKey,
+                                super::DiscoveryError::Authentication(_) => {
                                     TunnelError::Authentication
                                 }
                                 _ => TunnelError::Exited,

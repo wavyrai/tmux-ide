@@ -1,7 +1,8 @@
 //! First run: the setup guide in Home's place. Its first step is the
 //! welcome (onboarding A1), which sets Tmux IDE up with the existing managed
-//! setup and says what happened in plain words; then Look and Keys, each
-//! saved as it is chosen (`welcome/guide.rs`). And What's new once per
+//! setup and says what happened in plain words; then Machines
+//! (`welcome/guide_machines.rs`), Look and Keys, each saved as it is chosen
+//! (`welcome/guide.rs`). And What's new once per
 //! version (A5).
 //!
 //! Remembered in ~/.config/tmux-ide/gpui-onboarding.json, the same small,
@@ -22,10 +23,16 @@ use std::{
 pub(super) mod guide;
 #[path = "welcome/guide_keys.rs"]
 mod guide_keys;
+#[path = "welcome/guide_machines.rs"]
+mod guide_machines;
+#[cfg(feature = "visual-capture")]
+pub(super) use guide_machines::capture as capture_machines;
 #[path = "welcome/guide_look.rs"]
 mod guide_look;
 #[path = "welcome/render.rs"]
 mod render;
+#[path = "welcome/ssh_hosts.rs"]
+mod ssh_hosts;
 #[path = "welcome/whats_new.rs"]
 pub(super) mod whats_new;
 
@@ -549,9 +556,14 @@ impl SnapshotView {
             return;
         }
         self.welcome.started = true;
-        let task = cx
-            .background_executor()
-            .spawn(async { State::load(path(), super::diagnostics::app_version()) });
+        let task = cx.background_executor().spawn(async {
+            let mut state = State::load(path(), super::diagnostics::app_version());
+            // The Machines step suggests Hosts from this home's SSH config.
+            state.guide.machines.home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute());
+            state
+        });
         cx.spawn(async move |view, cx| {
             let state = task.await;
             let _ = view.update(cx, |view, cx| {
@@ -731,6 +743,9 @@ impl SnapshotView {
 #[cfg(test)]
 #[path = "welcome/focus_tests.rs"]
 mod focus_tests;
+#[cfg(test)]
+#[path = "welcome/guide_machines_tests.rs"]
+mod guide_machines_tests;
 #[cfg(test)]
 #[path = "welcome/guide_tests.rs"]
 mod guide_tests;
