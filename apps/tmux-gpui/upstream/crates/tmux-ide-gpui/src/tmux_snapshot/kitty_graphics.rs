@@ -862,3 +862,18 @@ mod partial_budget_tests;
 #[cfg(test)]
 #[path = "kitty_native_tests.rs"]
 mod native_tests;
+
+impl super::SnapshotView {
+    /// Repaint when an image completes; ask the bridge for absent images.
+    pub(super) fn flush_kitty_graphics(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.graphics.store.take_changed() {
+            cx.notify();
+        }
+        let missing = self.graphics.store.take_missing();
+        if !missing.is_empty()
+            && let Some(sender) = &self.browser_commands
+        {
+            let _ = sender.try_send(super::browser::Command::KittyMissing { digests: missing });
+        }
+    }
+}

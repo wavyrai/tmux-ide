@@ -290,7 +290,6 @@ fn show_owned(
         cx.on_action(move |_: &crate::Quit, cx| {
             request_native_quit(action_owner.clone(), action_closing.clone(), cx);
         });
-        let copy_owner = owner.clone();
         let bounds = Bounds::centered(None, size(px(1000.), px(650.)), cx);
         let result = cx.open_window(
             WindowOptions {
@@ -398,7 +397,7 @@ fn show_owned(
                         fit_settle: Default::default(),
                         window_size: Default::default(),
                         images_lost: Default::default(),
-                        remote_copy: remote_copy::RemoteCopy::new(copy_owner.clone()),
+                        remote_copy: remote_copy::RemoteCopy::new(owner.clone()),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -520,21 +519,6 @@ struct SnapshotView {
     painter: Rc<RefCell<TerminalPainter>>,
     reader: reader::Views,
 }
-impl SnapshotView {
-    /// Repaint when an image completes; ask the bridge for absent images.
-    fn flush_kitty_graphics(&mut self, cx: &mut Context<Self>) {
-        if self.graphics.store.take_changed() {
-            cx.notify();
-        }
-        let missing = self.graphics.store.take_missing();
-        if !missing.is_empty()
-            && let Some(sender) = &self.browser_commands
-        {
-            let _ = sender.try_send(browser::Command::KittyMissing { digests: missing });
-        }
-    }
-}
-
 impl SnapshotView {
     /// The window became active or inactive: drop transient gestures and
     /// queue the presence change.
