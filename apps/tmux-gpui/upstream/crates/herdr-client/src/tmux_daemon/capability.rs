@@ -155,9 +155,21 @@ fn with_partial_history(mut versions: Vec<u32>, product_version: Option<&str>) -
     }
     versions
 }
+/// Capability 124, pipelined delivery (#454): the daemon may send patches
+/// behind unacknowledged ones. The receiver applies each in order against its
+/// last applied revision and ACKs each, so it already takes them; only a
+/// daemon release that knows 124 (2.9.27) is offered it.
+fn with_pipelining(mut versions: Vec<u32>, product_version: Option<&str>) -> Vec<u32> {
+    if release_at_least(product_version, PIPELINING_SINCE)
+        && versions.len() < MAX_OFFERED_VERSIONS_2_9_26
+    {
+        versions.push(PIPELINING);
+    }
+    versions
+}
 /// The protocol versions an issue request offers a daemon of this product
-/// version: the base offer, then 123 (#446), then 122, each only for a
-/// daemon that knows it.
+/// version: the base offer, then 123 (#446), then 122, then 124, each only
+/// for a daemon that knows it.
 fn issue_versions(
     graphics: bool,
     local_images: bool,
@@ -173,7 +185,10 @@ fn issue_versions(
         knows_topology_bundle(daemon_version),
     );
     let versions = with_browser_kind(versions, graphics, daemon_version);
-    with_partial_history(versions, daemon_version)
+    with_pipelining(
+        with_partial_history(versions, daemon_version),
+        daemon_version,
+    )
 }
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
@@ -218,6 +233,9 @@ const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
 /// released 2.9.26 daemon must not be offered it (lead, 17 Nov).
 const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 27];
 const PARTIAL_HISTORY: u32 = 122;
+/// Capability 124, pipelined delivery (#454), from the 2.9.27 daemon.
+const PIPELINING_SINCE: [u64; 3] = [2, 9, 27];
+const PIPELINING: u32 = 124;
 impl LocalDaemon {
     fn image_access(&self) -> Result<LocalImages, Error> {
         self.verify_current()?;

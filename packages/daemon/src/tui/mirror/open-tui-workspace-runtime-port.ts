@@ -1,4 +1,8 @@
-import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
+import {
+  STOCK_CAPTURE_TAB_UNAVAILABLE,
+  TERMINAL_DELIVERY_MAX_PIPELINED,
+  TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
 import { randomUUID } from "node:crypto";
 import type {
   WindowLinkTopology,
@@ -413,6 +417,13 @@ class WireTerminalEndpoint {
   #pending: PendingDelivery | null = null;
   #rejectedTransactionId: string | null = null;
   #decodeToken: object | null = null;
+  /**
+   * Capability 124: patches the daemon pipelined behind the delivery that is
+   * still decoding or unsettled, each with its chunks, in arrival order. Each
+   * names the one before as its base; they are admitted once that one is ACKed.
+   */
+  #queued: TerminalDeliveryServerMessage[] = [];
+  #draining = false;
   #closed = false;
   readonly #ready: Promise<boolean>;
   #resolveReady!: (ready: boolean) => void;
@@ -505,6 +516,7 @@ class WireTerminalEndpoint {
       return;
     }
     if (message.type === "terminal.delivery.fault") {
+      this.#queued.length = 0;
       if (message.deliveryNonce !== this.#negotiated.deliveryNonce) {
         this.#failConnection(new Error("Terminal fault nonce does not match negotiation"));
         return;
@@ -532,6 +544,15 @@ class WireTerminalEndpoint {
       return;
     }
     if (this.#unavailable) return;
+    if ((this.#queued.length > 0 || this.#busy()) && this.#mayQueue(message)) {
+      this.#queued.push(message);
+      return;
+    }
+    return this.#acceptNow(message);
+  }
+
+  #acceptNow(message: TerminalDeliveryServerMessage): void | { readonly consumedOwnedChunk: true } {
+    if (message.type === "terminal.delivery.fault") return;
     if (message.type === "terminal.projection") {
       this.#failConnection(new Error("Unsolicited alternate-screen projection"));
       return;
@@ -543,9 +564,62 @@ class WireTerminalEndpoint {
     return this.#acceptChunk(message);
   }
 
+  /** A flight is decoding or waiting for its subscriber: it has not been ACKed. */
+  #busy(): boolean {
+    return this.#decodeToken !== null || this.#pending !== null;
+  }
+
+  /**
+   * Capability 124: only a patch based on the newest flight (decoding,
+   * unsettled or queued), within TERMINAL_DELIVERY_MAX_PIPELINED, and the
+   * chunks of the newest queued patch. Anything else overlapping a flight is
+   * still a protocol violation and takes the ordinary path.
+   */
+  #mayQueue(message: TerminalDeliveryServerMessage): boolean {
+    let newest: TerminalDeliveryEnvelope | null = this.#pending?.envelope ?? this.#envelope;
+    let envelopes = 1;
+    let chunks = 0;
+    for (const queued of this.#queued)
+      if (queued.type === "terminal.delivery") {
+        newest = queued;
+        envelopes += 1;
+        chunks = 0;
+      } else if (queued.type === "terminal.delivery.chunk") chunks += 1;
+    if (!newest) return false;
+    if (message.type === "terminal.delivery.chunk")
+      return (
+        envelopes > 1 &&
+        message.transactionId === newest.transactionId &&
+        chunks < newest.chunkCount
+      );
+    return (
+      message.type === "terminal.delivery" &&
+      message.frame === "patch" &&
+      message.baseRevision === newest.canonicalRevision &&
+      message.incarnation === newest.incarnation &&
+      envelopes < TERMINAL_DELIVERY_MAX_PIPELINED &&
+      (envelopes === 1 || chunks === newest.chunkCount)
+    );
+  }
+
+  /** Admit queued deliveries in order until one is decoding or unsettled again. */
+  #drain(): void {
+    if (this.#draining) return;
+    this.#draining = true;
+    try {
+      while (this.#queued.length > 0 && !this.#busy() && !this.#closed) {
+        const message = this.#queued.shift()!;
+        this.#acceptNow(message);
+      }
+    } finally {
+      this.#draining = false;
+    }
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#queued.length = 0;
     this.#assembler = null;
     this.#assemblyStorage = null;
     this.#envelope = null;
@@ -847,7 +921,9 @@ class WireTerminalEndpoint {
       });
     } catch (error) {
       this.#failConnection(error instanceof Error ? error : new Error(String(error)));
+      return;
     }
+    this.#drain();
   }
 
   #reject(
@@ -882,6 +958,9 @@ class WireTerminalEndpoint {
     this.#decodeToken = null;
     this.#rejectedTransactionId = attempted?.transactionId ?? transactionId;
     this.#reseedRequired = true;
+    // Patches queued behind the rejected flight are NACKed in turn ("gap");
+    // the daemon dropped them with the first NACK.
+    this.#drain();
   }
 }
 
@@ -1227,7 +1306,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
         panes: [...panes],
         viewerMode: "interactive",
         terminalDelivery: {
-          protocolVersions: [1],
+          // 124: this endpoint holds patches pipelined behind a decoding one.
+          protocolVersions: [1, TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION],
           encodings: ["semantic-compact-v1", "semantic-v1"],
           richPlacements: true,
         },

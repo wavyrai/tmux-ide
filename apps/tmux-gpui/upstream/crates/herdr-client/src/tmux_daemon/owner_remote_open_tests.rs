@@ -357,11 +357,13 @@ fn a_daemon_that_attaches_opens_inventories_and_issues_in_one_request() {
     );
     let stream_body = body["issue"]["stream"].as_object().unwrap();
     assert!(!stream_body.contains_key("workspaceName") && !stream_body.contains_key("panes"));
+    // The attach offer is the issue offer: 122 and pipelined delivery (124).
+    let offered = body["issue"]["stream"]["terminalDelivery"]["protocolVersions"]
+        .as_array()
+        .unwrap();
     assert!(
-        body["issue"]["stream"]["terminalDelivery"]["protocolVersions"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(122))
+        offered.contains(&json!(122)) && offered.contains(&json!(124)),
+        "{offered:?}"
     );
 }
 

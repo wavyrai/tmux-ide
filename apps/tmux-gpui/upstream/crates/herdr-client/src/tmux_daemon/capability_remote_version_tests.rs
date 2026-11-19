@@ -164,8 +164,8 @@ fn local_offer(version: Option<&str>) -> Vec<u32> {
 fn a_remote_daemon_gets_the_gates_of_its_proven_version() {
     let before = json!([1, 101, 113, 118, 103, 104, 105, 106, 119]);
     let since_2_9_26 = json!([1, 101, 113, 118, 103, 104, 105, 106, 119, 123]);
-    // 2.9.27 also streams history on demand (122) to a remote daemon (#453).
-    let since_2_9_27 = json!([1, 101, 113, 118, 103, 104, 105, 106, 119, 123, 122]);
+    // 2.9.27 adds history on demand (122) and pipelined delivery (124).
+    let since_2_9_27 = json!([1, 101, 113, 118, 103, 104, 105, 106, 119, 123, 122, 124]);
     for (version, windows, offer) in [
         ("2.9.24", false, &before),
         ("2.9.25", false, &before),

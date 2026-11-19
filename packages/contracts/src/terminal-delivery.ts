@@ -33,6 +33,19 @@ export const TERMINAL_DELIVERY_PROTOCOL_VERSION = 1 as const;
  */
 export const TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION = 122;
 export const TERMINAL_DELIVERY_HISTORY_TAIL_ROWS = 200;
+/**
+ * Capability 124: the client takes patches pipelined behind unacknowledged
+ * ones. It applies each in order against its last applied revision, ACKs each
+ * in order, and holds a delivery that arrives while an earlier one is still
+ * decoding or unsettled. Without it a pane keeps one delivery in flight.
+ */
+export const TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION = 124;
+/**
+ * Deliveries a pane of a 124 client may have unacknowledged. After a NACK a
+ * client NACKs each pipelined patch once; the app fails a stream on its
+ * fourth NACK in a row, so this stays at 3 or below.
+ */
+export const TERMINAL_DELIVERY_MAX_PIPELINED = 3;
 export const TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS = 2000;
 /** Capability numbers one offer may carry (nine before 2.9.26). */
 export const TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = 16;

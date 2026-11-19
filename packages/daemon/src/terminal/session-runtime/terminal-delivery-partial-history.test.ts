@@ -147,8 +147,8 @@ async function client(hub: Hub, id: string, partial = true, encoding = "semantic
     {
       protocolVersions: partial
         ? encoding === "semantic-binary-v1"
-          ? [1, 109, 122]
-          : [1, 122]
+          ? [1, 109, 122, 124]
+          : [1, 122, 124]
         : [1],
       encodings: ["semantic-compact-v1"],
       richPlacements: false,
@@ -163,7 +163,8 @@ async function client(hub: Hub, id: string, partial = true, encoding = "semantic
     messages,
     state: createTerminalDeliveryClientState(c.negotiation.negotiated, "w", "pane"),
     processed: 0,
-    pendingAck: null as unknown,
+    /** ACKs not yet sent, oldest first: a client ACKs every delivery, in order. */
+    pendingAcks: [] as unknown[],
     envelopes: [] as TerminalDeliveryEnvelope[],
     historyRows: [] as number[],
     unloadedTrims: 0,
@@ -196,13 +197,13 @@ async function client(hub: Hub, id: string, partial = true, encoding = "semantic
         const result = commitTerminalDelivery(admitted, staged);
         self.state = result.state;
         self.envelopes.push(e);
-        self.pendingAck = result.ack;
+        self.pendingAcks.push(result.ack);
       }
     },
+    /** Send every held ACK, in order. */
     ack() {
-      if (!self.pendingAck) return false;
-      c.ack(self.pendingAck as never);
-      self.pendingAck = null;
+      if (!self.pendingAcks.length) return false;
+      for (const ack of self.pendingAcks.splice(0)) c.ack(ack as never);
       return true;
     },
     requestHistory(maxRows: number) {
@@ -268,7 +269,7 @@ async function waitFor(cl: Awaited<ReturnType<typeof client>>, done: () => boole
 /** Every client has committed and acknowledged the source's latest revision. */
 function caughtUp(clients: Awaited<ReturnType<typeof client>>[], src: { revision: number }) {
   return () =>
-    clients.every((cl) => cl.state.appliedRevision === src.revision && cl.pendingAck === null);
+    clients.every((cl) => cl.state.appliedRevision === src.revision && cl.pendingAcks.length === 0);
 }
 
 /** The client's unloaded commitment, failing clearly when the stream is not partial. */
