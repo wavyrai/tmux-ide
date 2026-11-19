@@ -83,7 +83,7 @@ impl SnapshotView {
         }
         if self.browser_state.history_offset == 0
             && !event.modifiers.shift
-            && !self.offer_terminal_input(cx)
+            && !self.offer_terminal_pointer(cx)
         {
             self.wheel = Default::default();
             return;

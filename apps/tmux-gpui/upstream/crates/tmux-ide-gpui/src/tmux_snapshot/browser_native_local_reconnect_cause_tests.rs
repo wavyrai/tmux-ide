@@ -298,3 +298,45 @@ fn starting_over_drops_the_remembered_server_list() {
     local.home(8).unwrap();
     assert_eq!(starts(), before + 2, "Home kept the remembered list");
 }
+
+/// Reconnect, 19 Nov 2026: the Mac woke or the network is back. A recovery
+/// waiting out a long backoff (30 s over SSH) tries now, the backoff starts
+/// over, and the route is proven again rather than trusted.
+#[test]
+fn a_wake_or_a_network_back_tries_at_once_and_starts_the_backoff_over() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().local_record = None;
+    for _ in 0..12 {
+        local.recovery.as_mut().unwrap().due = Some(Instant::now());
+        local.reconnect_tick().unwrap();
+        local.reconnect_retry(Failure::Unreachable).unwrap();
+    }
+    let due = local.recovery.as_ref().unwrap().due.unwrap();
+    assert!(due > Instant::now() + Duration::from_secs(20));
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none(), "tried before the backoff was over");
+    crate::tmux_snapshot::connection::network_watch::simulate_wake();
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_some(), "the wake did not try at once");
+    assert_eq!(local.recovery.as_ref().unwrap().attempt(), 1);
+    // That try failed too: the next waits the first step, not 30 s.
+    let before = Instant::now();
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    assert_eq!(delay(&local, before), 250);
+    // The same epoch is no reason to hurry again.
+    local.reconnect_tick().unwrap();
+    assert!(local.stage.is_none());
+}
+
+/// A stream that went silent may sit behind an SSH forward on a network that
+/// went away: its first try proves the route instead of waiting on it.
+#[test]
+fn a_silent_stream_proves_its_route_on_the_first_try() {
+    let (mut local, _events) = attached();
+    local.reconnect_after(Cause::Silent).unwrap();
+    assert!(local.recovery.as_ref().unwrap().rediscover_owner);
+    let (mut local, _events) = attached();
+    local.reconnect_after(Cause::Lost).unwrap();
+    assert!(!local.recovery.as_ref().unwrap().rediscover_owner);
+}

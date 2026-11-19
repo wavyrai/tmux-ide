@@ -205,6 +205,10 @@ pub(super) struct State {
     /// A window shown again waits (briefly) for its hidden panes' fresh state:
     /// keys typed meanwhile are held for the pane selected after it.
     pub reveal_hold: bool,
+    /// The Mac woke or the network changed, and the stream's link is being
+    /// probed: keys typed meanwhile are held, not sent into a link that may
+    /// be dead (`pending_input/reconnect.rs`). Worker-owned.
+    pub link_probe: bool,
     /// Home stopped on a failure that won't recover by itself; `status` says why.
     pub home_fault: bool,
     /// Agent rows and pills are last known: their link dropped, or the one
@@ -672,6 +676,7 @@ impl Reader {
             reconnect_attempt: None,
             reconnect_keys_lost: false,
             reveal_hold: false,
+            link_probe: false,
             home_fault: false,
             agents_last_known: false,
             act: None,

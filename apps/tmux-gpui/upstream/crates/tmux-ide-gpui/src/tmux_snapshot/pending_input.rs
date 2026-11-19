@@ -224,6 +224,7 @@ impl SnapshotView {
         if let Some(pending) = self.pending_input.take()
             && (!pending.inputs.is_empty() || !self.marked.is_empty())
         {
+            self.connection.keys_not_sent += pending.reconnect_keys();
             self.interrupt_input(cx);
         }
     }
@@ -235,6 +236,7 @@ impl SnapshotView {
         if self.pending_input.is_some() && !self.pending_input_ready() {
             self.cancel_pending_input(cx);
         }
+        self.arm_reconnect_hold_wake(cx);
     }
     pub(super) fn hold_pending_input(&mut self, input: Input, cx: &mut Context<Self>) {
         self.expire_pending_input(cx);
@@ -243,6 +245,10 @@ impl SnapshotView {
             .as_mut()
             .is_none_or(|pending| !pending.push(input))
         {
+            // A full reconnect hold refuses this key too, and says so.
+            if (self.pending_input.as_ref()).is_some_and(|p| matches!(p.kind, Kind::Reconnect(_))) {
+                self.connection.keys_not_sent += 1;
+            }
             self.interrupt_input(cx);
         }
     }
@@ -286,6 +292,7 @@ impl SnapshotView {
         let Some(mut pending) = self.pending_input.take() else {
             return;
         };
+        pending.join_reconnect_text();
         while !pending.inputs.is_empty() {
             let command = browser::Command::Input {
                 input_target: Some(pending.token.clone()),
@@ -298,7 +305,7 @@ impl SnapshotView {
                 return;
             };
             match sender.try_send(command) {
-                Ok(()) => {}
+                Ok(()) => pending.reconnect_delivering(),
                 Err(std::sync::mpsc::TrySendError::Full(command)) => {
                     // Retain only never-dispatched input, with its original deadline.
                     let browser::Command::Input { input, .. } = command else {

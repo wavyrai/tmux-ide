@@ -1,0 +1,226 @@
+//! Reconnect reliability (19 Nov 2026): a reconnect never loses input it can
+//! still deliver. Up to 512 keys wait, go to the same pane in order exactly
+//! once, all or nothing; what cannot be delivered is counted in the pane. A
+//! link that is only suspect (the Mac woke, the network changed) holds keys
+//! the same way until its probe is answered.
+use super::reconnect_hold::{PANE, back, dropped, live, sent, view_with};
+use super::*;
+use crate::tmux_snapshot::connection::not_sent_words;
+use std::time::Duration;
+
+fn type_keys(
+    view: &mut SnapshotView,
+    keys: &[&str],
+    window: &mut Window,
+    cx: &mut Context<SnapshotView>,
+) {
+    for k in keys {
+        if *k == "enter" {
+            view.terminal_key(&key("enter"), window, cx);
+        } else {
+            view.replace_text_in_range(None, k, window, cx);
+        }
+    }
+}
+
+/// 512 keys, letters with an Enter among them: delivered in order, exactly
+/// once, with the letters joined so they fit the queues to the stream.
+#[gpui::test]
+fn five_hundred_twelve_held_keys_arrive_in_order_exactly_once(cx: &mut TestAppContext) {
+    let letters: Vec<String> = (0..511usize)
+        .map(|i| char::from(b"abcdefghijklmnopqrstuvwxyz"[i % 26]).to_string())
+        .collect();
+    let mut typed: Vec<&str> = letters.iter().map(String::as_str).collect();
+    typed.insert(300, "enter");
+    assert_eq!(typed.len(), 512);
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &typed, window, cx);
+            assert!(
+                !view.input_interrupted,
+                "a key was refused within the bound"
+            );
+            assert!(sent(&receiver).is_empty());
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            let got = sent(&receiver);
+            let token = Some("b".repeat(64));
+            assert!(
+                got.iter().all(|(id, _, t)| id == PANE && *t == token),
+                "{got:?}"
+            );
+            let joined: Vec<&str> = got.iter().map(|(_, text, _)| text.as_str()).collect();
+            let before: String = letters[..300].concat();
+            let after: String = letters[300..].concat();
+            assert_eq!(joined, [before.as_str(), "Enter", after.as_str()]);
+            assert!(view.pending_input.is_none());
+            assert_eq!(view.connection.keys_not_sent, 0);
+            // Nothing is sent twice.
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            view.browser_tick(cx);
+            assert!(sent(&receiver).is_empty());
+        })
+    });
+}
+
+/// Keys that cannot be delivered are all dropped, and the pane says how many,
+/// counting the ones typed after them too. The count goes with the latch.
+#[gpui::test]
+fn the_pane_counts_the_keys_a_reconnect_could_not_deliver(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["l", "s", "enter"], window, cx);
+            view.age_pending_input_by(Duration::from_millis(5100));
+            view.browser_tick(cx);
+            assert!(view.not_sent_shown());
+            assert_eq!(view.connection.keys_not_sent, 3);
+            type_keys(view, &["x"], window, cx);
+            assert_eq!(view.connection.keys_not_sent, 4);
+            assert_eq!(
+                not_sent_words(view.connection.keys_not_sent),
+                "4 keys not sent. Type them again when the connection is back."
+            );
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            assert!(sent(&receiver).is_empty(), "a dropped key came back");
+            assert_eq!(view.connection.keys_not_sent, 0);
+            assert!(!view.input_interrupted);
+        })
+    });
+}
+
+/// A session re-created under the same name has another live id: its new
+/// stream, even on a pane of the same id, gets none of the held keys.
+#[gpui::test]
+fn a_re_created_session_gets_none_of_the_held_keys(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["rm", "enter"], window, cx);
+            let mut state = back(view);
+            state.selected_session = Some("session-re-created".into());
+            view.apply_browser_state(Some(state), cx);
+            view.browser_tick(cx);
+            assert!(sent(&receiver).is_empty());
+            assert!(view.pending_input.is_none());
+            assert_eq!(view.connection.keys_not_sent, 2);
+        })
+    });
+}
+
+/// Once the first held key is sent the rest follow, even when the queue to
+/// the stream is full and the hold's limit passes before they fit.
+#[gpui::test]
+fn a_delivery_once_begun_finishes_past_the_limit(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+    receiver.try_iter().for_each(drop);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            receiver.try_iter().for_each(drop);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["a", "enter", "b", "enter", "c"], window, cx);
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            let mut got = sent(&receiver);
+            assert_eq!(got.len(), 2, "the queue takes two");
+            view.age_pending_input_by(Duration::from_secs(10));
+            while view.pending_input.is_some() {
+                view.browser_tick(cx);
+                got.extend(sent(&receiver));
+                assert!(got.len() <= 5, "{got:?}");
+            }
+            let texts: Vec<&str> = got.iter().map(|(_, text, _)| text.as_str()).collect();
+            assert_eq!(texts, ["a", "Enter", "b", "Enter", "c"]);
+            assert!(!view.input_interrupted);
+            assert_eq!(view.connection.keys_not_sent, 0);
+        })
+    });
+}
+
+/// A live stream whose link is probed (the Mac woke): keys wait for the
+/// probe's answer and then go to the same stream, under the same token.
+#[gpui::test]
+fn keys_typed_while_the_link_is_probed_wait_for_its_answer(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let mut state = view.browser_state.clone();
+            state.link_probe = true;
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["ls", "enter"], window, cx);
+            assert!(!view.input_interrupted);
+            assert!(sent(&receiver).is_empty(), "a key went into a suspect link");
+            // Probing takes no time limit of its own: the stream bounds it.
+            view.age_pending_input_by(Duration::from_millis(4900));
+            view.browser_tick(cx);
+            assert!(view.pending_input.is_some());
+            let mut state = view.browser_state.clone();
+            state.link_probe = false;
+            view.apply_browser_state(Some(state), cx);
+            let token = Some("a".repeat(64));
+            assert_eq!(
+                sent(&receiver),
+                [
+                    (PANE.to_owned(), "ls".to_owned(), token.clone()),
+                    (PANE.to_owned(), "Enter".to_owned(), token),
+                ]
+            );
+        })
+    });
+}
+
+/// The probe found the link dead: the drop continues the hold, its limit
+/// counted from the drop, and the keys go to the new stream.
+#[gpui::test]
+fn a_failed_probe_becomes_a_drop_and_the_keys_follow_the_new_stream(cx: &mut TestAppContext) {
+    for (back_after_drop, delivered) in [(4900, true), (5100, false)] {
+        let (view, receiver, cx) = view_with(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                live(view, cx);
+                let mut state = view.browser_state.clone();
+                state.link_probe = true;
+                view.apply_browser_state(Some(state), cx);
+                type_keys(view, &["held"], window, cx);
+                // The pong limit passes: the stream ends as silent. The held
+                // frame's publication probes nothing (`browser_native_hold`).
+                view.age_pending_input_by(Duration::from_millis(5000));
+                let mut state = dropped(view, false);
+                state.link_probe = false;
+                view.apply_browser_state(Some(state), cx);
+                view.browser_tick(cx);
+                assert!(view.pending_input.is_some(), "the drop ended the hold");
+                view.age_pending_input_by(Duration::from_millis(back_after_drop));
+                view.browser_tick(cx);
+                let state = back(view);
+                view.apply_browser_state(Some(state), cx);
+                let got = sent(&receiver);
+                if delivered {
+                    assert_eq!(
+                        got,
+                        [(PANE.to_owned(), "held".to_owned(), Some("b".repeat(64)))]
+                    );
+                } else {
+                    assert!(got.is_empty(), "{got:?}");
+                    assert!(view.pending_input.is_none());
+                }
+            })
+        });
+    }
+}

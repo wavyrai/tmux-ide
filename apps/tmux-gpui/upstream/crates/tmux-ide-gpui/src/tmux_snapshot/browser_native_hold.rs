@@ -128,6 +128,8 @@ impl Hold {
         result.presence_revision = state.presence_revision;
         result.reconnect_attempt = Some(attempt);
         result.reconnect_keys_lost = held.lost_input;
+        // The held frame's stream is gone: nothing is probed any more.
+        result.link_probe = false;
         result.status = if held.lost_input {
             format!("Reconnecting… attempt {attempt} — {LOST_INPUT}")
         } else {
