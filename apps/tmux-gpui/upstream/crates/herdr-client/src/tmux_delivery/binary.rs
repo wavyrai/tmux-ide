@@ -115,7 +115,7 @@ impl<'a> Decoder<'a> {
         if self.runs > 1_000_000 {
             return Err(Error::Invalid("run budget"));
         }
-        let mut cells = Vec::new();
+        let mut cells = super::row::Builder::default();
         for _ in 0..runs {
             self.tuple(6)?;
             let count = self.size(1, 4096)?;
@@ -123,26 +123,20 @@ impl<'a> Decoder<'a> {
             if self.cells > self.max_cells || cells.len() + count > 4096 {
                 return Err(Error::Invalid("cell budget"));
             }
-            let cell = Cell {
-                grapheme: Arc::from(self.string(false)?),
-                width: self.int(0, 2)? as u8,
-                foreground: self.color()?,
-                background: self.color()?,
-                attributes: self.int(0, 255)? as u8,
-            };
-            cells.extend(std::iter::repeat_n(cell, count));
+            let grapheme = self.string(false)?;
+            let width = self.int(0, 2)? as u8;
+            let foreground = self.color()?;
+            let background = self.color()?;
+            let attributes = self.int(0, 255)? as u8;
+            cells.push(count, grapheme, width, &foreground, &background, attributes);
         }
-        if cells.is_empty() || cols.is_some_and(|n| n != cells.len()) {
+        if cells.len() == 0 || cols.is_some_and(|n| n != cells.len()) {
             return Err(Error::Invalid("row width"));
         }
-        for (i, cell) in cells.iter().enumerate() {
-            if (cell.width == 2 && cells.get(i + 1).map(|c| c.width) != Some(0))
-                || (cell.width == 0 && (i == 0 || cells[i - 1].width != 2))
-            {
-                return Err(Error::Invalid("wide cell pairing"));
-            }
+        if !cells.paired() {
+            return Err(Error::Invalid("wide cell pairing"));
         }
-        Ok(Arc::new(Row::new(cells, wrapped)))
+        Ok(Arc::new(cells.finish(wrapped)))
     }
     fn rows(&mut self, cols: Option<usize>, max: u64) -> Result<Vec<Arc<Row>>> {
         let count = self.list(max)?;

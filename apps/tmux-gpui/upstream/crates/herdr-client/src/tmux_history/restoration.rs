@@ -1,8 +1,5 @@
-use super::{
-    AnchorResult, Proof, Scope, Viewport, size::Sizes, viewport::bounded_history, wire::uuid,
-};
-use crate::tmux_delivery::Row;
-use std::{collections::VecDeque, sync::Arc};
+use super::{AnchorResult, Proof, Scope, Viewport, viewport::Shown, wire::uuid};
+use std::collections::VecDeque;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HistoryState {
     Live,
@@ -41,8 +38,7 @@ struct Frame {
     rows: usize,
     alternate: bool,
     start: usize,
-    history: Vec<Arc<Row>>,
-    bytes: usize,
+    history: Shown,
 }
 struct Pending {
     ticket: Ticket,
@@ -57,7 +53,6 @@ pub struct Restoration {
     pending: Option<Pending>,
     resolved: Option<(Proof, usize)>,
     frames: VecDeque<Frame>,
-    sizes: Sizes,
 }
 impl Default for Restoration {
     fn default() -> Self {
@@ -68,7 +63,6 @@ impl Default for Restoration {
             pending: None,
             resolved: None,
             frames: VecDeque::new(),
-            sizes: Sizes::default(),
         }
     }
 }
@@ -107,7 +101,6 @@ impl Restoration {
     pub fn retire(&mut self) {
         self.live();
         self.frames.clear();
-        self.sizes = Sizes::default();
     }
     pub fn observe(&mut self, proof: Proof, viewport: &mut Viewport, now_ms: u64) {
         self.tick(now_ms);
@@ -127,8 +120,7 @@ impl Restoration {
             self.retire();
         }
         if !self.frames.iter().any(|f| f.proof == proof) {
-            let history = bounded_history(snapshot, &mut self.sizes);
-            let bytes = history.iter().map(|r| self.sizes.row(r)).sum();
+            let history = Shown::of(snapshot);
             self.frames.push_back(Frame {
                 proof,
                 scope: scope.clone(),
@@ -143,14 +135,12 @@ impl Restoration {
                         .map_or(0, |rows| rows.len())
                         .saturating_sub(history.len()),
                 history,
-                bytes,
             });
-            while self.frames.len() > 4
-                || self.frames.iter().map(|f| f.bytes).sum::<usize>() > 4 * 1024 * 1024
-            {
+            // Frames share their snapshots' row lists, so four of them hold
+            // little more than the newest one.
+            while self.frames.len() > 4 {
                 self.frames.pop_front();
             }
-            self.sizes.prune();
         }
         self.apply(viewport);
     }

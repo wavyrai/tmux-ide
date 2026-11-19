@@ -3,6 +3,8 @@ mod binary;
 mod compact;
 mod hash;
 mod projection;
+mod row;
+mod rows;
 mod store;
 mod types;
 pub use binary::{decode_binary, decode_projection};
@@ -11,7 +13,8 @@ pub use hash::{
     hash_projection, hash_projection_tombstone, hash_representation, hash_snapshot, hash_tombstone,
 };
 pub use projection::{ProjectionStore, ProjectionUpdate};
-pub use store::{ApplyResult, Store};
+pub use row::{CellRef, Cells};
+pub use store::{ApplyResult, MAX_HISTORY_ROWS, MAX_ROW_BYTES, Store};
 pub use types::*;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

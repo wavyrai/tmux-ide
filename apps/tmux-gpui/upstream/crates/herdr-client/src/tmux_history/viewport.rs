@@ -1,5 +1,5 @@
-use super::{MAX_BYTES, MAX_ROWS, size::Sizes};
-use crate::tmux_delivery::{Row, Snapshot};
+use super::{MAX_BYTES, MAX_ROWS};
+use crate::tmux_delivery::{Row, Rows, Snapshot};
 use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scope {
@@ -22,10 +22,9 @@ pub enum Scroll {
 pub struct Viewport {
     scope: Option<Scope>,
     current: Option<Arc<Snapshot>>,
-    history: Vec<Arc<Row>>,
+    history: Shown,
     anchor: Option<Arc<Row>>,
     offset: usize,
-    sizes: Sizes,
 }
 impl Viewport {
     pub fn scope(&self) -> Option<&Scope> {
@@ -57,10 +56,10 @@ impl Viewport {
             self.offset = 0;
         }
         self.scope = Some(scope);
-        self.history = bounded_history(&snapshot, &mut self.sizes);
+        self.history = Shown::of(&snapshot);
         self.current = Some(snapshot);
         if let Some(anchor) = &self.anchor {
-            match unique_index(&self.history, anchor) {
+            match unique_index(self.history.iter(), anchor) {
                 Some(index) => self.offset = self.history.len() - index,
                 None => {
                     self.offset = 0;
@@ -68,7 +67,6 @@ impl Viewport {
                 }
             }
         }
-        self.sizes.prune();
     }
     pub fn scroll(&mut self, command: Scroll) {
         let page = self
@@ -91,11 +89,11 @@ impl Viewport {
     /// rows come first.
     pub fn capture_index(&self) -> Option<usize> {
         let history = &self.current.as_ref()?.history;
-        unique_index(history.materialized()?, self.anchor.as_ref()?)
+        unique_index(history.materialized()?.iter(), self.anchor.as_ref()?)
             .map(|index| history.unloaded_rows() + index)
     }
     pub fn restore_row(&mut self, row: &Arc<Row>) -> bool {
-        let Some(index) = unique_index(&self.history, row) else {
+        let Some(index) = unique_index(self.history.iter(), row) else {
             return false;
         };
         self.anchor = Some(row.clone());
@@ -109,8 +107,7 @@ impl Viewport {
             current.grid.clone()
         } else {
             self.history
-                .iter()
-                .skip(self.history.len() - self.offset)
+                .iter_from(self.history.len() - self.offset)
                 .chain(current.grid.iter())
                 .take(current.rows)
                 .cloned()
@@ -136,9 +133,12 @@ impl Viewport {
         })
     }
 }
-pub(super) fn unique_index(rows: &[Arc<Row>], row: &Arc<Row>) -> Option<usize> {
+pub(super) fn unique_index<'a>(
+    rows: impl Iterator<Item = &'a Arc<Row>>,
+    row: &Arc<Row>,
+) -> Option<usize> {
     let mut found = None;
-    for (i, candidate) in rows.iter().enumerate() {
+    for (i, candidate) in rows.enumerate() {
         if Arc::ptr_eq(candidate, row) {
             if found.is_some() {
                 return None;
@@ -148,22 +148,53 @@ pub(super) fn unique_index(rows: &[Arc<Row>], row: &Arc<Row>) -> Option<usize> {
     }
     found
 }
-pub(super) fn bounded_history(snapshot: &Snapshot, sizes: &mut Sizes) -> Vec<Arc<Row>> {
-    if snapshot.modes.alternate_screen {
-        return Vec::new();
-    }
-    let mut bytes = 0usize;
-    let mut history = Vec::new();
-    let Some(rows) = snapshot.history.materialized() else {
-        return history;
-    };
-    for row in rows.iter().rev().take(MAX_ROWS) {
-        bytes = bytes.saturating_add(sizes.row(row));
-        if bytes > MAX_BYTES {
-            break;
+/// The newest rows of a snapshot's history that the scrollback holds, at most
+/// `MAX_ROWS` rows and `MAX_BYTES` of row memory: a suffix of the snapshot's
+/// own rows, shared, so an update copies no row handles.
+#[derive(Clone, Default)]
+pub(super) struct Shown {
+    rows: Rows,
+    from: usize,
+}
+impl Shown {
+    pub fn of(snapshot: &Snapshot) -> Self {
+        let Some(rows) = snapshot.history.materialized() else {
+            return Self::default();
+        };
+        if snapshot.modes.alternate_screen {
+            return Self::default();
         }
-        history.push(row.clone());
+        let newest = rows.len().saturating_sub(MAX_ROWS);
+        let from = if rows.heap_bytes() <= MAX_BYTES {
+            // All of them fit, so the newest `MAX_ROWS` do.
+            newest
+        } else {
+            let mut bytes = 0usize;
+            let mut from = rows.len();
+            for row in rows.iter_from(newest).rev() {
+                bytes = bytes.saturating_add(row.heap_bytes());
+                if bytes > MAX_BYTES {
+                    break;
+                }
+                from -= 1;
+            }
+            from
+        };
+        Self {
+            rows: rows.clone(),
+            from,
+        }
     }
-    history.reverse();
-    history
+    pub fn len(&self) -> usize {
+        self.rows.len() - self.from
+    }
+    pub fn get(&self, index: usize) -> Option<&Arc<Row>> {
+        self.rows.get(self.from.checked_add(index)?)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Arc<Row>> {
+        self.rows.iter_from(self.from)
+    }
+    pub fn iter_from(&self, start: usize) -> impl Iterator<Item = &Arc<Row>> {
+        self.rows.iter_from(self.from + start)
+    }
 }

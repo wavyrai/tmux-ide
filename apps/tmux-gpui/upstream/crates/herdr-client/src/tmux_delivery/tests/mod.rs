@@ -56,7 +56,7 @@ fn production_ts_vectors_match_and_retain_unchanged_rows() {
     }
 }
 fn old_snapshot_assert(s: &Snapshot) {
-    assert_eq!(&*s.grid[1].cells()[0].grapheme, " ");
+    assert_eq!(s.grid[1].cells().next().unwrap().grapheme, " ");
 }
 #[test]
 fn hash_and_sequence_rejection_are_atomic() {
@@ -207,3 +207,5 @@ mod binary;
 mod hash_row;
 
 mod projection;
+
+mod caps;

@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 use super::*;
-use crate::tmux_delivery::{Snapshot, Update, decode_compact};
+use crate::tmux_delivery::{Cell, Color, History, Row, Snapshot, Update, decode_compact};
 use serde_json::json;
 use std::sync::Arc;
 const UUID: &str = "12345678-1234-4234-8234-123456789abc";
@@ -23,13 +23,37 @@ fn proof(revision: u64) -> Proof {
         state_hash: format!("{revision:016x}"),
     }
 }
+/// A row of `cols` cells, each the grapheme `text`, as the wire's
+/// `[0, [[cols, text, 1, 0, 0, 0]]]`.
+fn row(text: &str, cols: usize) -> Arc<Row> {
+    Arc::new(Row::new(
+        vec![
+            Cell {
+                grapheme: text.into(),
+                width: 1,
+                foreground: Color::Default,
+                background: Color::Default,
+                attributes: 0,
+            };
+            cols
+        ],
+        false,
+    ))
+}
 fn snapshot(history: usize, cols: usize) -> Arc<Snapshot> {
-    let row = |s: String| json!([0, [[cols, s, 1, 0, 0, 0]]]);
+    with_history(
+        (0..history).map(|i| row(&i.to_string(), cols)).collect(),
+        cols,
+    )
+}
+fn with_history(history: Vec<Arc<Row>>, cols: usize) -> Arc<Snapshot> {
+    let row = |s: &str| json!([0, [[cols, s, 1, 0, 0, 0]]]);
     let bytes=serde_json::to_vec(&json!({"v":1,"k":"terminal-semantic-compact","f":"s","r":0,
-        "s":[cols,2,[row("A".into()),row("B".into())],(0..history).map(|i|row(i.to_string())).collect::<Vec<_>>(),[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]})).unwrap();
-    let Update::Seed { snapshot, .. } = decode_compact(&bytes).unwrap() else {
+        "s":[cols,2,[row("A"),row("B")],[],[0,0,0,"block",0],[0,0,0,0,0,0,1,0,null,null,0],[],["authoritative-stream","observed-from-start"]]})).unwrap();
+    let Update::Seed { mut snapshot, .. } = decode_compact(&bytes).unwrap() else {
         panic!("seed")
     };
+    snapshot.history = History::from(history);
     Arc::new(snapshot)
 }
 #[test]
@@ -55,11 +79,11 @@ fn scroll_uses_shared_rows_and_unique_identity_survives_append() {
 }
 #[test]
 fn pages_bounds_duplicate_anchor_and_lifetime_reset() {
-    let first = snapshot(1100, 1);
+    let first = snapshot(MAX_ROWS + 100, 1);
     let mut v = Viewport::default();
     v.update(scope(), first.clone());
     v.scroll(Scroll::Home);
-    assert_eq!(v.offset(), 1000);
+    assert_eq!(v.offset(), MAX_ROWS);
     assert_eq!(v.capture_index(), Some(100));
     v.scroll(Scroll::End);
     assert_eq!(v.offset(), 0);
@@ -78,9 +102,59 @@ fn pages_bounds_duplicate_anchor_and_lifetime_reset() {
     v.update(newer, first);
     assert_eq!(v.offset(), 0);
 }
+/// The scrollback holds the newest `MAX_ROWS` rows: one more drops the
+/// oldest, and Home shows the oldest row held at the top of the view.
+#[test]
+fn ten_thousand_rows_scroll_to_the_oldest_and_one_more_drops_the_oldest() {
+    assert_eq!(MAX_ROWS, 10_000);
+    for extra in [0, 1, 2] {
+        let s = snapshot(MAX_ROWS + extra, 80);
+        let history = s.history.materialized().unwrap();
+        let mut v = Viewport::default();
+        v.update(scope(), s.clone());
+        assert_eq!(v.history_len(), MAX_ROWS);
+        v.scroll(Scroll::Home);
+        assert_eq!(v.offset(), MAX_ROWS);
+        let view = v.view().unwrap();
+        assert!(Arc::ptr_eq(&view.grid[0], &history[extra]));
+        assert!(Arc::ptr_eq(&view.grid[1], &history[extra + 1]));
+        assert_eq!(v.capture_index(), Some(extra));
+        // Back down a page at a time to the live screen.
+        let mut pages = 0;
+        while v.offset() > 0 {
+            v.scroll(Scroll::PageDown);
+            pages += 1;
+        }
+        assert_eq!(pages, MAX_ROWS);
+        assert!(Arc::ptr_eq(&v.view().unwrap().grid[0], &s.grid[0]));
+    }
+}
+/// The byte bound counts each row's memory: rows that fill `MAX_BYTES`
+/// exactly are all held, and one more row drops the oldest.
+#[test]
+fn the_byte_bound_holds_rows_up_to_exactly_max_bytes() {
+    let fixed = row("x", 1).heap_bytes() - 1;
+    let cols = 2048 - fixed;
+    let wide = row("x", cols);
+    assert_eq!(wide.heap_bytes(), 2048);
+    let fit = MAX_BYTES / 2048;
+    assert_eq!(fit * 2048, MAX_BYTES);
+    assert!(fit < MAX_ROWS);
+    for extra in [0, 1] {
+        let mut history = vec![wide.clone(); fit + extra];
+        let oldest = row("o", cols);
+        history[extra] = oldest.clone();
+        let mut v = Viewport::default();
+        v.update(scope(), with_history(history, cols));
+        assert_eq!(v.history_len(), fit);
+        v.scroll(Scroll::Home);
+        assert!(Arc::ptr_eq(&v.view().unwrap().grid[0], &oldest));
+    }
+}
 #[test]
 fn byte_cap_and_alternate_screen_clear_history() {
-    let first = snapshot(1000, 64);
+    // Each row holds 4096 cells of a three-byte grapheme: about 28 KiB.
+    let first = with_history(vec![row("123", 4096); 1000], 4096);
     let mut v = Viewport::default();
     v.update(scope(), first.clone());
     v.scroll(Scroll::Home);
@@ -90,17 +164,6 @@ fn byte_cap_and_alternate_screen_clear_history() {
     v.update(scope(), Arc::new(next));
     v.scroll(Scroll::Home);
     assert_eq!(v.offset(), 0);
-}
-#[test]
-fn row_size_matches_json_escaping_and_color_shapes() {
-    let first = snapshot(1, 2);
-    let r = &first.history.materialized().unwrap()[0];
-    let c = &r.cells()[0];
-    let cell = json!({"grapheme":&*c.grapheme,"width":c.width,"foreground":c.foreground,"background":c.background,"attributes":c.attributes});
-    let expected = serde_json::to_vec(&json!({"wrapped":false,"cells":[cell.clone(),cell]}))
-        .unwrap()
-        .len();
-    assert_eq!(size::Sizes::default().row(r), expected);
 }
 #[test]
 fn capture_restore_and_stale_response_fencing() {
@@ -286,7 +349,7 @@ fn a_partial_history_captures_and_restores_whole_history_indexes() {
             rows: 300,
             digest: "0".repeat(16),
         },
-        loaded: Arc::new(loaded),
+        loaded: loaded.into(),
     });
     let partial = Arc::new(partial);
     let mut v = Viewport::default();

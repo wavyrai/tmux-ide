@@ -146,11 +146,7 @@ impl Store {
         let mut next = Snapshot::clone(prior);
         next.history = History::Partial(PartialHistory {
             unloaded: next_unloaded,
-            loaded: Arc::new(
-                rows.into_iter()
-                    .chain(held.loaded.iter().cloned())
-                    .collect(),
-            ),
+            loaded: held.loaded.prepend(rows),
         });
         validate(&next)?;
         let hash = hash_snapshot(&next);
@@ -187,16 +183,22 @@ fn apply_partial_patch(prior: &Snapshot, p: Patch, unloaded: DeferredHistory) ->
 }
 /// The rows digest of no rows: the fold's start.
 const EMPTY_DIGEST: &str = "0000000000000000";
+/// History rows a snapshot may hold. The daemon holds what tmux's
+/// history-limit keeps, and a partial history's loaded rows grow with output,
+/// so this is well above the scrollback's 10,000 rows: a pane with a larger
+/// history-limit keeps streaming.
+pub const MAX_HISTORY_ROWS: usize = 50_000;
+/// Row memory ([`Row::heap_bytes`]) a snapshot's grid and history may hold.
+pub const MAX_ROW_BYTES: usize = 64 * 1024 * 1024;
 pub(super) fn validate(s: &Snapshot) -> Result<()> {
     if s.cols == 0
         || s.rows == 0
         || s.cols > 4096
         || s.rows > 4096
         || s.grid.len() != s.rows
+        || s.grid.len().saturating_mul(s.cols) > 1_000_000
         || match &s.history {
-            History::Complete(rows) => {
-                rows.len() > 10000 || (s.grid.len() + rows.len()).saturating_mul(s.cols) > 1_000_000
-            }
+            History::Complete(rows) => rows.len() > MAX_HISTORY_ROWS,
             History::Deferred(h) => {
                 !s.modes.alternate_screen
                     || h.rows > 10000
@@ -205,28 +207,35 @@ pub(super) fn validate(s: &Snapshot) -> Result<()> {
                         .digest
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                    || s.grid.len().saturating_mul(s.cols) > 1_000_000
             }
             History::Partial(p) => {
-                p.loaded.len() > 10000
+                p.loaded.len() > MAX_HISTORY_ROWS
                     || p.unloaded.rows > 1_000_000
                     || super::hash::concat_rows_hash(&p.unloaded.digest, &[]).is_none()
                     // Nothing unloaded is the digest of no rows, or a forged
                     // chain of chunks could end in a commitment that hides
                     // wrong rows behind a matching hash (#435 review).
                     || (p.unloaded.rows == 0 && p.unloaded.digest != EMPTY_DIGEST)
-                    || (s.grid.len() + p.loaded.len()).saturating_mul(s.cols) > 1_000_000
             }
         }
     {
         return Err(Error::Invalid("snapshot bounds"));
     }
-    if s.grid.iter().any(|r| r.cells().len() != s.cols)
-        || s.history
-            .materialized()
-            .is_some_and(|rows| rows.iter().any(|r| r.cells().len() != s.cols))
-    {
+    // History rows keep their width and memory as they change, so a patch
+    // visits only its own rows here.
+    let history = s.history.materialized();
+    if history.is_some_and(|h| !h.is_empty() && h.width() != Some(s.cols)) {
         return Err(Error::Invalid("snapshot row width"));
+    }
+    let mut bytes = history.map_or(0, Rows::heap_bytes);
+    for row in &s.grid {
+        if row.len() != s.cols {
+            return Err(Error::Invalid("snapshot row width"));
+        }
+        bytes = bytes.saturating_add(row.heap_bytes());
+    }
+    if bytes > MAX_ROW_BYTES {
+        return Err(Error::Invalid("snapshot bounds"));
     }
     if s.cursor.x >= s.cols || s.cursor.y >= s.rows {
         return Err(Error::Invalid("cursor bounds"));
@@ -295,7 +304,7 @@ fn apply_patch_inner(
                 prior
                     .grid
                     .get(i)
-                    .filter(|r| r.cells().len() == cols)
+                    .filter(|r| r.len() == cols)
                     .cloned()
                     .unwrap_or_else(|| blank.clone())
             })
@@ -303,7 +312,7 @@ fn apply_patch_inner(
     };
     let mut seen = HashSet::new();
     for (i, row) in p.rows {
-        if i >= rows || !seen.insert(i) || row.cells().len() != cols {
+        if i >= rows || !seen.insert(i) || row.len() != cols {
             return Err(Error::Invalid("dirty row"));
         }
         grid[i] = row;
@@ -320,13 +329,7 @@ fn apply_patch_inner(
         if trim > prior_history.len() {
             return Err(Error::Invalid("history trim"));
         }
-        History::from(
-            prior_history[trim..]
-                .iter()
-                .cloned()
-                .chain(append)
-                .collect::<Vec<_>>(),
-        )
+        History::Complete(prior_history.trim_append(trim, append))
     } else {
         prior.history.clone()
     };

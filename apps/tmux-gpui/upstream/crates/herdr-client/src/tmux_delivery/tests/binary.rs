@@ -109,7 +109,7 @@ fn binary_blank_runs_have_absolute_cumulative_expansion_limit() {
     let Update::Seed { snapshot, .. } = decode_binary(&bytes).unwrap() else {
         panic!("seed")
     };
-    assert_eq!(snapshot.grid[0].cells().len(), 4096);
+    assert_eq!(snapshot.grid[0].len(), 4096);
     assert!(bytes.len() * 64 < 8192 || bytes.len() < 512);
     // Dimensions permit this history, but the cumulative expansion exceeds 1M cells.
     compact["s"][3] = json!(vec![row; 250]);
