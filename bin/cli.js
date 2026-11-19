@@ -7416,7 +7416,7 @@ var init_causal_cell = __esm({
 
 // packages/contracts/src/terminal-delivery.ts
 import { z as z48 } from "zod";
-var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION, TERMINAL_DELIVERY_HISTORY_TAIL_ROWS, TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS, TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, TERMINAL_HISTORY_EMPTY_DIGEST, TerminalDeliveryHistoryCommitmentSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryHistoryRequestSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ, TerminalSemanticHistoryPayloadSchemaZ;
+var STOCK_CAPTURE_TAB_UNAVAILABLE, TERMINAL_DELIVERY_BINARY_CAPABILITY_VERSION, TERMINAL_DELIVERY_BINARY_LOCAL_CAPABILITY_VERSION, TERMINAL_DELIVERY_PROTOCOL_VERSION, TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION, TERMINAL_DELIVERY_HISTORY_TAIL_ROWS, TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION, TERMINAL_DELIVERY_MAX_PIPELINED, TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS, TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS, TERMINAL_DELIVERY_CHUNK_BYTES, TERMINAL_DELIVERY_PATCH_TO_SEED_BYTES, TERMINAL_DELIVERY_MAX_REPRESENTATION_BYTES, TerminalDeliveryEncodingSchemaZ, TerminalDeliveryOfferSchemaZ, TerminalDeliveryNegotiatedSchemaZ, TerminalDeliveryNegotiationResultSchemaZ, TERMINAL_HISTORY_EMPTY_DIGEST, TerminalDeliveryHistoryCommitmentSchemaZ, DeliveryAddressSchemaZ, TerminalDeliveryEnvelopeSchemaZ, TerminalDeliveryFaultSchemaZ, TerminalDeliveryAckSchemaZ, TerminalDeliveryNackSchemaZ, TerminalDeliveryHistoryRequestSchemaZ, TerminalDeliveryVisibilitySchemaZ, TerminalSemanticDeliveryPayloadSchemaZ, TerminalSemanticHistoryPayloadSchemaZ;
 var init_terminal_delivery = __esm({
   "packages/contracts/src/terminal-delivery.ts"() {
     "use strict";
@@ -7431,6 +7431,8 @@ var init_terminal_delivery = __esm({
     TERMINAL_DELIVERY_PROTOCOL_VERSION = /* @__PURE__ */ (() => 1)();
     TERMINAL_DELIVERY_PARTIAL_HISTORY_CAPABILITY_VERSION = /* @__PURE__ */ (() => 122)();
     TERMINAL_DELIVERY_HISTORY_TAIL_ROWS = /* @__PURE__ */ (() => 200)();
+    TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION = /* @__PURE__ */ (() => 124)();
+    TERMINAL_DELIVERY_MAX_PIPELINED = /* @__PURE__ */ (() => 3)();
     TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS = /* @__PURE__ */ (() => 2e3)();
     TERMINAL_DELIVERY_MAX_OFFERED_VERSIONS = /* @__PURE__ */ (() => 16)();
     TERMINAL_DELIVERY_CHUNK_BYTES = /* @__PURE__ */ (() => 256 * 1024)();
@@ -12379,6 +12381,10 @@ function appThemeOverrideProvenance(theme, status2, glyphs) {
   }
   return legacyThemeOverrideProvenance(explicit);
 }
+function systemSide(value, appearance) {
+  const preset = findVisualThemePreset(value);
+  return preset?.appearance === appearance ? { [appearance]: preset.id } : {};
+}
 function parseAppConfig(input) {
   const D = DEFAULT_APP_CONFIG;
   const root = asObject(input);
@@ -12416,6 +12422,8 @@ function parseAppConfig(input) {
         findVisualThemePreset(theme.preset)?.appearance ?? D.theme.mode
       ),
       ...findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {},
+      ...systemSide(theme.light, "light"),
+      ...systemSide(theme.dark, "dark"),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
       fg: pickString(theme.fg, D.theme.fg),
@@ -15508,7 +15516,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.26",
+      version: "2.9.27",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -43304,15 +43312,35 @@ function createNativeTmuxSessionOpener(options) {
   const open5 = async (liveSessionId, observed) => {
     assertOpen();
     const records = await options.run([
-      "list-sessions",
+      "list-panes",
+      "-a",
       "-F",
-      "#{pid}	#{session_id}	#{session_created}	#{session_name}"
+      `#{pid}	#{session_id}	#{session_created}	#{${ADOPTED_OPTION2}}	#{${SEMANTIC_WINDOW_OPTION2}}	#{${SEMANTIC_PANE_OPTION3}}	#{session_name}`
     ]);
-    const matches = records.replace(/\n+$/u, "").split("\n").map((line) => line.split("	")).filter(
-      ([pid, id2, created2, name2]) => pid && /^\d+$/.test(pid) && id2 && /^\$\d+$/.test(id2) && created2 && /^\d+$/.test(created2) && name2 && isVisibleFleetSession(name2) && liveSessionIdForNativeIdentity(pid, id2, created2) === liveSessionId
+    const rows = records.replace(/\n+$/u, "").split("\n").map((line) => line.split("	")).filter((fields) => fields.length >= 7).map((fields) => ({
+      // A tab can only come from a window or pane stamp: such a row never
+      // takes the fast path below.
+      exact: fields.length === 7,
+      pid: fields[0],
+      id: fields[1],
+      created: fields[2],
+      adopted: fields[3],
+      window: fields.slice(4, -2).join("	"),
+      pane: fields.at(-2),
+      name: fields.at(-1)
+    })).filter(
+      ({ pid, id: id2, created: created2, name: name2 }) => /^\d+$/.test(pid) && /^\$\d+$/.test(id2) && /^\d+$/.test(created2) && name2 && isVisibleFleetSession(name2) && liveSessionIdForNativeIdentity(pid, id2, created2) === liveSessionId
     );
-    if (matches.length !== 1) throw new Error("Selected live tmux session is no longer available");
-    const [, nativeSessionId, created, name] = matches[0];
+    if (new Set(rows.map((row) => row.id)).size !== 1)
+      throw new Error("Selected live tmux session is no longer available");
+    const { id: nativeSessionId, created, name } = rows[0];
+    const aliases = options.registry.list().filter((entry) => entry.sessionName === name);
+    if (!observed && aliases.length === 1 && !options.registry.isVolatile(aliases[0].name) && rows.every(
+      (row) => row.exact && row.adopted === "1" && row.window.length > 0 && hasValidPaneStamp(row.pane)
+    )) {
+      assertOpen();
+      return { workspaceName: aliases[0].name, liveSessionId };
+    }
     const run = async (args) => {
       assertOpen();
       const sentinel = `tmux-session-stale.${randomUUID25()}`;
@@ -48992,7 +49020,7 @@ function compactSemanticWire(input) {
   return wire;
 }
 function encodeSemanticTerminalHistory(input, encoding) {
-  const payload = TerminalSemanticHistoryPayloadSchemaZ.parse(input);
+  const payload = HistoryEncodingPayloadSchema.parse(input);
   if (encoding === "semantic-v1") {
     const bytes = UTF8_ENCODER2.encode(canonicalJson(payload));
     assertRepresentationSize(bytes);
@@ -49692,7 +49720,7 @@ function encodeTerminalProjectionMetadataTuple(value) {
     compactBootstrap(value.bootstrap)
   ];
 }
-var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_EXPANSION_RATIO, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, validatedOwnedEncodingRows, CompactCellSliceSchema, trustedBlankCellsValidated, CompactOwnedCellSchema, CompactOwnedCellSliceSchema, CompactOwnedEncodingRowSchema, CompactEncodingRowSchema, CompactPatchRowFailure, StrictCompactPatchRowSchema, CompactPatchEncodingRowSchema, CompactPatchEncodingPayloadSchema, CompactEncodingPayloadSchema, TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS, CompactSeedHeaderSchema, CompactSeedMetadataSchema, CompactRowHeaderSchema, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
+var TerminalDeliveryStateTooLargeError, COMPACT_SEMANTIC_KIND, COMPACT_MAX_DIMENSION, COMPACT_MAX_ROWS, COMPACT_MAX_RUNS, COMPACT_MAX_EXPANDED_CELLS, COMPACT_MAX_EXPANSION_RATIO, COMPACT_MAX_PLACEMENTS, COMPACT_MAX_STRING_BYTES, UTF8_ENCODER2, COMPACT_DEFAULT_COLOR, validatedOwnedEncodingRows, CompactCellSliceSchema, trustedBlankCellsValidated, CompactOwnedCellSchema, CompactOwnedCellSliceSchema, CompactOwnedEncodingRowSchema, CompactEncodingRowSchema, CompactPatchRowFailure, StrictCompactPatchRowSchema, CompactPatchEncodingRowSchema, CompactPatchEncodingPayloadSchema, CompactEncodingPayloadSchema, HistoryEncodingPayloadSchema, TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS, CompactSeedHeaderSchema, CompactSeedMetadataSchema, CompactRowHeaderSchema, COOPERATIVE_JSON_WORK_CHARS, COOPERATIVE_JSON_MAX_STRING_CHARS, TerminalDeliveryRepresentationHasher;
 var init_terminal_delivery2 = __esm({
   "packages/core/src/terminal-delivery.ts"() {
     "use strict";
@@ -49805,6 +49833,9 @@ var init_terminal_delivery2 = __esm({
       TerminalSemanticDeliveryPayloadSchemaZ.options[1],
       TerminalSemanticDeliveryPayloadSchemaZ.options[2]
     ]);
+    HistoryEncodingPayloadSchema = TerminalSemanticHistoryPayloadSchemaZ.extend({
+      rows: z111.array(CompactPatchEncodingRowSchema).min(1).max(TERMINAL_DELIVERY_HISTORY_CHUNK_MAX_ROWS)
+    });
     TERMINAL_COMPACT_COOPERATIVE_SEED_CELLS = 8192;
     CompactSeedHeaderSchema = /* @__PURE__ */ TerminalSemanticDeliveryPayloadSchemaZ.options[0].omit({ snapshot: true });
     CompactSeedMetadataSchema = /* @__PURE__ */ TerminalReplicaSnapshotSchemaZ.omit({
@@ -66430,8 +66461,14 @@ var init_terminal_delivery_hub = __esm({
             historyUnloadedDigest: TERMINAL_HISTORY_EMPTY_DIGEST,
             historyLoadedRows: 0,
             pendingHistoryRows: null,
+            historyBytesPerRow: null,
             revisionSinceHistoryRequest: false,
             inFlight: null,
+            pipelining: offer.protocolVersions.includes(
+              TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION
+            ),
+            pipelined: [],
+            droppedTransactions: /* @__PURE__ */ new Set(),
             latestRevision: pane.latest?.update.revision ?? null,
             encoding: null,
             scheduled: false,
@@ -66603,7 +66640,7 @@ var init_terminal_delivery_hub = __esm({
           ),
           maxQueueDepth: this.#maxQueueDepth,
           inFlightBytes: [...this.#clients.values()].reduce(
-            (sum, client) => sum + (client.inFlight?.envelope.representationBytes ?? 0),
+            (sum, client) => sum + this.#unackedBytes(client),
             0
           )
         });
@@ -66643,6 +66680,7 @@ var init_terminal_delivery_hub = __esm({
           this.#cancelEncoding(client);
           client.outgoing.length = 0;
           client.inFlight = null;
+          client.pipelined.length = 0;
           client.budgetHeld = false;
           logDeliveryFault(client, "source-closed", "source-restarted");
           this.#enqueue(client, {
@@ -66937,7 +66975,7 @@ var init_terminal_delivery_hub = __esm({
         let oldest = now;
         for (const other of this.#clients.values())
           if (other !== client && other.clientId === client.clientId && other.inFlight) {
-            bytes += other.inFlight.envelope.representationBytes;
+            bytes += this.#unackedBytes(other);
             oldest = Math.min(oldest, other.inFlight.sentAt);
           }
         return bytes >= TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES && now - oldest >= this.#congestedMs;
@@ -66954,8 +66992,78 @@ var init_terminal_delivery_hub = __esm({
           this.#schedule(other);
         }
       }
+      /** Bytes the client has not acknowledged: every flight, pipelined ones included. */
+      #unackedBytes(client) {
+        let bytes = client.inFlight?.envelope.representationBytes ?? 0;
+        for (const flight of client.pipelined) bytes += flight.envelope.representationBytes;
+        return bytes;
+      }
+      /** The revision the client holds once every flight applies (its ACKed baseline if none). */
+      #sentRevision(client) {
+        const newest = client.pipelined.at(-1) ?? client.inFlight;
+        return newest?.envelope.type === "terminal.delivery" && newest.envelope.frame !== "history" ? newest.envelope.canonicalRevision : client.baselineRevision;
+      }
+      /**
+       * Whether another delivery may go out behind the unacknowledged ones. Only
+       * for a client that offers 124, only a visible pane, only behind canonical patches whose chunks have all been
+       * handed to the socket (a client takes one envelope's chunks at a time), and
+       * within TERMINAL_DELIVERY_MAX_PIPELINED and the connection's unacknowledged
+       * byte budget. Seeds, projections, history frames and history requests keep
+       * one delivery in flight.
+       */
+      #canPipeline(client) {
+        if (!client.pipelining || !client.inFlight || client.pipelined.length + 1 >= TERMINAL_DELIVERY_MAX_PIPELINED || client.visibility !== "visible" || client.reseedRequired || client.materializeRequested || client.pendingHistoryRows !== null || client.encoding || client.negotiated.encoding !== "semantic-v1" && client.negotiated.encoding !== "semantic-compact-v1" && client.negotiated.encoding !== "semantic-binary-v1")
+          return false;
+        for (const flight of [client.inFlight, ...client.pipelined])
+          if (flight.envelope.type !== "terminal.delivery" || flight.projection || flight.envelope.frame !== "patch" || !flight.envelope.canonicalEquivalent || flight.nextChunk < flight.envelope.chunkCount)
+            return false;
+        return this.#unackedBytes(client) < TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES;
+      }
+      /**
+       * The client as it will be once every flight applies: what its ACKs would
+       * set (see #ack). Representations for a pipelined patch are based on it.
+       */
+      #pipelineBase(client) {
+        const newest = client.pipelined.at(-1) ?? client.inFlight;
+        const rows = newest.historyRows;
+        return {
+          ...client,
+          baselineRevision: newest.envelope.canonicalRevision,
+          baselineHash: newest.envelope.canonicalStateHash,
+          projectionBaseline: null,
+          lastProjectionReceipt: null,
+          reseedRequired: false,
+          ...rows ? {
+            historyUnloadedRows: rows.unloaded,
+            historyUnloadedDigest: rows.digest,
+            historyLoadedRows: rows.loaded
+          } : {}
+        };
+      }
+      /** A patch on `base`'s projected state, or null when only a seed (or an encoding job) would do. */
+      #pipelinedRepresentation(base2, pane, target) {
+        if (target.update.type !== "terminal.patch" || target.update.revision <= base2.baselineRevision || pane.revisions.get(base2.baselineRevision)?.update.incarnation !== target.update.incarnation)
+          return null;
+        const reseeds = this.#reseeds;
+        try {
+          const representation = this.#representation(base2, pane, target);
+          if (representation.frame === "patch" && representation.canonicalEquivalent && !representation.projection)
+            return representation;
+        } catch (error) {
+          if (!(error instanceof DeferredSeedEncoding || error instanceof DeferredProjectionEncoding))
+            throw error;
+        }
+        this.#reseeds = reseeds;
+        return null;
+      }
+      /** Flights behind a NACKed or faulted one: the client gets a reseed; their feedback is inert. */
+      #dropPipelined(client) {
+        for (const flight of client.pipelined)
+          client.droppedTransactions.add(flight.envelope.transactionId);
+        client.pipelined.length = 0;
+      }
       #schedule(client) {
-        if (client.closed || client.captureUnavailable || client.inFlight || client.encoding || (client.latestRevision === null || client.latestRevision === client.baselineRevision) && client.pendingHistoryRows === null || client.visibility === "hidden" || client.visibility === "frozen")
+        if (client.closed || client.captureUnavailable || client.inFlight && !this.#canPipeline(client) || client.encoding || (client.latestRevision === null || client.latestRevision === this.#sentRevision(client)) && client.pendingHistoryRows === null || client.visibility === "hidden" || client.visibility === "frozen")
           return;
         if (client.visibility === "background") {
           if (client.backgroundTimer) return;
@@ -66970,7 +67078,7 @@ var init_terminal_delivery_hub = __esm({
         client.scheduled = true;
         this.#scheduler.microtask(() => {
           client.scheduled = false;
-          if (!client.closed && client.visibility === "visible" && !client.inFlight)
+          if (!client.closed && client.visibility === "visible" && (!client.inFlight || this.#canPipeline(client)))
             this.#deliver(client);
         });
       }
@@ -66982,7 +67090,8 @@ var init_terminal_delivery_hub = __esm({
           return;
         }
         const target = completed?.target ?? pane?.latest;
-        if (!pane || !target || client.closed || client.captureUnavailable || client.inFlight || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
+        const pipelining = !completed && client.inFlight !== null;
+        if (!pane || !target || client.closed || client.captureUnavailable || client.inFlight && (completed || !this.#canPipeline(client)) || client.encoding || client.visibility === "hidden" || client.visibility === "frozen" || !completed && target.update.revision !== client.latestRevision)
           return;
         if (!completed && this.#holdForBudget(client)) return;
         const traceStarted = completed?.traceStarted ?? (this.#observability.enabled ? this.#observability.nowMicros() : 0);
@@ -66992,7 +67101,12 @@ var init_terminal_delivery_hub = __esm({
         let deliveryEnvelope = null;
         let deliveryOrdinal = null;
         try {
-          const representation = this.#representation(client, pane, target, completed?.outcome);
+          const base2 = pipelining ? this.#pipelineBase(client) : client;
+          const representation = pipelining ? this.#pipelinedRepresentation(base2, pane, target) : this.#representation(client, pane, target, completed?.outcome);
+          if (!representation) {
+            deferred = true;
+            return;
+          }
           encodedRepresentation = representation;
           const transactionId = this.#scheduler.createId();
           const chunkCount = Math.max(1, Math.ceil(representation.bytes.byteLength / (256 * 1024)));
@@ -67009,7 +67123,7 @@ var init_terminal_delivery_hub = __esm({
             protocolVersion: 1,
             encoding: representation.encoding ?? client.negotiated.encoding,
             frame: representation.frame,
-            baseRevision: representation.projection ? representation.projectionBaseRevision : representation.frame === "seed" ? null : Math.max(0, client.baselineRevision),
+            baseRevision: representation.projection ? representation.projectionBaseRevision : representation.frame === "seed" ? null : Math.max(0, base2.baselineRevision),
             canonicalRevision: target.update.revision,
             canonicalStateHash: target.update.stateHash,
             representationHash: representation.representationHash ?? hashTerminalDeliveryRepresentation(representation.bytes),
@@ -67024,7 +67138,7 @@ var init_terminal_delivery_hub = __esm({
           deliveryOrdinal = ++this.#deliveryOrdinal;
           registerTerminalDeliveryObservationOrdinal(envelope, deliveryOrdinal);
           if (client.pendingHistoryRows !== null) client.revisionSinceHistoryRequest = true;
-          client.inFlight = {
+          const flight = {
             envelope,
             projection: representation.projection ?? null,
             historyRows: representation.historyRows ?? null,
@@ -67033,6 +67147,8 @@ var init_terminal_delivery_hub = __esm({
             nextChunk: 0,
             sentAt: this.#scheduler.nowMs()
           };
+          if (pipelining) client.pipelined.push(flight);
+          else client.inFlight = flight;
           this.#enqueue(client, envelope);
           this.#recordDeliveryStatus(client, pane);
           if (target.trace?.traceId === pane.pendingDeliveryTrace?.traceId)
@@ -67533,6 +67649,7 @@ var init_terminal_delivery_hub = __esm({
       #ack(client, input) {
         const ack = TerminalDeliveryAckSchemaZ.parse(input);
         const flight = client.inFlight;
+        if (client.droppedTransactions.has(ack.transactionId)) return;
         if (!flight) {
           if (client.lastAck && JSON.stringify(client.lastAck) === JSON.stringify(ack)) return;
           const closed = client.sourceClosedFlight;
@@ -67565,7 +67682,8 @@ var init_terminal_delivery_hub = __esm({
           client.historyLoadedRows = flight.historyRows.loaded;
           this.#pushHistoryTail(client);
         }
-        client.inFlight = null;
+        client.inFlight = client.pipelined.shift() ?? null;
+        client.droppedTransactions.clear();
         this.#releaseBudget(client.clientId);
         client.lastAck = ack;
         if (client.latestRevision === ack.canonicalRevision) client.latestRevision = null;
@@ -67735,15 +67853,27 @@ var init_terminal_delivery_hub = __esm({
         const encoding = client.negotiated.encoding;
         const unloadedRows = client.historyUnloadedRows;
         try {
-          let count = Math.max(
+          const limit = Math.max(1, Math.min(asked, unloadedRows));
+          const encode = (count2) => {
+            const rows2 = full.history.slice(unloadedRows - count2, unloadedRows);
+            const bytes2 = encodeSemanticTerminalHistory(
+              { frame: "history", revision: record2.update.revision, rows: rows2 },
+              encoding
+            );
+            return { count: count2, rows: rows2, bytes: bytes2 };
+          };
+          const fit = (bytesPerRow) => Math.max(
             1,
-            Math.min(asked, unloadedRows, Math.floor(HISTORY_FRAME_MAX_BYTES / Math.max(1, full.cols)))
+            Math.min(limit, Math.floor(HISTORY_FRAME_MAX_BYTES * 0.95 / Math.max(1, bytesPerRow)))
           );
-          let rows = full.history.slice(unloadedRows - count, unloadedRows);
-          let bytes = encodeSemanticTerminalHistory(
-            { frame: "history", revision: record2.update.revision, rows },
-            encoding
-          );
+          let frame = client.historyBytesPerRow === null ? encode(Math.min(limit, 32)) : null;
+          const estimate = client.historyBytesPerRow ?? frame.bytes.byteLength / frame.count;
+          if (!frame || fit(estimate) !== frame.count) frame = encode(fit(estimate));
+          if (frame.count < limit && frame.bytes.byteLength < HISTORY_FRAME_MAX_BYTES * 0.6) {
+            const grown = fit(frame.bytes.byteLength / frame.count);
+            if (grown > frame.count) frame = encode(grown);
+          }
+          let { count, rows, bytes } = frame;
           while (bytes.byteLength > HISTORY_FRAME_MAX_BYTES && count > 1) {
             count = Math.max(
               1,
@@ -67752,12 +67882,9 @@ var init_terminal_delivery_hub = __esm({
                 Math.floor(count * HISTORY_FRAME_MAX_BYTES * 0.9 / bytes.byteLength)
               )
             );
-            rows = full.history.slice(unloadedRows - count, unloadedRows);
-            bytes = encodeSemanticTerminalHistory(
-              { frame: "history", revision: record2.update.revision, rows },
-              encoding
-            );
+            ({ rows, bytes } = encode(count));
           }
+          client.historyBytesPerRow = bytes.byteLength / count;
           const chunk = {
             rows,
             unloaded: popTerminalHistoryCommitmentSuffix(
@@ -67885,6 +68012,7 @@ var init_terminal_delivery_hub = __esm({
         const closed = client.sourceClosedFlight;
         if (client.captureUnavailable && !client.inFlight && closed && nack.workspaceName === closed.workspaceName && nack.semanticPaneId === closed.semanticPaneId && nack.generation === closed.generation && nack.incarnation === closed.incarnation && nack.deliveryNonce === closed.deliveryNonce && nack.transactionId === closed.transactionId)
           return;
+        if (nack.transactionId !== null && client.droppedTransactions.has(nack.transactionId)) return;
         const envelope = client.inFlight?.envelope;
         if (!envelope || nack.workspaceName !== envelope.workspaceName || nack.semanticPaneId !== envelope.semanticPaneId || nack.generation !== envelope.generation || nack.incarnation !== envelope.incarnation || nack.deliveryNonce !== envelope.deliveryNonce || nack.transactionId !== envelope.transactionId) {
           this.#fault(client, "protocol-violation", "NACK does not identify the in-flight delivery");
@@ -67893,6 +68021,7 @@ var init_terminal_delivery_hub = __esm({
         this.#nacks += 1;
         client.reseedRequired = true;
         client.inFlight = null;
+        this.#dropPipelined(client);
         this.#releaseBudget(client.clientId);
         this.#pruneCanonicalRevisions(client.paneId);
         this.#schedule(client);
@@ -67939,6 +68068,7 @@ var init_terminal_delivery_hub = __esm({
         client.outgoing.length = 0;
         if (reason === "source-closed") client.sourceClosedFlight = client.inFlight?.envelope ?? null;
         client.inFlight = null;
+        this.#dropPipelined(client);
         this.#releaseBudget(client.clientId);
         const fault = {
           type: "terminal.delivery.fault",
@@ -67970,10 +68100,12 @@ var init_terminal_delivery_hub = __esm({
             while (!client.closed) {
               const queued = client.outgoing.shift();
               let next = queued?.();
-              const flight = client.inFlight;
+              const flight = client.pipelined.at(-1) ?? client.inFlight;
               if (!next && flight && flight.nextChunk < flight.envelope.chunkCount) {
                 const index = flight.nextChunk;
                 flight.nextChunk += 1;
+                if (flight.nextChunk === flight.envelope.chunkCount && client.latestRevision !== null)
+                  this.#schedule(client);
                 next = {
                   type: "terminal.delivery.chunk",
                   transactionId: flight.envelope.transactionId,
@@ -68149,8 +68281,9 @@ var init_terminal_delivery_hub = __esm({
             reachable.add(client.baselineRevision);
           const encoding = client.encoding?.target.update;
           if (encoding?.incarnation === latest.incarnation) reachable.add(encoding.revision);
-          const flight = client.inFlight?.envelope;
-          if (flight?.incarnation === latest.incarnation) reachable.add(flight.canonicalRevision);
+          for (const flight of [client.inFlight, ...client.pipelined])
+            if (flight?.envelope.incarnation === latest.incarnation)
+              reachable.add(flight.envelope.canonicalRevision);
         }
         for (const revision of pane.revisions.keys())
           if (!reachable.has(revision)) {
@@ -68165,7 +68298,9 @@ var init_terminal_delivery_hub = __esm({
         for (const [key2, cached2] of this.#cache) {
           if (cached2.cachePaneId !== paneId) continue;
           const reachable = clients.some(
-            (candidate) => cached2.cacheBaseRevision === candidate.baselineRevision || Number.isSafeInteger(cached2.cacheTargetRevision) && cached2.cacheTargetRevision > candidate.baselineRevision || cached2.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision
+            (candidate) => cached2.cacheBaseRevision === candidate.baselineRevision || Number.isSafeInteger(cached2.cacheTargetRevision) && cached2.cacheTargetRevision > candidate.baselineRevision || cached2.cacheTargetRevision === candidate.inFlight?.envelope.canonicalRevision || candidate.pipelined.some(
+              (flight) => cached2.cacheTargetRevision === flight.envelope.canonicalRevision
+            )
           );
           if (reachable) continue;
           this.#cache.delete(key2);
@@ -77679,6 +77814,9 @@ var init_pane_stream_websocket = __esm({
       cancelBeforeBind() {
         this.close(1008, "upgrade-rejected");
       }
+      redeemFromUpgrade(frame) {
+        this.#onMessage(frame, false);
+      }
       promote() {
         if (!this.#open) return;
         this.#promoted = true;
@@ -82262,6 +82400,15 @@ function rawHeaderValues(request3, expectedName) {
   }
   return values2;
 }
+function upgradeRedeemFrame(request3) {
+  const values2 = rawHeaderValues(request3, PANE_STREAM_REDEEM_HEADER);
+  if (values2.length === 0) return null;
+  const value = values2[0];
+  if (values2.length > 1 || value.length === 0 || value.length > Math.ceil(PANE_STREAM_MAX_REDEMPTION_BYTES * 4 / 3) || !/^[A-Za-z0-9_-]+$/u.test(value))
+    return "invalid";
+  const frame = Buffer.from(value, "base64url");
+  return frame.byteLength === 0 || frame.byteLength > PANE_STREAM_MAX_REDEMPTION_BYTES ? "invalid" : frame;
+}
 function rejectUpgrade(socket, status2) {
   const phrase = status2 === 403 ? "Forbidden" : status2 === 404 ? "Not Found" : status2 === 410 ? "Gone" : status2 === 426 ? "Upgrade Required" : "Service Unavailable";
   try {
@@ -82285,7 +82432,11 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
       return offered.size === 1 && offered.has(PANE_STREAM_WEBSOCKET_SUBPROTOCOL) ? PANE_STREAM_WEBSOCKET_SUBPROTOCOL : false;
     }
   });
-  wss.on("headers", (headers2) => heartbeat.advertise(headers2));
+  const redeemed = /* @__PURE__ */ new WeakSet();
+  wss.on("headers", (headers2, request3) => {
+    heartbeat.advertise(headers2);
+    if (redeemed.has(request3)) headers2.push("X-Tmux-Ide-Redeem: accepted");
+  });
   const upgrade = (request3, socket, head3) => {
     const rawPath = request3.url ?? "";
     const pathname = rawPath.split("?", 1)[0] ?? "";
@@ -82320,6 +82471,11 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
       rejectUpgrade(socket, 403);
       return;
     }
+    const redeemFrame = upgradeRedeemFrame(request3);
+    if (redeemFrame === "invalid") {
+      rejectUpgrade(socket, 403);
+      return;
+    }
     if (!isCurrent()) {
       rejectUpgrade(socket, 410);
       return;
@@ -82338,12 +82494,14 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
     const cancelUnbound = () => decision.admission.cancelBeforeBind();
     socket.once("close", cancelUnbound);
     socket.once("error", cancelUnbound);
+    if (redeemFrame) redeemed.add(request3);
     try {
       wss.handleUpgrade(request3, socket, head3, (ws) => {
         socket.off("close", cancelUnbound);
         socket.off("error", cancelUnbound);
         heartbeat.watch(ws, `pane-stream ${redemptionPath}`);
         decision.admission.bind(ws);
+        if (redeemFrame) decision.admission.redeemFromUpgrade(redeemFrame);
       });
     } catch {
       socket.off("close", cancelUnbound);
@@ -82361,12 +82519,14 @@ function attachPaneStreamWebSocket(server, coordinator, redemptionPath = PANE_ST
     }
   };
 }
+var PANE_STREAM_REDEEM_HEADER;
 var init_pane_stream_upgrade = __esm({
   "packages/daemon/src/server/pane-stream-upgrade.ts"() {
     "use strict";
     init_src2();
     init_websocket_heartbeat2();
     init_pane_stream_websocket();
+    PANE_STREAM_REDEEM_HEADER = "x-tmux-ide-redeem";
   }
 });
 
@@ -93036,6 +93196,41 @@ var init_pane_stream_issue = __esm({
   }
 });
 
+// packages/daemon/src/command-center/tmux-server-attach.ts
+import { z as z136 } from "zod";
+function chooseAttachSelection(inventory, preferredPane, maxPanes) {
+  const panes = inventory.semanticPaneIds;
+  if (panes.length === 0) return null;
+  let semanticWindowId = null;
+  let chosen = panes;
+  if (panes.length > maxPanes) {
+    const fits = (window3) => window3 !== void 0 && window3.semanticPaneIds.length <= maxPanes;
+    const active3 = inventory.windows.find((window3) => window3.active);
+    const wanted = (preferredPane !== null ? inventory.windows.find((window3) => window3.semanticPaneIds.includes(preferredPane)) : void 0) ?? active3;
+    const window2 = [wanted, active3].find(fits) ?? inventory.windows.find(fits);
+    if (!window2) return null;
+    semanticWindowId = window2.semanticWindowId;
+    chosen = window2.semanticPaneIds;
+  }
+  const selectedPane = preferredPane !== null && chosen.includes(preferredPane) ? preferredPane : chosen[0];
+  return { semanticWindowId, panes: chosen, selectedPane };
+}
+var TmuxServerAttachRequestSchemaZ;
+var init_tmux_server_attach = __esm({
+  "packages/daemon/src/command-center/tmux-server-attach.ts"() {
+    "use strict";
+    TmuxServerAttachRequestSchemaZ = z136.object({
+      version: z136.literal(1),
+      preferredPane: z136.string().min(1).max(128).nullable(),
+      maxPanes: z136.number().int().min(1).max(256),
+      issue: z136.object({
+        expectedDaemonInstanceId: z136.uuid(),
+        stream: z136.record(z136.string(), z136.unknown())
+      }).catchall(z136.unknown())
+    }).strict();
+  }
+});
+
 // packages/daemon/src/command-center/resources/terminal-runtime-inventory.ts
 function projectTerminalRuntimeInventory(session, resourceRevision) {
   const shell = projectApplicationShellResource(session);
@@ -93102,7 +93297,7 @@ var init_terminal_runtime_inventory2 = __esm({
 // packages/daemon/src/command-center/tmux-servers.ts
 import { Hono as Hono2 } from "hono";
 import { streamSSE as streamSSE2 } from "hono/streaming";
-import { z as z136 } from "zod";
+import { z as z137 } from "zod";
 async function boundedJson2(request3, limit = 64 * 1024) {
   if (!request3.body) throw new TypeError("Missing body");
   const reader = request3.body.getReader();
@@ -93142,7 +93337,7 @@ function failure(c, error) {
     return c.json({ error: { code: "harness_unavailable" } }, 409);
   if (error instanceof WorkspaceMultiplexerError)
     return c.json({ error: { code: error.code } }, 409);
-  if (error instanceof z136.ZodError || error instanceof SyntaxError || error instanceof TypeError)
+  if (error instanceof z137.ZodError || error instanceof SyntaxError || error instanceof TypeError)
     return c.json({ error: { code: "invalid-request" } }, 400);
   const code2 = error?.code;
   logger.warn("tmux-server-routes", "request failed as server-unavailable", {
@@ -93282,9 +93477,9 @@ function mountTmuxServerRoutes(app, options) {
     `${scoped}/sessions/create`,
     route(async (c) => {
       const server = scope2(c);
-      const request3 = z136.object({
-        operationId: z136.uuid(),
-        expectedDaemonInstanceId: z136.uuid(),
+      const request3 = z137.object({
+        operationId: z137.uuid(),
+        expectedDaemonInstanceId: z137.uuid(),
         intent: WorkspaceSessionCreateArgumentsSchemaZ
       }).strict().parse(await boundedJson2(c.req.raw));
       if (request3.expectedDaemonInstanceId !== server.generation || request3.intent.expectedDaemonInstanceId && request3.intent.expectedDaemonInstanceId !== server.generation)
@@ -93328,6 +93523,77 @@ function mountTmuxServerRoutes(app, options) {
         (owner) => owner.openSession(workspaceSchema.parse(c.req.param("liveSessionId")))
       );
       return c.json({ version: 1, server, ...result2 });
+    })
+  );
+  app.post(
+    `${scoped}/sessions/:liveSessionId/attach`,
+    route(async (c) => {
+      const server = scope2(c);
+      const liveSessionId = workspaceSchema.parse(c.req.param("liveSessionId"));
+      const request3 = TmuxServerAttachRequestSchemaZ.parse(await boundedJson2(c.req.raw));
+      if (request3.issue.expectedDaemonInstanceId !== server.generation || c.req.header("X-Tmux-Ide-Expected-Daemon-Instance-Id") !== server.generation)
+        throw new TmuxServerScopeError("stale-generation");
+      const result2 = await options.owners.withOwner(server, async (owner) => {
+        const opened = await owner.openSession(liveSessionId);
+        const workspace = owner.workspaceRegistry.get(opened.workspaceName);
+        if (!workspace || opened.liveSessionId !== liveSessionId)
+          throw new TmuxServerScopeError("stale-generation");
+        const snapshot3 = await owner.terminalInventoryRuntime.discoverTerminalRuntimeSession(
+          workspace.sessionName,
+          c.req.raw.signal
+        );
+        if (!snapshot3) return null;
+        const inventory = projectTerminalRuntimeInventoryV2(snapshot3, 0);
+        const selection = chooseAttachSelection(inventory, request3.preferredPane, request3.maxPanes);
+        if (!selection)
+          return { kind: "attached", opened, inventory, selection, issue: null };
+        const stream = { ...request3.issue.stream };
+        delete stream.semanticWindowId;
+        const body = {
+          ...request3.issue,
+          stream: {
+            ...stream,
+            workspaceName: opened.workspaceName,
+            panes: selection.panes,
+            ...selection.semanticWindowId ? { semanticWindowId: selection.semanticWindowId } : {}
+          }
+        };
+        const issueApp = new Hono2();
+        mountPaneStreamIssueRoute(issueApp, {
+          daemonInstanceId: server.generation,
+          ownerToken: options.ownerToken,
+          workspaceRegistry: owner.workspaceRegistry,
+          backend: owner.paneStreamRuntime.coordinator
+        });
+        const url = new URL(c.req.url);
+        url.pathname = PANE_STREAM_ISSUE_PATH;
+        url.search = "";
+        const headers2 = new Headers(c.req.raw.headers);
+        headers2.delete("Content-Length");
+        headers2.set("Content-Type", "application/json");
+        const issued = await issueApp.request(
+          new Request(url, { method: "POST", headers: headers2, body: JSON.stringify(body) })
+        );
+        if (issued.status !== 200) return { kind: "refused", refused: issued };
+        return {
+          kind: "attached",
+          opened,
+          inventory,
+          selection,
+          issue: await issued.json()
+        };
+      });
+      if (!result2) return c.json({ error: { code: "workspace-not-found" } }, 404);
+      if (result2.kind === "refused") return result2.refused;
+      return c.json({
+        version: 1,
+        server,
+        workspaceName: result2.opened.workspaceName,
+        liveSessionId,
+        inventory: result2.inventory,
+        selection: result2.selection,
+        issue: result2.issue
+      });
     })
   );
   app.get(
@@ -93674,10 +93940,11 @@ var init_tmux_servers = __esm({
     init_owner_authority();
     init_log();
     init_pane_stream_issue();
+    init_tmux_server_attach();
     init_terminal_runtime_inventory2();
     SESSIONS_RESOURCE_FAVICON_BUDGET_BYTES = 512 * 1024;
     registrationSchema = TmuxServerRegistrationSchemaZ.omit({ serverId: true }).strict();
-    workspaceSchema = z136.string().min(1).max(160).refine((value) => !/[\0\r\n]/u.test(value));
+    workspaceSchema = z137.string().min(1).max(160).refine((value) => !/[\0\r\n]/u.test(value));
   }
 });
 
@@ -93952,7 +94219,7 @@ var init_saved_machines3 = __esm({
 
 // packages/daemon/src/command-center/resources/saved-machine-watch.ts
 import { createHash as createHash29 } from "node:crypto";
-import { z as z137 } from "zod";
+import { z as z138 } from "zod";
 function snapshot2(value) {
   const registry = SavedMachineRegistrySchema.parse(value);
   return {
@@ -94058,16 +94325,16 @@ var init_saved_machine_watch = __esm({
     init_owner_authority();
     SAVED_MACHINE_WATCH_WAIT_MS = 2e4;
     MAX_WATCHERS = 32;
-    Query = z137.strictObject({
-      expectedInstanceId: z137.uuid(),
-      after: z137.string().regex(/^[a-f0-9]{64}$/u).optional()
+    Query = z138.strictObject({
+      expectedInstanceId: z138.uuid(),
+      after: z138.string().regex(/^[a-f0-9]{64}$/u).optional()
     });
   }
 });
 
 // packages/daemon/src/command-center/resources/saved-machine-route.ts
 import { bodyLimit as bodyLimit2 } from "hono/body-limit";
-import { z as z138 } from "zod";
+import { z as z139 } from "zod";
 function mountSavedMachineRoute(app, options) {
   mountSavedMachineWatch(app, options);
   const authorize = ownerAuthorityGate(options.ownerToken, {
@@ -94150,12 +94417,12 @@ var init_saved_machine_route = __esm({
     init_saved_machines();
     init_saved_machines3();
     init_owner_authority();
-    Request2 = z138.strictObject({
-      expectedInstanceId: z138.uuid(),
+    Request2 = z139.strictObject({
+      expectedInstanceId: z139.uuid(),
       registry: SavedMachineRegistrySchema
     });
-    MutationRequest = z138.strictObject({
-      expectedInstanceId: z138.uuid(),
+    MutationRequest = z139.strictObject({
+      expectedInstanceId: z139.uuid(),
       change: SavedMachineMutationSchema
     });
   }
@@ -94332,74 +94599,74 @@ var init_semantic_multiplexer_actions = __esm({
 });
 
 // packages/daemon/src/command-center/schemas.ts
-import { z as z139 } from "zod";
+import { z as z140 } from "zod";
 var updateTaskSchema, createTaskSchema, savePlanSchema, savePlanContentSchema, sendCommandSchema, createMilestoneSchema, updateMilestoneSchema, updateAssertionSchema, triggerResearchSchema, launchSchema, stopSchema, skillNameRegex, createSkillSchema, updateSkillSchema;
 var init_schemas = __esm({
   "packages/daemon/src/command-center/schemas.ts"() {
     "use strict";
-    updateTaskSchema = z139.object({
-      status: z139.enum(["todo", "in-progress", "review", "done"]).optional(),
-      assignee: z139.string().optional(),
-      title: z139.string().optional(),
-      description: z139.string().optional(),
-      priority: z139.number().optional()
+    updateTaskSchema = z140.object({
+      status: z140.enum(["todo", "in-progress", "review", "done"]).optional(),
+      assignee: z140.string().optional(),
+      title: z140.string().optional(),
+      description: z140.string().optional(),
+      priority: z140.number().optional()
     });
-    createTaskSchema = z139.object({
-      title: z139.string().trim().min(1, "Title is required"),
-      description: z139.string().optional(),
-      priority: z139.number().optional(),
-      goal: z139.string().optional(),
-      tags: z139.array(z139.string()).optional()
+    createTaskSchema = z140.object({
+      title: z140.string().trim().min(1, "Title is required"),
+      description: z140.string().optional(),
+      priority: z140.number().optional(),
+      goal: z140.string().optional(),
+      tags: z140.array(z140.string()).optional()
     });
-    savePlanSchema = z139.object({
-      content: z139.string().max(1e6, "Plan content is too large")
+    savePlanSchema = z140.object({
+      content: z140.string().max(1e6, "Plan content is too large")
     });
-    savePlanContentSchema = z139.object({
-      content: z139.string().max(1e6, "Plan content is too large")
+    savePlanContentSchema = z140.object({
+      content: z140.string().max(1e6, "Plan content is too large")
     });
-    sendCommandSchema = z139.object({
-      target: z139.string().min(1, "Target pane is required"),
-      message: z139.string().min(1, "Message is required"),
-      noEnter: z139.boolean().optional()
+    sendCommandSchema = z140.object({
+      target: z140.string().min(1, "Target pane is required"),
+      message: z140.string().min(1, "Message is required"),
+      noEnter: z140.boolean().optional()
     });
-    createMilestoneSchema = z139.object({
-      title: z139.string().trim().min(1, "Title is required"),
-      sequence: z139.number().int().positive(),
-      description: z139.string().optional()
+    createMilestoneSchema = z140.object({
+      title: z140.string().trim().min(1, "Title is required"),
+      sequence: z140.number().int().positive(),
+      description: z140.string().optional()
     });
-    updateMilestoneSchema = z139.object({
-      status: z139.enum(["locked", "active", "done", "validating"]).optional(),
-      title: z139.string().optional(),
-      description: z139.string().optional()
+    updateMilestoneSchema = z140.object({
+      status: z140.enum(["locked", "active", "done", "validating"]).optional(),
+      title: z140.string().optional(),
+      description: z140.string().optional()
     });
-    updateAssertionSchema = z139.object({
-      status: z139.enum(["pending", "passing", "failing", "blocked"]),
-      evidence: z139.string().optional(),
-      verifiedBy: z139.string().optional()
+    updateAssertionSchema = z140.object({
+      status: z140.enum(["pending", "passing", "failing", "blocked"]),
+      evidence: z140.string().optional(),
+      verifiedBy: z140.string().optional()
     });
-    triggerResearchSchema = z139.object({
-      type: z139.string().trim().min(1, "Research type is required")
+    triggerResearchSchema = z140.object({
+      type: z140.string().trim().min(1, "Research type is required")
     });
-    launchSchema = z139.object({
-      attach: z139.boolean().optional()
+    launchSchema = z140.object({
+      attach: z140.boolean().optional()
     }).optional();
-    stopSchema = z139.object({}).optional();
+    stopSchema = z140.object({}).optional();
     skillNameRegex = /^[A-Za-z0-9._ -]+$/;
-    createSkillSchema = z139.object({
-      name: z139.string().trim().min(1, "Skill name is required").regex(
+    createSkillSchema = z140.object({
+      name: z140.string().trim().min(1, "Skill name is required").regex(
         skillNameRegex,
         "Skill name may only contain letters, digits, dot, dash, underscore, or space"
       ),
-      role: z139.string().trim().optional(),
-      description: z139.string().optional(),
-      specialties: z139.array(z139.string()).optional(),
-      body: z139.string().optional()
+      role: z140.string().trim().optional(),
+      description: z140.string().optional(),
+      specialties: z140.array(z140.string()).optional(),
+      body: z140.string().optional()
     });
-    updateSkillSchema = z139.object({
-      role: z139.string().trim().optional(),
-      description: z139.string().optional(),
-      specialties: z139.array(z139.string()).optional(),
-      body: z139.string().optional()
+    updateSkillSchema = z140.object({
+      role: z140.string().trim().optional(),
+      description: z140.string().optional(),
+      specialties: z140.array(z140.string()).optional(),
+      body: z140.string().optional()
     });
   }
 });
@@ -97613,64 +97880,64 @@ var init_project_init_runner = __esm({
 });
 
 // packages/daemon/src/schemas/inspect.ts
-import { z as z140 } from "zod";
+import { z as z141 } from "zod";
 var ProjectInspectDetectedSchemaZ, ProjectInspectSchemaZ, InspectFilesystemRequestSchemaZ, OnboardProjectRequestSchemaZ;
 var init_inspect = __esm({
   "packages/daemon/src/schemas/inspect.ts"() {
     "use strict";
-    ProjectInspectDetectedSchemaZ = z140.object({
+    ProjectInspectDetectedSchemaZ = z141.object({
       /** Detected package manager from lockfile, or `null`. */
-      packageManager: z140.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
+      packageManager: z141.enum(["pnpm", "npm", "yarn", "bun"]).nullable(),
       /** Detected frameworks (e.g. `["next", "convex"]`). Empty array when none. */
-      frameworks: z140.array(z140.string()),
+      frameworks: z141.array(z141.string()),
       /** Suggested dev command (e.g. `pnpm dev`). `null` if no dev script found. */
-      devCommand: z140.string().nullable(),
+      devCommand: z141.string().nullable(),
       /** Suggested test command (e.g. `pnpm test`). `null` if no test script found. */
-      testCommand: z140.string().nullable()
+      testCommand: z141.string().nullable()
     });
-    ProjectInspectSchemaZ = z140.object({
+    ProjectInspectSchemaZ = z141.object({
       /** Sanitized basename of the directory — safe to use as a tmux session name. */
-      name: z140.string(),
+      name: z141.string(),
       /** Absolute, canonical path to the directory. */
-      dir: z140.string(),
+      dir: z141.string(),
       /** Whether `<dir>/ide.yml` exists. Legacy compatibility fact. */
-      hasIdeYml: z140.boolean(),
+      hasIdeYml: z141.boolean(),
       /** Whether `.tmux-ide/workspace.yml` exists or wins discovery. */
-      hasWorkspaceConfig: z140.boolean().optional(),
+      hasWorkspaceConfig: z141.boolean().optional(),
       /** Generalized winning config kind. Added without replacing `hasIdeYml`. */
-      configKind: z140.enum(["workspace", "legacy", "none"]).optional(),
+      configKind: z141.enum(["workspace", "legacy", "none"]).optional(),
       /** Generalized winning config path. Added without replacing legacy path facts. */
-      configPath: z140.string().nullable().optional(),
+      configPath: z141.string().nullable().optional(),
       /** Legacy config path when an `ide.yml` is present. */
-      ideConfigPath: z140.string().nullable().optional(),
+      ideConfigPath: z141.string().nullable().optional(),
       /** Git remote origin URL, or `null` if not a git repo / no origin / probe failed. */
-      gitOrigin: z140.string().nullable(),
+      gitOrigin: z141.string().nullable(),
       /** Current git branch, or `null` if not a git repo / detached HEAD / probe failed. */
-      gitBranch: z140.string().nullable(),
+      gitBranch: z141.string().nullable(),
       /** Detected stack signals (reuses `tmux-ide detect` logic). */
       detected: ProjectInspectDetectedSchemaZ
     });
-    InspectFilesystemRequestSchemaZ = z140.object({
-      dir: z140.string().min(1)
+    InspectFilesystemRequestSchemaZ = z141.object({
+      dir: z141.string().min(1)
     });
-    OnboardProjectRequestSchemaZ = z140.object({
-      dir: z140.string().min(1),
+    OnboardProjectRequestSchemaZ = z141.object({
+      dir: z141.string().min(1),
       /** Optional override for the project name — defaults to inspect.name. */
-      name: z140.string().min(1).optional(),
+      name: z141.string().min(1).optional(),
       /** 1, 2, or 3 — how many Claude panes to scaffold in the top row. */
-      agents: z140.number().int().min(1).max(3),
+      agents: z141.number().int().min(1).max(3),
       /**
        * Optional per-agent pane titles. When provided, length must equal
        * `agents`; the server uses these as `title:` for the Claude panes
        * instead of the canonical `Lead`/`Teammate N`/`Claude N` defaults.
        */
-      agentNames: z140.array(z140.string().min(1)).optional(),
+      agentNames: z141.array(z141.string().min(1)).optional(),
       /** Dev server command (e.g. `pnpm dev`). Omit / null to skip the dev pane. */
-      devCommand: z140.string().min(1).nullable().optional(),
+      devCommand: z141.string().min(1).nullable().optional(),
       /** Test command (e.g. `pnpm test`). Currently informational; stored for later. */
-      testCommand: z140.string().min(1).nullable().optional(),
+      testCommand: z141.string().min(1).nullable().optional(),
       /** Lint command (e.g. `pnpm lint`). Currently informational; stored for later. */
-      lintCommand: z140.string().min(1).nullable().optional()
+      lintCommand: z141.string().min(1).nullable().optional()
     });
   }
 });
@@ -99488,7 +99755,7 @@ var init_application_shell_app_windows = __esm({
 
 // packages/daemon/src/command-center/plugin-routes.ts
 import { bodyLimit as bodyLimit3 } from "hono/body-limit";
-import { z as z141 } from "zod";
+import { z as z142 } from "zod";
 function ownerOnlyNonBrowserGuard(ownerToken) {
   const authorize = ownerAuthorityGate(ownerToken, {
     whenOwnerless: "unavailable",
@@ -99552,11 +99819,11 @@ var init_plugin_routes = __esm({
   "packages/daemon/src/command-center/plugin-routes.ts"() {
     "use strict";
     init_owner_authority();
-    ReloadRequestZ = z141.strictObject({ name: z141.string().min(1).max(64).optional() });
-    RunRequestZ = z141.strictObject({
-      code: z141.string().max(1024 * 1024),
-      chunkName: z141.string().min(1).max(200).regex(/^[=@][^\0\n]*$/u).optional(),
-      budgetMs: z141.number().int().min(10).max(6e5).optional()
+    ReloadRequestZ = z142.strictObject({ name: z142.string().min(1).max(64).optional() });
+    RunRequestZ = z142.strictObject({
+      code: z142.string().max(1024 * 1024),
+      chunkName: z142.string().min(1).max(200).regex(/^[=@][^\0\n]*$/u).optional(),
+      budgetMs: z142.number().int().min(10).max(6e5).optional()
     });
   }
 });
@@ -100846,6 +101113,29 @@ var init_workspace_missions_route = __esm({
   }
 });
 
+// packages/daemon/src/command-center/owner-keep-alive.ts
+function ownerKeepAlive(ownerToken, timeoutMs = OWNER_KEEP_ALIVE_MS) {
+  return async (c, next) => {
+    const bindings = c.env;
+    const outgoing = bindings?.outgoing;
+    const socket = bindings?.incoming?.socket;
+    if (outgoing && socket && ownerBearerMatches(c.req.header("Authorization"), ownerToken)) {
+      outgoing.once("finish", () => {
+        if (!socket.destroyed && outgoing.shouldKeepAlive) socket.setTimeout(timeoutMs);
+      });
+    }
+    await next();
+  };
+}
+var OWNER_KEEP_ALIVE_MS;
+var init_owner_keep_alive = __esm({
+  "packages/daemon/src/command-center/owner-keep-alive.ts"() {
+    "use strict";
+    init_owner_authority();
+    OWNER_KEEP_ALIVE_MS = 65e3;
+  }
+});
+
 // packages/daemon/src/command-center/diagnostics.ts
 import { performance as performance2 } from "node:perf_hooks";
 function sampleDaemonDiagnostics(daemon) {
@@ -101373,7 +101663,7 @@ import { Hono as Hono3 } from "hono";
 import { streamSSE as streamSSE3 } from "hono/streaming";
 import { cors } from "hono/cors";
 import { zValidator } from "@hono/zod-validator";
-import { z as z142 } from "zod";
+import { z as z143 } from "zod";
 import { realpathSync as realpathSync29 } from "node:fs";
 import { homedir as homedir9 } from "node:os";
 import { isAbsolute as isAbsolute34, resolve as pathResolve } from "node:path";
@@ -101423,7 +101713,7 @@ function requireHostCapability(ownerToken) {
       if (denied) return denied;
       markActionOwnerAuthorized(c);
     }
-    if (requirement === "owner-and-operation-id" && !z142.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
+    if (requirement === "owner-and-operation-id" && !z143.uuid().safeParse(c.req.header("X-Tmux-Ide-Operation-Id")).success) {
       return c.json({ error: "A stable host operation id is required" }, 400);
     }
     return next();
@@ -101533,6 +101823,7 @@ function createApp(options = {}) {
   const healthBootedAt = Date.now();
   const app = new Hono3();
   app.use("/*", cors());
+  app.use("/*", ownerKeepAlive(options.remoteAccess?.ownerToken ?? null));
   if (options.tmuxServerOwners) {
     mountAutomationRoutes(app, {
       ownerToken: options.remoteAccess?.ownerToken ?? null,
@@ -101625,7 +101916,7 @@ function createApp(options = {}) {
       } catch {
         return c.json({ error: "Invalid capability request" }, 400);
       }
-      if (!z142.object({}).strict().safeParse(body).success) {
+      if (!z143.object({}).strict().safeParse(body).success) {
         return c.json({ error: "Invalid capability request" }, 400);
       }
       const appWindowCommandRegistered = daemonActionCommandRegistry.descriptors().some(({ id: id2 }) => id2 === "workspace.app-window.mutate");
@@ -102743,6 +103034,7 @@ var init_server2 = __esm({
     init_fleet_resource_route();
     init_workspace_missions_route();
     init_owner_authority();
+    init_owner_keep_alive();
     init_diagnostics();
     init_startup_readiness_route();
     init_widget_asset_store();
@@ -106465,7 +106757,7 @@ import {
 import { randomUUID as randomUUID53 } from "node:crypto";
 import { dirname as dirname49, join as join65 } from "node:path";
 import { homedir as homedir11 } from "node:os";
-import { z as z143 } from "zod";
+import { z as z144 } from "zod";
 function defaults() {
   const namespace = resolveRuntimeNamespace();
   return {
@@ -106675,11 +106967,11 @@ var init_daemon_service = __esm({
     init_runtime_namespace();
     init_errors2();
     init_private_operation_lock();
-    RecordSchema = z143.strictObject({
-      version: z143.literal(1),
-      removing: z143.boolean().optional(),
-      executable: z143.string().min(1),
-      contents: z143.string().min(1).max(64 * 1024)
+    RecordSchema = z144.strictObject({
+      version: z144.literal(1),
+      removing: z144.boolean().optional(),
+      executable: z144.string().min(1),
+      contents: z144.string().min(1).max(64 * 1024)
     });
   }
 });
@@ -108245,7 +108537,7 @@ __export(ssh_daemon_transport_exports, {
 });
 import { spawn as spawn12 } from "node:child_process";
 import { createServer as createServer4 } from "node:net";
-import { z as z144 } from "zod";
+import { z as z145 } from "zod";
 function failure3(message2, code2 = "unavailable") {
   return new SshConnectionError(message2, code2);
 }
@@ -108526,16 +108818,16 @@ var init_ssh_daemon_transport = __esm({
     init_remote_tmux_command();
     init_ssh_daemon_relay();
     init_src2();
-    RemoteDaemonHandshakeSchema = z144.object({
-      version: z144.literal(1),
+    RemoteDaemonHandshakeSchema = z145.object({
+      version: z145.literal(1),
       daemon: CanonicalDaemonInfoSchema.strict().extend({
-        bindHostname: z144.enum(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]),
-        authToken: z144.string().min(1).max(4096)
+        bindHostname: z145.enum(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]),
+        authToken: z145.string().min(1).max(4096)
       })
     }).strict();
-    RemoteDaemonHandshakeFailureSchema = z144.strictObject({
-      version: z144.literal(1),
-      error: z144.strictObject({ code: z144.enum(["daemon-missing", "incompatible", "unavailable"]) })
+    RemoteDaemonHandshakeFailureSchema = z145.strictObject({
+      version: z145.literal(1),
+      error: z145.strictObject({ code: z145.enum(["daemon-missing", "incompatible", "unavailable"]) })
     });
     SshConnectionError = class extends Error {
       constructor(message2, code2 = "unavailable") {
@@ -108851,7 +109143,7 @@ import {
 import { hostname as hostname4, tmpdir as tmpdir2 } from "node:os";
 import { dirname as dirname52, join as join68 } from "node:path";
 import { createInterface as createInterface3 } from "node:readline/promises";
-import { z as z145 } from "zod";
+import { z as z146 } from "zod";
 function targetSocket(target, environment = process.env) {
   if (target.socketPath && target.socketName)
     throw new IdeError("Pass --socket-path or --socket-name, not both.", {
@@ -109283,23 +109575,23 @@ var init_io = __esm({
     init_plan();
     UPGRADE_HOLD_SESSION = "_tmux-ide-upgrade";
     NO_SERVER = /no server running|error connecting|failed to connect|connection refused/u;
-    ServerIdentitySchemaZ = z145.object({
-      host: z145.string(),
-      socketPath: z145.string().min(1),
-      pid: z145.number().int().positive(),
-      startTime: z145.number().int().nonnegative(),
-      version: z145.string(),
-      executable: z145.string(),
-      features: z145.enum(["full", "stock", "older", "partial", "unknown"])
+    ServerIdentitySchemaZ = z146.object({
+      host: z146.string(),
+      socketPath: z146.string().min(1),
+      pid: z146.number().int().positive(),
+      startTime: z146.number().int().nonnegative(),
+      version: z146.string(),
+      executable: z146.string(),
+      features: z146.enum(["full", "stock", "older", "partial", "unknown"])
     }).strict();
-    WorkerStateSchemaZ = z145.object({
+    WorkerStateSchemaZ = z146.object({
       server: ServerIdentitySchemaZ,
-      client: z145.string().min(1),
-      snapshotPath: z145.string().min(1),
-      resumeAgents: z145.boolean()
+      client: z146.string().min(1),
+      snapshotPath: z146.string().min(1),
+      resumeAgents: z146.boolean()
     }).strict();
-    WorkerResultSchemaZ = z145.object({
-      status: z145.enum([
+    WorkerResultSchemaZ = z146.object({
+      status: z146.enum([
         "already-full",
         "preview",
         "declined",
@@ -109308,9 +109600,9 @@ var init_io = __esm({
         "upgraded",
         "failed"
       ]),
-      message: z145.string(),
-      restored: z145.array(z145.string()).optional(),
-      failed: z145.array(z145.string()).optional()
+      message: z146.string(),
+      restored: z146.array(z146.string()).optional(),
+      failed: z146.array(z146.string()).optional()
     });
   }
 });
@@ -111000,7 +111292,7 @@ __export(automation_exports, {
   resolveAutomationIntent: () => resolveAutomationIntent,
   runAutomationCli: () => runAutomationCli
 });
-import { z as z146 } from "zod";
+import { z as z147 } from "zod";
 import { execFileSync as execFileSync26 } from "node:child_process";
 import { parseArgs } from "node:util";
 function invokingPaneCredential(env = process.env) {
@@ -111167,7 +111459,7 @@ var init_automation2 = __esm({
         return { ...super.toJSON(), handle: this.handle };
       }
     };
-    AutomationInvocationIntentSchemaZ = z146.discriminatedUnion("kind", [
+    AutomationInvocationIntentSchemaZ = z147.discriminatedUnion("kind", [
       AutomationOperationIntentSchemaZ.options[0].extend({
         source: AutomationOperationIntentSchemaZ.options[0].shape.source.optional()
       }),
@@ -112326,7 +112618,7 @@ __export(mcp_exports, {
 });
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { z as z147 } from "zod";
+import { z as z148 } from "zod";
 async function call(work) {
   try {
     return result(await work());
@@ -112349,7 +112641,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_panes",
     {
       description: "Discover current panes across this daemon's tmux servers. Use returned endpoint objects unchanged; names and native pane numbers are not unique identities.",
-      inputSchema: z147.object({}).strict(),
+      inputSchema: z148.object({}).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
     async (_args, context) => call(() => client.discover({ signal: context.mcpReq.signal }))
@@ -112358,7 +112650,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_prepare",
     {
       description: "Prepare a read or send and receive a generation-fenced operation handle. This does not send input. Save the handle before executing. Omit source to resolve this MCP process\u2019s verified pane automatically, or use source:null for an unbound caller. Save the returned intent unchanged with the handle.",
-      inputSchema: z147.object({ intent: AutomationInvocationIntentSchemaZ }).strict(),
+      inputSchema: z148.object({ intent: AutomationInvocationIntentSchemaZ }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
     },
     async ({ intent }, context) => call(async () => {
@@ -112375,7 +112667,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_execute",
     {
       description: "Execute a prepared read or send using its exact handle and unchanged intent. Sends may run terminal commands. On uncertainty, check status or retry this same handle; never prepare another operation. Read text is returned once; replay returns metadata only. A completed send is command completion, not proof the recipient consumed it.",
-      inputSchema: z147.object({
+      inputSchema: z148.object({
         handle: AutomationOperationHandleSchemaZ,
         intent: AutomationOperationIntentSchemaZ
       }).strict(),
@@ -112387,7 +112679,7 @@ function createTmuxIdeMcpServer(client) {
     "tmux_operation_status",
     {
       description: "Look up a prepared operation without repeating its effect. Status contains no sent or captured text. Outcome-unknown includes expired retention and must not be interpreted as not executed.",
-      inputSchema: z147.object({ handle: AutomationOperationHandleSchemaZ }).strict(),
+      inputSchema: z148.object({ handle: AutomationOperationHandleSchemaZ }).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
     async ({ handle }, context) => call(() => client.status(handle, { signal: context.mcpReq.signal }))
@@ -112396,9 +112688,9 @@ function createTmuxIdeMcpServer(client) {
     "tmux_interactions",
     {
       description: "Read at most one batch of scoped interaction metadata, optionally waiting for new events. Carry the returned cursor into the next call. Gaps explicitly mean missing history; these events contain no terminal contents.",
-      inputSchema: z147.object({
+      inputSchema: z148.object({
         resume: TmuxInteractionCursorSchemaZ,
-        waitMs: z147.number().int().min(1).max(3e4).default(1e3)
+        waitMs: z148.number().int().min(1).max(3e4).default(1e3)
       }).strict(),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
