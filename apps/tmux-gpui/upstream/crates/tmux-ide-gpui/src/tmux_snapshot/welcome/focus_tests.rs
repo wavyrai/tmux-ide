@@ -184,8 +184,8 @@ fn notes_are_for_exactly_one_version() {
     assert!(whats_new::notes("0.1.20").is_some());
     assert!(whats_new::notes("0.1.21").is_some());
     for version in [
-        "0.1.1", "0.1.170", "0.1.17.1", "0.1.180", "0.1.190", "0.1.200", "0.1.2", "0.1", "",
-        "Earlier",
+        "0.1.1", "0.1.170", "0.1.17.1", "0.1.180", "0.1.190", "0.1.200", "0.1.210", "0.1.2", "0.1",
+        "", "Earlier",
     ] {
         assert_eq!(whats_new::notes(version), None, "{version}");
     }
