@@ -61,6 +61,28 @@ describe.skipIf(!hasTmux).sequential("scoped ordinary session admission", () => 
       ]),
     ).toBe(stamps);
   }, 20000);
+  it("re-opens a finished session without stamping, and still stamps a pane split since", async () => {
+    const session = (await owner.catalog()).find((entry) => entry.sessionName === "ordinary")!;
+    const opened = await owner.openSession(session.liveSessionId);
+    const stamp = (target: string) =>
+      run(["display-message", "-p", "-t", target, "#{@tmux_ide_pane_id}"]);
+    const split = run([
+      "split-window",
+      "-d",
+      "-P",
+      "-F",
+      "#{pane_id}",
+      "-t",
+      "ordinary",
+      "exec sleep 300",
+    ]);
+    expect(stamp(split)).toBe("");
+    // A pane without a stamp takes the full promotion, which stamps it.
+    expect(await owner.openSession(session.liveSessionId)).toEqual(opened);
+    expect(stamp(split)).not.toBe("");
+    // Now every pane is stamped: the re-open answers the same alias.
+    expect(await owner.openSession(session.liveSessionId)).toEqual(opened);
+  }, 20000);
   it("preserves trailing session whitespace without adopting its trimmed-name neighbor", async () => {
     const name = "zzzz whitespace session ";
     const neighbor = name.trim();
