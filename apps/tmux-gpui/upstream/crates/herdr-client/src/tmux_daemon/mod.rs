@@ -10,6 +10,8 @@ pub use agent_observation::{
     AgentActivity, AgentObservation, AgentSelection, ObservedAgent, ObservedHarness,
     ObservedNativePane, ObservedPaneEndpoint, ObservedTeam, ObservedTeamSource, OpenedAgent,
 };
+mod attach;
+pub use attach::{Attached, PreparedStream};
 mod capability;
 mod native_surface_capability;
 mod surface_context;

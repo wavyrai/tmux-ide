@@ -2,6 +2,8 @@
 // (see scripts/build-cli.mjs) which adds `#!/usr/bin/env node` via the
 // esbuild banner. Dev iteration uses `bun bin/cli.ts` directly, which
 // doesn't need a shebang.
+// First, so an unsupported Node.js stops with a clear message (Node 24+).
+import "../packages/daemon/src/lib/require-supported-node.ts";
 import { parseArgs } from "node:util";
 import { resolve, dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";

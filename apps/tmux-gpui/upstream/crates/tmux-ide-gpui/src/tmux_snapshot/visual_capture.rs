@@ -79,6 +79,8 @@ fn catalog_appearance(id: &str) -> Result<Appearance> {
         theme,
         options,
         error: None,
+        light: crate::tmux_snapshot::appearance::native::DEFAULT_LIGHT.into(),
+        dark: crate::tmux_snapshot::appearance::native::DEFAULT_DARK.into(),
     };
     if !appearance.valid() {
         return Err(anyhow!("catalog theme {id} is invalid"));
@@ -261,6 +263,7 @@ fn capture_view(
         sidebar_hidden: false,
         sidebar_keyboard: Default::default(),
         developer_mode: Default::default(),
+        cursor_motion: Default::default(),
         terminal_font: Default::default(),
         resize_gesture: Default::default(),
         last_resize: None,
@@ -657,8 +660,16 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
     // `+welcome` is first run with setup needed (onboarding A1), with
     // `+running` or `+failed` its states; `+welcome-existing` the welcome
     // opened from Commands over sessions; `+whatsnew` What's new's card (A5).
+    // `+guide-look` and `+guide-keys` open the setup guide at that step.
+    let guide_step = if extras.contains(&"guide-look") {
+        Some(super::welcome::guide::Step::Look)
+    } else if extras.contains(&"guide-keys") {
+        Some(super::welcome::guide::Step::Keys)
+    } else {
+        None
+    };
     let welcome = extras.contains(&"welcome");
-    let welcome_existing = extras.contains(&"welcome-existing");
+    let welcome_existing = extras.contains(&"welcome-existing") || guide_step.is_some();
     let whats_new = extras.contains(&"whatsnew");
     if welcome {
         state.surface = browser::Surface::Home;
@@ -722,6 +733,10 @@ fn capture_theme(cx: &mut VisualTestAppContext, dir: &Path, id: &str) -> Result<
                                 .contains(&"failed")
                                 .then_some(super::welcome::SETUP_DEADLINE),
                         );
+                        if let Some(step) = guide_step {
+                            view.welcome.guide.step = step;
+                            view.welcome.guide.reached = step.place();
+                        }
                     }
                     if spark {
                         view.prepare_home_filter(cx);

@@ -39,6 +39,17 @@ pub(super) struct Appearance {
     pub theme: Colors,
     pub options: Vec<OptionItem>,
     pub error: Option<String>,
+    /// The themes Match macOS switches between (theme.light / theme.dark).
+    #[serde(default = "default_light")]
+    pub light: String,
+    #[serde(default = "default_dark")]
+    pub dark: String,
+}
+fn default_light() -> String {
+    native::DEFAULT_LIGHT.into()
+}
+fn default_dark() -> String {
+    native::DEFAULT_DARK.into()
 }
 fn text(s: &str, max: usize) -> bool {
     !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control)
@@ -55,6 +66,8 @@ impl Appearance {
                 .iter()
                 .all(|o| text(&o.id, 64) && text(&o.name, 128) && ids.insert(&o.id))
             && self.options.iter().any(|o| o.id == self.selected)
+            && text(&self.light, 64)
+            && text(&self.dark, 64)
             && self
                 .error
                 .as_ref()

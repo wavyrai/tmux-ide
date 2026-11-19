@@ -139,6 +139,9 @@ export interface SemanticThemeSnapshot extends SemanticThemeTokens {
 export interface ThemeConfigInput {
   mode?: ThemeModeSetting;
   preset?: string;
+  /** System mode's preset when the host is light, and when it is dark. */
+  light?: string;
+  dark?: string;
   userTheme?: unknown;
   projectTheme?: unknown;
   accessibility?: Partial<ThemeAccessibilityPreferences>;
@@ -900,10 +903,19 @@ export function createSemanticThemeSnapshot(
       config?.accessibility?.increasedContrast ?? DEFAULT_ACCESSIBILITY.increasedContrast,
   };
   const mode = resolvedMode(setting, rendererMode, hostDefaults);
+  // System mode with a chosen preset for each side (the Mac app's Match
+  // macOS writes theme.light / theme.dark): the side the host is on.
+  const side =
+    setting === "system"
+      ? findVisualThemePreset(mode === "light" ? config?.light : config?.dark)
+      : undefined;
   const resolved = resolveVisualTheme({
     appearance: mode,
     hostDefaults: setting === "system" ? (hostDefaults ?? undefined) : undefined,
-    userTheme: config?.userTheme ?? findVisualThemePreset(config?.preset),
+    userTheme:
+      config?.userTheme ??
+      findVisualThemePreset(config?.preset) ??
+      (side?.appearance === mode ? side : undefined),
     projectTheme: config?.projectTheme,
     accessibility,
   });

@@ -18,7 +18,7 @@ cd tmux-ide
 
 Requirements:
 
-- Node.js 20 or newer; keep the same executable and ABI for installation, builds and tests
+- Node.js 24 or newer; keep the same executable and ABI for installation, builds and tests
 - The pnpm version pinned in `package.json` and Bun version in `.bun-version`
 - The native toolchain and pinned, patched tmux bundle for TUI and installed-runtime checks
 
@@ -99,11 +99,11 @@ performance ranking. Run it without concurrent builds or tests.
 
 GitHub Actions validates:
 
-- CLI compatibility jobs on Node 20 and 22, with runtime test steps on Node 22
+- CLI checks on Node 24: lint, format, the test suites and the installed-package smoke
 - the docs production build
 - package contents, installed OpenTUI qualification, coverage and performance contract checks
 
-The separate isolated-development workflow adds a Node 22/24 contract matrix,
+The separate isolated-development workflow adds a Node 24 contract job,
 scoped Linux installed-package checks and a weekly/manual macOS SSH fixture.
 Its [CI guide](https://github.com/wavyrai/tmux-ide/blob/main/scripts/development-ci.md)
 explains resource bounds, evidence and cancellation limits. These jobs supplement

@@ -221,6 +221,8 @@ mod bezel;
 mod controls;
 #[path = "pane_chrome_tests/ink.rs"]
 mod ink;
+#[path = "pane_chrome_tests/plain_browser.rs"]
+mod plain_browser;
 
 /// #701 note N2, in #702 round 2: a pane whose source the daemon closed says so
 /// in its header; other panes don't.

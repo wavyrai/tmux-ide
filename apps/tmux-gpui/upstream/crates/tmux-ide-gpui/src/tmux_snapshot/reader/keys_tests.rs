@@ -6,7 +6,7 @@ use super::*;
 use crate::tmux_snapshot::reader::{Published, Status};
 use std::sync::{Arc, mpsc};
 
-fn setup(
+pub(super) fn setup(
     view: &mut SnapshotView,
     window: &mut Window,
     cx: &mut Context<SnapshotView>,

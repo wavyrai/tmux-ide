@@ -292,6 +292,12 @@ pub(in crate::tmux_snapshot) enum Command {
     Theme {
         id: String,
     },
+    /// Match macOS, with `id` as its theme for one side (the setup guide).
+    #[serde(rename = "theme-for")]
+    ThemeFor {
+        side: super::super::appearance::System,
+        id: String,
+    },
     #[serde(rename = "fleet-preference")]
     FleetPreference {
         request: u64,

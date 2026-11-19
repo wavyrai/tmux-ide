@@ -657,6 +657,7 @@ impl Local {
                     opened.panes,
                     opened.windows,
                     Some(opened.selected),
+                    None,
                 );
             }
             (Stage::LocalProve, CatalogResult::LocalSessionProof(proof)) => {
@@ -734,7 +735,21 @@ impl Local {
                 if panes.is_empty() {
                     return self.opened_without_panes(target, preferred);
                 }
-                return self.opened(target, workspace_name, panes, windows, preferred);
+                return self.opened(target, workspace_name, panes, windows, preferred, None);
+            }
+            (
+                Stage::Open { target, preferred },
+                CatalogResult::Attached {
+                    workspace_name,
+                    panes,
+                    windows,
+                    stream,
+                },
+            ) => {
+                if panes.is_empty() {
+                    return self.opened_without_panes(target, preferred);
+                }
+                return self.opened(target, workspace_name, panes, windows, preferred, stream);
             }
             (
                 Stage::Issue {
@@ -745,46 +760,7 @@ impl Local {
                     window,
                 },
                 CatalogResult::Issued(capability),
-            ) => {
-                let id = uuid::Uuid::new_v4().to_string();
-                self.state.selected_pane = Some(selected);
-                let window_panes = if window.is_some() {
-                    panes.clone()
-                } else {
-                    Vec::new()
-                };
-                self.state.panes = panes
-                    .into_iter()
-                    .map(|id| Choice {
-                        label: id.clone(),
-                        id,
-                        pane_count: None,
-                        window_id: None,
-                        browser_icon: None,
-                        display_name_source: None,
-                        window_label: None,
-                        largest_window: None,
-                    })
-                    .collect();
-                self.state.status = "Connecting terminal".into();
-                self.publish()?;
-                self.emit(Incoming::Handoff(Event::Open {
-                    version: 1,
-                    id: id.clone(),
-                    request: self.state.request,
-                    live_session_id: target.live.clone(),
-                    capability,
-                }))?;
-                self.active = Some(Route {
-                    id,
-                    request: self.state.request,
-                    target,
-                    workspace,
-                    notice: self.window_notice.take().filter(|_| window.is_some()),
-                    window,
-                    window_panes,
-                });
-            }
+            ) => self.issued(target, workspace, panes, selected, window, capability)?,
             _ => {
                 return Err(Error::Invalid(
                     "native catalog result did not match its request",
@@ -846,6 +822,9 @@ mod agent_idle_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_fault_log_live_tests.rs"]
 mod fault_log_live_tests;
+#[cfg(test)]
+#[path = "browser_native_local_history_live_tests.rs"]
+mod history_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_home_live_tests.rs"]
 mod home_live_tests;

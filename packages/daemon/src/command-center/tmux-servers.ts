@@ -41,6 +41,7 @@ import { WorkspacePaneCreationError } from "../lib/workspace-pane-creation.ts";
 import { ownerBearerMatches } from "./owner-authority.ts";
 import { logger } from "../lib/log.ts";
 import { mountPaneStreamIssueRoute } from "./pane-stream-issue.ts";
+import { chooseAttachSelection, TmuxServerAttachRequestSchemaZ } from "./tmux-server-attach.ts";
 import {
   projectTerminalRuntimeInventory,
   projectTerminalRuntimeInventoryV2,
@@ -293,6 +294,89 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
         owner.openSession(workspaceSchema.parse(c.req.param("liveSessionId"))),
       );
       return c.json({ version: 1, server, ...result });
+    }),
+  );
+  // attach-rtt: open, inventory and issue in one round trip. The stream is
+  // issued through the ordinary issue route with this request's headers, so
+  // it is checked exactly as a separate issue request would be.
+  app.post(
+    `${scoped}/sessions/:liveSessionId/attach`,
+    route(async (c) => {
+      const server = scope(c);
+      const liveSessionId = workspaceSchema.parse(c.req.param("liveSessionId"));
+      const request = TmuxServerAttachRequestSchemaZ.parse(await boundedJson(c.req.raw));
+      // The issue below checks the same, but only after the open: refuse a
+      // request for another generation before it can promote anything.
+      if (
+        request.issue.expectedDaemonInstanceId !== server.generation ||
+        c.req.header("X-Tmux-Ide-Expected-Daemon-Instance-Id") !== server.generation
+      )
+        throw new TmuxServerScopeError("stale-generation");
+      const result = await options.owners.withOwner(server, async (owner) => {
+        const opened = await owner.openSession(liveSessionId);
+        const workspace = owner.workspaceRegistry.get(opened.workspaceName);
+        if (!workspace || opened.liveSessionId !== liveSessionId)
+          throw new TmuxServerScopeError("stale-generation");
+        const snapshot = await owner.terminalInventoryRuntime.discoverTerminalRuntimeSession(
+          workspace.sessionName,
+          c.req.raw.signal,
+        );
+        if (!snapshot) return null;
+        const inventory = projectTerminalRuntimeInventoryV2(snapshot, 0);
+        const selection = chooseAttachSelection(inventory, request.preferredPane, request.maxPanes);
+        if (!selection)
+          return { kind: "attached" as const, opened, inventory, selection, issue: null };
+        // The window is the daemon's to choose, never the client's.
+        const stream = { ...request.issue.stream };
+        delete stream.semanticWindowId;
+        const body = {
+          ...request.issue,
+          stream: {
+            ...stream,
+            workspaceName: opened.workspaceName,
+            panes: selection.panes,
+            ...(selection.semanticWindowId ? { semanticWindowId: selection.semanticWindowId } : {}),
+          },
+        };
+        const issueApp = new Hono();
+        mountPaneStreamIssueRoute(issueApp, {
+          daemonInstanceId: server.generation,
+          ownerToken: options.ownerToken,
+          workspaceRegistry: owner.workspaceRegistry,
+          backend: owner.paneStreamRuntime.coordinator,
+        });
+        const url = new URL(c.req.url);
+        url.pathname = PANE_STREAM_ISSUE_PATH;
+        url.search = "";
+        const headers = new Headers(c.req.raw.headers);
+        headers.delete("Content-Length");
+        headers.set("Content-Type", "application/json");
+        const issued = await issueApp.request(
+          new Request(url, { method: "POST", headers, body: JSON.stringify(body) }),
+        );
+        // The issue route answers a refused issue as 200 with an error
+        // envelope, which goes back in `issue` with the open and inventory
+        // (the app then issues again). A non-200 is an auth or body refusal.
+        if (issued.status !== 200) return { kind: "refused" as const, refused: issued };
+        return {
+          kind: "attached" as const,
+          opened,
+          inventory,
+          selection,
+          issue: (await issued.json()) as unknown,
+        };
+      });
+      if (!result) return c.json({ error: { code: "workspace-not-found" } }, 404);
+      if (result.kind === "refused") return result.refused;
+      return c.json({
+        version: 1,
+        server,
+        workspaceName: result.opened.workspaceName,
+        liveSessionId,
+        inventory: result.inventory,
+        selection: result.selection,
+        issue: result.issue,
+      });
     }),
   );
   app.get(

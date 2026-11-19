@@ -21,7 +21,7 @@ test("owner evidence bundle uses the supported narrow core entry without termina
     },
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node24",
     format: "esm",
     write: false,
     metafile: true,

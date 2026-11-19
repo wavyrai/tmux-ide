@@ -30,6 +30,8 @@ pub(super) fn passed_to_window() -> Option<WindowBackgroundAppearance> {
 pub(super) struct Chrome {
     applied: Option<WindowBackgroundAppearance>,
     allowed: bool,
+    /// The user's "Opaque window" switch (setup guide, Look).
+    pub(super) opaque: super::opaque_window::Setting,
     #[cfg(target_os = "macos")]
     watcher: Option<macos::Watcher>,
     /// Wakes the window's idle UI task when the settings change (#714).
@@ -70,11 +72,12 @@ impl Chrome {
 
     /// Reads the accessibility settings. Runs once per render, before the
     /// palette is prepared.
+    /// "Opaque window" counts as a setting that doesn't allow it.
     pub(super) fn refresh(&mut self) -> bool {
         #[cfg(test)]
         if let Some(allowed) = self.forced {
-            self.allowed = allowed;
-            return allowed;
+            self.allowed = allowed && !self.opaque.enabled;
+            return self.allowed;
         }
         #[cfg(target_os = "macos")]
         {
@@ -83,6 +86,7 @@ impl Chrome {
             }
             self.allowed = macos::translucency_allowed();
         }
+        self.allowed &= !self.opaque.enabled;
         self.allowed
     }
 

@@ -194,7 +194,13 @@ fn the_sidebar_reveal_glides_over_scroll_glide(cx: &mut TestAppContext) {
         window.draw(cx).clear(cx);
         window.draw(cx).clear(cx);
     });
-    let start = top(cx, "tmux-sidebar-row-35");
+    // Row 35 is far below the list, so it is a placeholder of its size
+    // until it is selected (`sidebar::window`): its place is read from the
+    // list's layout (child 0 is the Home row), scrolled as painted.
+    let start = view.read_with(cx, |view, _| {
+        let list = view.sidebar_keyboard.scroll_for_tests();
+        list.bounds_for_item(36).unwrap().top() + list.offset().y
+    });
     // Let the window's own entrances finish, then count what idle costs.
     cx.background_executor.advance_clock(Duration::from_secs(1));
     draw(cx);

@@ -142,6 +142,9 @@ pub(super) struct State {
     pub browser_marks: std::collections::BTreeMap<String, super::browser_toolbar::Mark>,
     /// Reader panes (#756) by pane id, with the file name the layout gives.
     pub reader_panes: std::collections::BTreeMap<String, String>,
+    /// Panes the layout calls a plain terminal browser (#718, capability
+    /// 123): no header controls, and the header says so.
+    pub plain_browsers: std::collections::BTreeSet<String>,
     pub readers: std::collections::BTreeMap<String, Arc<super::reader::Published>>,
     /// View-owned click awaiting the next observation; workers never publish it.
     pub browser_pending: Option<super::browser_toolbar::Pending>,
@@ -619,6 +622,7 @@ impl Reader {
             browser_controls: Default::default(),
             browser_marks: Default::default(),
             reader_panes: Default::default(),
+            plain_browsers: Default::default(),
             readers: Default::default(),
             browser_pending: None,
             diagnostics: p.diagnostics,

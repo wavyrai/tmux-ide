@@ -59,6 +59,7 @@ fn worker_imports_native_delivery_and_gpu_lease_wakes_original_socket() {
         },
         origin: "http://127.0.0.1:4000".into(),
         host_client_id: "native.test".into(),
+        upgrade: Default::default(),
     };
     let (retired_tx, retired_rx) = sync_channel(1);
     let (done_tx, done_rx) = sync_channel(1);

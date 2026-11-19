@@ -341,6 +341,29 @@ describe("pane-stream client frames", () => {
     );
   });
 
+  it("carries a history request from the client (capability 122)", () => {
+    const request = {
+      type: "terminal.delivery.history-request",
+      workspaceName: "workspace",
+      semanticPaneId: "pane.editor",
+      generation: "00000000-0000-4000-8000-000000000001",
+      incarnation: "incarnation:1",
+      deliveryNonce: "00000000-0000-4000-8000-000000000002",
+      canonicalRevision: 4,
+      unloadedRows: 1800,
+      maxRows: 500,
+    };
+    expect(
+      PaneStreamClientFrameSchemaZ.parse({ type: "terminal-delivery-history-request", request }),
+    ).toEqual({ type: "terminal-delivery-history-request", request });
+    expect(
+      PaneStreamClientFrameSchemaZ.safeParse({
+        type: "terminal-delivery-history-request",
+        request: { ...request, maxRows: 2001 },
+      }).success,
+    ).toBe(false);
+  });
+
   it("carries a browser kind on a layout pane only as native, plain or null (capability 123)", () => {
     expect(PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION).toBe(123);
     const layout = (browserKind?: unknown) => ({

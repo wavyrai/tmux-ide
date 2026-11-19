@@ -7,7 +7,9 @@ impl Controller {
         }
         let proof = self.current.get(pane).ok_or(Error::Invalid)?;
         let snapshot = proof.snapshot.as_ref().ok_or(Error::Invalid)?;
-        if snapshot.history.is_complete() {
+        // Only a projection materializes; a partial history loads its older
+        // rows by request (`request_history`).
+        if !snapshot.history.is_deferred() {
             return Ok(false);
         }
         let identity = &proof.identity;

@@ -45,7 +45,7 @@ export async function qualifyLegacySystemd({
       outfile: oldCli,
       bundle: true,
       platform: "node",
-      target: "node20",
+      target: "node24",
       format: "esm",
       logLevel: "warning",
       plugins: [

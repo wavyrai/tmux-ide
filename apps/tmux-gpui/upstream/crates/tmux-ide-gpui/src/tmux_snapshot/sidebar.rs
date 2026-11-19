@@ -15,6 +15,8 @@ pub(in crate::tmux_snapshot) mod pane_row;
 pub(in crate::tmux_snapshot) mod panes;
 #[path = "sidebar/reveal.rs"]
 mod reveal;
+#[path = "sidebar/window.rs"]
+pub(in crate::tmux_snapshot) mod window;
 use crate::{config::Theme, tmux_snapshot::browser};
 pub(in crate::tmux_snapshot) use footer::height as footer_height;
 use gpui::{prelude::*, *};

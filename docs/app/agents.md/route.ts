@@ -58,7 +58,7 @@ for plain tmux clients. If tmux-ide stops, every session is still ordinary tmux.
 
 \`\`\`bash
 curl -fsSL ${SITE_URL}/install.sh | sh   # macOS and glibc Linux; installs under ~/.local, no sudo
-npm install -g tmux-ide                   # alternative when Node.js 20+ is already installed
+npm install -g tmux-ide                   # alternative when Node.js 24+ is already installed
 tmux-ide doctor                           # check tmux version, runtime and integrations
 \`\`\`
 

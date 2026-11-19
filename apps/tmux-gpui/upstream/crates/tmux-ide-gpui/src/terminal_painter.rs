@@ -3,6 +3,8 @@ mod access;
 mod frame;
 pub(crate) use frame::{FrameView, NativeFrame};
 mod area;
+mod cursor_glide;
+pub(crate) use cursor_glide::{Cell as CursorCell, Target as CursorTarget};
 mod glyphs;
 mod graphics;
 mod grid;
@@ -165,6 +167,8 @@ pub(crate) struct TerminalPainter {
     placed: Vec<(i32, ImageGeometry, Arc<RenderImage>)>,
     sprites: Sprites,
     rows: Rows,
+    /// Where the cursor is drawn while it glides to a new cell.
+    pub(crate) cursor_glide: cursor_glide::CursorGlide,
     /// Dev-only: paint glyph by glyph through `Window::paint_glyph`, for
     /// the parity captures.
     #[cfg(feature = "visual-capture")]
@@ -204,6 +208,7 @@ impl Default for TerminalPainter {
             placed: Vec::new(),
             sprites: Sprites::default(),
             rows: Rows::default(),
+            cursor_glide: Default::default(),
             #[cfg(feature = "visual-capture")]
             legacy_glyphs: false,
         }
@@ -693,7 +698,12 @@ impl TerminalPainter {
                         && c.y < frame.height()
                         && covers(area, c.x, c.y)
                 }) {
-                    let position = origin + cursor_offset(cursor, cell_width, self.cell_height);
+                    let drawn = self.cursor_glide.drawn(CursorCell {
+                        x: cursor.x,
+                        y: cursor.y,
+                    });
+                    let position =
+                        origin + point(px(drawn.x * cell_width), px(drawn.y * self.cell_height));
                     let (offset, dimensions) = match cursor.shape {
                         3 | 4 => (
                             point(px(0.), px(self.cell_height - 2.)),

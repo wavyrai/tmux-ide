@@ -1,10 +1,13 @@
-//! First run (onboarding A1): a welcome surface in Home's place, which sets
-//! Tmux IDE up with the existing managed setup and says what happened in
-//! plain words; and What's new once per version (A5).
+//! First run: the setup guide in Home's place. Its first step is the
+//! welcome (onboarding A1), which sets Tmux IDE up with the existing managed
+//! setup and says what happened in plain words; then Look and Keys, each
+//! saved as it is chosen (`welcome/guide.rs`). And What's new once per
+//! version (A5).
 //!
 //! Remembered in ~/.config/tmux-ide/gpui-onboarding.json, the same small,
 //! versioned, atomically written file the app keeps for its other view
-//! preferences (gpui-developer.json, the terminal font).
+//! preferences (gpui-developer.json, the terminal font). The guide shows by
+//! itself only to someone who never had that file.
 use super::{SnapshotView, browser, browser_ui::Selection};
 use browser::local_setup::Phase;
 use gpui::{prelude::*, *};
@@ -15,6 +18,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "welcome/guide.rs"]
+pub(super) mod guide;
+#[path = "welcome/guide_keys.rs"]
+mod guide_keys;
+#[path = "welcome/guide_look.rs"]
+mod guide_look;
 #[path = "welcome/render.rs"]
 mod render;
 #[path = "welcome/whats_new.rs"]
@@ -35,6 +44,21 @@ struct Saved {
     welcomed: bool,
     #[serde(default)]
     whats_new_seen: Option<String>,
+    /// Version 2: how far the guide went.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    guide: Option<guide::Progress>,
+}
+
+/// What reading the saved file found.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Found {
+    /// There has never been a file: someone new.
+    #[default]
+    Missing,
+    /// A file that reads.
+    Saved,
+    /// A file that doesn't read (or no place for one).
+    Unreadable,
 }
 
 /// What the app remembers, and the welcome's state for this run.
@@ -48,6 +72,10 @@ pub(super) struct State {
     pub welcomed: bool,
     /// The last version whose What's new card was closed.
     pub whats_new_seen: Option<String>,
+    /// What reading the file found, for the first-run rule.
+    pub found: Found,
+    /// The guide's step and what it remembers.
+    pub guide: guide::Guide,
     /// This app's version (the bundle's), when it has one.
     pub version: Option<String>,
     /// First run was decided for this run.
@@ -73,7 +101,7 @@ pub(super) struct State {
 pub(super) enum Decision {
     /// Not yet known: the saved state or Home hasn't loaded.
     Wait,
-    /// Setup is needed here: show the welcome.
+    /// Show the guide.
     Show,
     /// This Mac is set up and Home is live: an existing user, never shown.
     AlreadySetUp,
@@ -81,11 +109,16 @@ pub(super) enum Decision {
     Welcomed,
 }
 
-/// The first-run rule. The welcome shows only where setup is needed and it
-/// was never closed; someone whose Mac is set up with Home live never sees
-/// it (they open it from Commands if they want it).
+/// The first-run rule. The guide shows to someone who never had the saved
+/// file, whatever the background service is doing (an installer may have
+/// started it already), and to a file that says the guide was left open.
+/// Anyone whose file says welcomed never sees it by itself; they open it
+/// from Commands. A file that can't be read keeps the old rule: shown only
+/// where setup is needed, so a damaged file never pushes the guide on an
+/// existing user.
 pub(super) fn decide(
     ready: bool,
+    found: Found,
     welcomed: bool,
     connected: bool,
     setup: Option<Phase>,
@@ -95,6 +128,8 @@ pub(super) fn decide(
         Decision::Wait
     } else if welcomed {
         Decision::Welcomed
+    } else if found != Found::Unreadable {
+        Decision::Show
     } else if !connected {
         Decision::Wait
     } else if setup.is_some() {
@@ -311,7 +346,7 @@ pub(super) fn already(sessions: usize) -> String {
     }
 }
 
-/// What a welcome button does.
+/// What a guide control does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Act {
     SetUp,
@@ -323,7 +358,8 @@ pub(super) enum Act {
     CheckAgain,
     Open(Open),
     StartNew,
-    Close,
+    /// The guide's own controls (`welcome/guide.rs`).
+    Guide(guide::Act),
 }
 /// One button: its words, what it does, and whether it can act now.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,10 +375,11 @@ fn button(label: &str, act: Act) -> Button {
         enabled: true,
     }
 }
-/// The secondary button (if any) and the primary one for `stage`; the first
-/// session is the one Home lists first.
-pub(super) fn buttons(stage: Stage, first: Option<&Known>) -> (Option<Button>, Button) {
-    match stage {
+/// The Set up step's own buttons for `stage`, the secondary (if any) and the
+/// primary; none once set up or while Home is still being checked, when the
+/// guide's Continue is what comes next.
+pub(super) fn buttons(stage: Stage) -> Option<(Option<Button>, Button)> {
+    Some(match stage {
         Stage::Setup(Phase::Available) => (None, button("Set up Tmux IDE", Act::SetUp)),
         Stage::Setup(Phase::Running) => (
             None,
@@ -363,32 +400,30 @@ pub(super) fn buttons(stage: Stage, first: Option<&Known>) -> (Option<Button>, B
             Some(button("Check again", Act::CheckAgain)),
             button("Copy update command", Act::CopyUpdate),
         ),
-        Stage::Ready { sessions } if sessions > 0 => match first {
-            Some(known) => (
-                Some(button("Start somewhere new…", Act::StartNew)),
-                button(
-                    &format!("Open {}", known.label),
-                    Act::Open(known.open.clone()),
-                ),
-            ),
-            None => (None, button("New session…", Act::StartNew)),
-        },
-        Stage::Ready { .. } => (None, button("New session…", Act::StartNew)),
-        Stage::Waiting => (
-            None,
-            Button {
-                enabled: false,
-                ..button("Checking…", Act::CheckAgain)
-            },
-        ),
-    }
+        Stage::Ready { .. } | Stage::Waiting => return None,
+    })
+}
+/// Setup can't finish here without the user (it failed, or the tool is
+/// missing or doesn't match): the guide offers to go on without it.
+pub(super) fn setup_blocked(stage: Stage) -> bool {
+    matches!(
+        stage,
+        Stage::Setup(
+            Phase::Failed
+                | Phase::StoppedWaiting
+                | Phase::Missing
+                | Phase::Unsupported
+                | Phase::Unrecognized
+        )
+    )
 }
 pub(super) const TITLE: &str = "Welcome to Tmux IDE";
 pub(super) const READY_TITLE: &str = "You're set up";
 pub(super) const LEDE: &str =
     "Your terminals and coding agents, side by side. They keep running when you close the window.";
-/// Where to find the welcome again, until a Help menu exists.
-pub(super) const SKIP_HINT: &str = "You can open it again from Commands: Welcome to Tmux IDE…";
+/// Where to find the guide again, until a Help menu exists.
+pub(super) const SKIP_HINT: &str =
+    "You can open this guide again from Commands: Welcome to Tmux IDE…";
 pub(super) const STUCK: &str = "Still stuck? Run tmux-ide doctor in Terminal, or get help.";
 
 fn path() -> Option<PathBuf> {
@@ -410,9 +445,21 @@ fn read(path: &Path) -> io::Result<Saved> {
     if bytes.len() > 1024 {
         return Err(io::Error::other("onboarding state exceeds limit"));
     }
-    let saved: Saved = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-    if saved.version != 1 {
-        return Err(io::Error::other("unsupported onboarding state version"));
+    let mut saved: Saved = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    match (saved.version, &saved.guide) {
+        // Version 1 had no guide: a welcomed user has seen all of it.
+        (1, None) => {
+            saved.guide = Some(guide::Progress {
+                reached: if saved.welcomed {
+                    guide::ALL_REACHED
+                } else {
+                    0
+                },
+                ..Default::default()
+            })
+        }
+        (2, Some(progress)) if progress.reached <= guide::ALL_REACHED => {}
+        _ => return Err(io::Error::other("unsupported onboarding state version")),
     }
     Ok(saved)
 }
@@ -439,16 +486,22 @@ fn write(path: &Path, saved: &Saved) -> io::Result<()> {
 }
 impl State {
     fn load(path: Option<PathBuf>, version: Option<String>) -> Self {
-        let saved = path
-            .as_deref()
-            .and_then(|p| read(p).ok())
-            .unwrap_or_default();
+        let (found, saved) = match path.as_deref().map(read) {
+            Some(Ok(saved)) => (Found::Saved, saved),
+            Some(Err(e)) if e.kind() == io::ErrorKind::NotFound => {
+                (Found::Missing, Saved::default())
+            }
+            _ => (Found::Unreadable, Saved::default()),
+        };
+        let progress = saved.guide.unwrap_or_default();
         Self {
             started: true,
             ready: true,
             path,
             welcomed: saved.welcomed,
             whats_new_seen: saved.whats_new_seen,
+            found,
+            guide: guide::Guide::from_progress(progress),
             version,
             ..Default::default()
         }
@@ -479,11 +532,13 @@ impl State {
     pub(super) fn for_test(path: Option<PathBuf>, version: Option<&str>) -> Self {
         Self::load(path, version.map(Into::into))
     }
+    /// Always written as version 2.
     fn saved(&self) -> Saved {
         Saved {
-            version: 1,
+            version: 2,
             welcomed: self.welcomed,
             whats_new_seen: self.whats_new_seen.clone(),
+            guide: Some(self.guide.progress()),
         }
     }
 }
@@ -508,7 +563,7 @@ impl SnapshotView {
         })
         .detach();
     }
-    fn save_welcome(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_welcome(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.welcome.path.clone() else {
             return;
         };
@@ -534,6 +589,7 @@ impl SnapshotView {
         if !self.welcome.decided {
             match decide(
                 self.welcome.ready,
+                self.welcome.found,
                 self.welcome.welcomed,
                 connected,
                 setup,
@@ -543,6 +599,7 @@ impl SnapshotView {
                 Decision::Show => {
                     self.welcome.decided = true;
                     self.welcome.open = true;
+                    self.welcome.guide.restart();
                 }
                 Decision::AlreadySetUp => {
                     self.welcome.decided = true;
@@ -607,10 +664,13 @@ impl SnapshotView {
                 .saturating_duration_since(started),
         )
     }
-    /// Commands → "Welcome to Tmux IDE…": opens it whatever first run said.
+    /// Commands → "Welcome to Tmux IDE…": opens it whatever first run said,
+    /// at its first step.
     pub(super) fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.welcome.decided = true;
         self.welcome.open = true;
+        self.welcome.guide.restart();
+        self.welcome.guide.reopened = true;
         if self.browser_state.surface != browser::Surface::Home {
             self.select(Selection::Home, window, cx);
         }
@@ -662,7 +722,7 @@ impl SnapshotView {
                 self.close_welcome(cx);
                 self.open_local_session(request, window, cx);
             }
-            Act::Close => self.close_welcome(cx),
+            Act::Guide(act) => self.guide_act(act, window, cx),
         }
         cx.notify();
     }
@@ -671,6 +731,9 @@ impl SnapshotView {
 #[cfg(test)]
 #[path = "welcome/focus_tests.rs"]
 mod focus_tests;
+#[cfg(test)]
+#[path = "welcome/guide_tests.rs"]
+mod guide_tests;
 #[cfg(test)]
 #[path = "welcome/tests.rs"]
 mod tests;

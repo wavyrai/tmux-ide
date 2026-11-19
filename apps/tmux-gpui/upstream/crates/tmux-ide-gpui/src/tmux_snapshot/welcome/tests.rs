@@ -77,7 +77,11 @@ fn saved(dir: &tempfile::TempDir, cx: &mut VisualTestContext) -> State {
     cx.run_until_parked();
     fresh(dir)
 }
-fn publish(view: &Entity<SnapshotView>, cx: &mut VisualTestContext, phase: Option<Phase>) {
+pub(super) fn publish(
+    view: &Entity<SnapshotView>,
+    cx: &mut VisualTestContext,
+    phase: Option<Phase>,
+) {
     cx.update(|_, cx| {
         view.update(cx, |v, cx| {
             v.browser_state.local_setup = phase.map(|phase| Setup { phase });
@@ -93,26 +97,35 @@ fn publish(view: &Entity<SnapshotView>, cx: &mut VisualTestContext, phase: Optio
 }
 
 #[test]
-fn first_run_shows_only_where_setup_is_needed_and_never_again() {
+fn the_guide_shows_to_someone_new_and_never_again_by_itself() {
     use Decision::*;
+    use Found::*;
     let available = Some(Phase::Available);
-    // (ready, welcomed, connected, setup, live) → decision
-    for (ready, welcomed, connected, setup, live, expected) in [
-        (false, false, true, available, false, Wait),
-        (true, true, true, available, false, Welcomed),
-        (true, false, false, available, false, Wait),
-        (true, false, true, available, false, Show),
-        (true, false, true, Some(Phase::Missing), false, Show),
-        // Setup offered while Home is live (another machine's sessions):
-        // setup still comes first.
-        (true, false, true, available, true, Show),
-        (true, false, true, None, true, AlreadySetUp),
-        (true, false, true, None, false, Wait),
+    // (ready, found, welcomed, connected, setup, live) → decision
+    for (ready, found, welcomed, connected, setup, live, expected) in [
+        (false, Missing, false, true, available, false, Wait),
+        // Never had the file: shown, whatever the service is doing, even
+        // before Home answers.
+        (true, Missing, false, true, None, true, Show),
+        (true, Missing, false, true, available, false, Show),
+        (true, Missing, false, false, None, false, Show),
+        // A file that says welcomed (every 0.1.17+ user): never.
+        (true, Saved, true, true, available, false, Welcomed),
+        (true, Saved, true, true, None, true, Welcomed),
+        // A file the guide wrote while it was open: shown again.
+        (true, Saved, false, true, None, true, Show),
+        // A file that can't be read keeps the old rule: only where setup
+        // is needed, and an existing user with Home live is remembered.
+        (true, Unreadable, false, true, None, true, AlreadySetUp),
+        (true, Unreadable, false, true, available, false, Show),
+        (true, Unreadable, false, true, available, true, Show),
+        (true, Unreadable, false, false, available, false, Wait),
+        (true, Unreadable, false, true, None, false, Wait),
     ] {
         assert_eq!(
-            decide(ready, welcomed, connected, setup, live),
+            decide(ready, found, welcomed, connected, setup, live),
             expected,
-            "{ready} {welcomed} {connected} {setup:?} {live}"
+            "{ready} {found:?} {welcomed} {connected} {setup:?} {live}"
         );
     }
 }
@@ -216,21 +229,21 @@ fn the_checklist_says_what_is_true_in_each_stage() {
 
 #[test]
 fn each_stage_offers_its_actions() {
-    let acts = |stage, first| {
-        let (secondary, primary) = buttons(stage, first);
+    let acts = |stage| {
+        let (secondary, primary) = buttons(stage).unwrap();
         (
             secondary.map(|b| (b.label, b.act)),
             (primary.label, primary.act, primary.enabled),
         )
     };
     assert_eq!(
-        acts(Stage::Setup(Phase::Available), None),
+        acts(Stage::Setup(Phase::Available)),
         (None, ("Set up Tmux IDE".into(), Act::SetUp, true))
     );
-    assert!(!acts(Stage::Setup(Phase::Running), None).1.2);
+    assert!(!acts(Stage::Setup(Phase::Running)).1.2);
     for phase in [Phase::Failed, Phase::StoppedWaiting] {
         assert_eq!(
-            acts(Stage::Setup(phase), None),
+            acts(Stage::Setup(phase)),
             (
                 Some(("Copy details".into(), Act::CopyDetails)),
                 ("Try again".into(), Act::TryAgain, true)
@@ -238,34 +251,35 @@ fn each_stage_offers_its_actions() {
         );
     }
     assert_eq!(
-        acts(Stage::Setup(Phase::Missing), None),
+        acts(Stage::Setup(Phase::Missing)),
         (
             Some(("Copy install command".into(), Act::CopyInstall)),
             ("I've installed it".into(), Act::InstalledIt, true)
         )
     );
-    assert_eq!(
-        acts(Stage::Setup(Phase::Unsupported), None).1.1,
-        Act::CopyUpdate
-    );
-    let api = Known {
-        label: "api".into(),
-        detail: None,
-        open: Open::Fleet("token".into()),
-    };
-    assert_eq!(
-        acts(Stage::Ready { sessions: 3 }, Some(&api)),
-        (
-            Some(("Start somewhere new…".into(), Act::StartNew)),
-            (
-                "Open api".into(),
-                Act::Open(Open::Fleet("token".into())),
-                true
-            )
-        )
-    );
-    assert_eq!(acts(Stage::Ready { sessions: 0 }, None).1.1, Act::StartNew);
-    assert!(!acts(Stage::Waiting, None).1.2);
+    assert_eq!(acts(Stage::Setup(Phase::Unsupported)).1.1, Act::CopyUpdate);
+    // Set up, or still checking: the guide's Continue is what comes next.
+    assert_eq!(buttons(Stage::Ready { sessions: 3 }), None);
+    assert_eq!(buttons(Stage::Ready { sessions: 0 }), None);
+    assert_eq!(buttons(Stage::Waiting), None);
+    // Where setup can't finish here, the guide offers to go on without it.
+    for phase in [
+        Phase::Failed,
+        Phase::StoppedWaiting,
+        Phase::Missing,
+        Phase::Unsupported,
+        Phase::Unrecognized,
+    ] {
+        assert!(setup_blocked(Stage::Setup(phase)), "{phase:?}");
+    }
+    for stage in [
+        Stage::Setup(Phase::Available),
+        Stage::Setup(Phase::Running),
+        Stage::Ready { sessions: 0 },
+        Stage::Waiting,
+    ] {
+        assert!(!setup_blocked(stage), "{stage:?}");
+    }
 }
 
 #[test]
@@ -276,7 +290,23 @@ fn the_welcome_speaks_plainly() {
         LEDE.into(),
         SKIP_HINT.into(),
         STUCK.into(),
+        render::LOOK_TITLE.into(),
+        render::LOOK_LEDE.into(),
+        render::KEYS_TITLE.into(),
+        render::KEYS_LEDE.into(),
+        render::HINT.into(),
+        render::START_USING.into(),
+        guide_look::UNAVAILABLE.into(),
+        guide_look::MATCH_NOTE.into(),
+        guide_look::CURSOR_NOTE.into(),
+        guide_look::OPAQUE_NOTE.into(),
+        crate::tmux_snapshot::opaque_window::SAVE_FAILED.into(),
+        "Continue without it".into(),
+        "Skip setup".into(),
     ];
+    for (label, _) in crate::tmux_snapshot::keymap::GUIDE {
+        texts.push(label.to_string());
+    }
     for stage in [
         Stage::Setup(Phase::Available),
         Stage::Setup(Phase::Running),
@@ -293,14 +323,10 @@ fn the_welcome_speaks_plainly() {
             texts.extend([l.title, l.status]);
             texts.extend(l.detail);
         }
-        let known = Known {
-            label: "a".into(),
-            detail: None,
-            open: Open::Session("a".into()),
-        };
-        let (secondary, primary) = buttons(stage, Some(&known));
-        texts.extend(secondary.map(|b| b.label));
-        texts.push(primary.label);
+        if let Some((secondary, primary)) = buttons(stage) {
+            texts.extend(secondary.map(|b| b.label));
+            texts.push(primary.label);
+        }
     }
     // Every user-facing line of What's new, every version and "Earlier".
     for (version, notes) in whats_new::RELEASES {
@@ -319,25 +345,48 @@ fn what_is_remembered_survives_and_bad_files_start_over() -> Result<()> {
     let path = dir.path().join("gpui-onboarding.json");
     let missing = State::for_test(Some(path.clone()), None);
     assert!(missing.ready && !missing.welcomed && missing.whats_new_seen.is_none());
-    write(
+    assert_eq!(missing.found, Found::Missing);
+    // Version 1, as 0.1.17 to 0.1.20 wrote it: read, the guide seen in
+    // full when welcomed.
+    std::fs::write(
         &path,
-        &Saved {
-            version: 1,
-            welcomed: true,
-            whats_new_seen: Some("0.1.17".into()),
-        },
+        r#"{"version":1,"welcomed":true,"whats_new_seen":"0.1.17"}"#,
     )?;
     let back = State::for_test(Some(path.clone()), None);
     assert!(back.welcomed);
+    assert_eq!(back.found, Found::Saved);
     assert_eq!(back.whats_new_seen.as_deref(), Some("0.1.17"));
+    assert_eq!(back.guide.reached, guide::ALL_REACHED);
+    std::fs::write(&path, r#"{"version":1,"welcomed":false}"#)?;
+    assert_eq!(State::for_test(Some(path.clone()), None).guide.reached, 0);
+    // Written back, always as version 2, with the guide's progress.
+    let mut state = State::for_test(Some(path.clone()), None);
+    state.welcomed = true;
+    state.guide.reached = 3;
+    state.guide.setup_skipped = true;
+    write(&path, &state.saved())?;
+    let raw: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+    assert_eq!(raw["version"], 2);
+    assert_eq!(
+        raw["guide"],
+        serde_json::json!({"reached": 3, "finished": false, "setup_skipped": true})
+    );
+    let again = State::for_test(Some(path.clone()), None);
+    assert_eq!(again.guide.progress(), state.guide.progress());
+    assert!(again.welcomed);
     for contents in [
         "not json",
+        r#"{"version":3,"welcomed":true}"#,
         r#"{"version":2,"welcomed":true}"#,
+        r#"{"version":1,"welcomed":true,"guide":{"reached":5,"finished":true,"setup_skipped":false}}"#,
+        r#"{"version":2,"welcomed":true,"guide":{"reached":6,"finished":true,"setup_skipped":false}}"#,
+        r#"{"version":2,"welcomed":true,"guide":{"reached":1,"finished":true,"setup_skipped":false,"x":1}}"#,
         r#"{"version":1,"welcomed":true,"extra":0}"#,
     ] {
         std::fs::write(&path, contents)?;
         let state = State::for_test(Some(path.clone()), None);
         assert!(state.ready && !state.welcomed, "{contents}");
+        assert_eq!(state.found, Found::Unreadable, "{contents}");
     }
     Ok(())
 }
@@ -348,7 +397,8 @@ fn first_run_with_setup_needed_shows_the_welcome_in_homes_place(cx: &mut TestApp
     let (view, cx, _rx) = home(cx, Some(Phase::Available), &[], fresh(&dir));
     assert!(shown(cx));
     assert!(cx.debug_bounds("home-header").is_none());
-    assert!(cx.debug_bounds("welcome-icon").is_some());
+    assert!(cx.debug_bounds("welcome-hero-0").is_some());
+    assert!(cx.debug_bounds("welcome-rail").is_some());
     assert!(cx.debug_bounds("welcome-line-1").is_some());
     assert!(cx.debug_bounds("welcome-line-2").is_none(), "no agents row");
     // Not remembered until it closes.
@@ -356,24 +406,64 @@ fn first_run_with_setup_needed_shows_the_welcome_in_homes_place(cx: &mut TestApp
     let _ = view;
 }
 
+/// Someone who ran 0.1.17 or later has the file: never shown by itself.
 #[gpui::test]
 fn an_existing_user_never_sees_it_but_commands_open_it(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("gpui-onboarding.json"),
+        r#"{"version":1,"welcomed":true,"whats_new_seen":"0.1.17"}"#,
+    )
+    .unwrap();
     let (view, cx, _rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
     assert!(!shown(cx));
     assert!(cx.debug_bounds("home-header").is_some());
-    assert!(
-        saved(&dir, cx).welcomed,
-        "an existing user is remembered as welcomed"
-    );
-    // Next launch, still not shown.
-    cx.update(|_, cx| view.update(cx, |v, _| v.welcome = fresh(&dir)));
-    assert!(!shown(cx));
-    // Commands → Welcome to Tmux IDE… opens it, with the sessions first.
+    // Commands → Welcome to Tmux IDE… opens it at Set up, ticked, with
+    // Continue and every step open.
     cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
     assert!(shown(cx));
-    assert!(cx.debug_bounds("welcome-session-0").is_some());
-    assert!(cx.debug_bounds("welcome-session-1").is_some());
+    assert!(cx.debug_bounds("welcome-next").is_some());
+    assert!(
+        cx.debug_bounds("welcome-session-0").is_none(),
+        "sessions open from Keys"
+    );
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.welcome.guide.step, guide::Step::SetUp);
+        for step in guide::Step::ALL {
+            assert!(v.welcome.guide.enabled(step), "{step:?}");
+        }
+    });
+}
+
+/// Someone new whose installer already started the background service: the
+/// guide shows, step one already ticked (0.1.20 never showed it).
+#[gpui::test]
+fn someone_new_with_the_service_running_sees_the_guide(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    assert!(shown(cx));
+    let ticked = view.read_with(cx, |v, _| {
+        lines(stage(&v.browser_state, true), None, None)
+            .iter()
+            .all(|l| l.mark == Mark::Done)
+    });
+    assert!(ticked, "everything ticked");
+    assert!(cx.debug_bounds("welcome-next").is_some());
+}
+
+/// A damaged file never pushes the guide on an existing user.
+#[gpui::test]
+fn an_unreadable_file_with_home_live_is_an_existing_user(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("gpui-onboarding.json"), "not json").unwrap();
+    let (_view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    assert!(!shown(cx));
+    cx.run_until_parked();
+    let raw = std::fs::read_to_string(dir.path().join("gpui-onboarding.json")).unwrap();
+    assert!(
+        raw.contains(r#""welcomed":true"#),
+        "remembered as welcomed: {raw}"
+    );
 }
 
 #[gpui::test]
@@ -502,37 +592,58 @@ fn the_keyboard_moves_between_and_presses_the_buttons(cx: &mut TestAppContext) {
     let focused = |cx: &mut VisualTestContext, i: usize| {
         cx.update(|window, cx| view.read_with(cx, |v, _| v.welcome.focus[i].is_focused(window)))
     };
-    assert!(focused(cx, 1));
+    assert!(focused(cx, guide::slot::PRIMARY));
     cx.simulate_keystrokes("tab");
-    assert!(focused(cx, 2), "then Skip");
+    assert!(focused(cx, guide::slot::SKIP), "then Continue without it");
     cx.simulate_keystrokes("tab");
-    assert!(focused(cx, 0), "then Copy install command");
+    assert!(focused(cx, guide::slot::RAIL), "then round to the rail");
+    cx.simulate_keystrokes("tab");
+    assert!(
+        focused(cx, guide::slot::SECONDARY),
+        "then Copy install command"
+    );
     cx.simulate_keystrokes("shift-tab");
-    assert!(focused(cx, 2));
+    assert!(focused(cx, guide::slot::RAIL));
     cx.simulate_keystrokes("tab tab enter");
-    assert!(focused(cx, 1));
+    assert!(focused(cx, guide::slot::PRIMARY));
     assert!(
         rx.try_iter()
             .all(|c| !matches!(c, browser::Command::LocalSetup { .. })),
         "I've installed it never starts setup"
     );
+    // Continue is disabled until set up, so it is never a stop.
+    assert!(!focused(cx, guide::slot::NEXT));
     cx.simulate_keystrokes("tab space");
-    assert!(!shown(cx), "Space on Skip closes it");
+    assert!(shown(cx), "Continue without it goes on to Look");
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.welcome.guide.step, guide::Step::Look);
+        assert!(v.welcome.guide.setup_skipped);
+    });
+    assert!(saved(&dir, cx).guide.setup_skipped, "saved as it is chosen");
 }
 
 #[gpui::test]
-fn opening_an_existing_session_closes_the_welcome(cx: &mut TestAppContext) {
+fn start_using_opens_the_most_recent_session_and_closes_the_guide(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
-    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
     assert!(shown(cx));
-    let open = cx.debug_bounds("welcome-button-1").unwrap();
-    cx.simulate_click(open.center(), Modifiers::default());
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.guide_act(guide::Act::Next, window, cx);
+            v.guide_act(guide::Act::Next, window, cx);
+        })
+    });
+    draw(cx);
+    let start = cx.debug_bounds("welcome-next").unwrap();
+    cx.simulate_click(start.center(), Modifiers::default());
     assert!(!view.read_with(cx, |v, _| v.welcome.open));
     assert!(
         rx.try_iter()
             .any(|c| matches!(c, browser::Command::Session { .. }))
     );
+    let state = saved(&dir, cx);
+    assert!(state.welcomed && state.guide.finished);
+    assert_eq!(state.guide.reached, guide::ALL_REACHED);
 }
 
 #[test]
