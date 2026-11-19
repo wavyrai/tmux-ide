@@ -8,7 +8,7 @@ The native alpha brings Home, Terminals and searchable Commands to a macOS
 window. It connects to the tmux-ide daemon that owns your tmux sessions.
 The terminal app remains available alongside it.
 
-**Public alpha — version 0.1.20, build 2026111801.** The app is Developer ID
+**Public alpha — version 0.1.21, build 2026111901.** The app is Developer ID
 signed and Apple notarized, and its packaged-app checks passed; a fresh second-Mac test remains outstanding. Expect alpha bugs and
 keep the terminal app available as a fallback.
 
@@ -30,6 +30,15 @@ Image queues and local native pixel storage are bounded. The managed terminal br
 discovers it from the standard native installation. The pane header provides
 back/forward, reload/stop and a Cmd-L address editor. The optional upstream
 `action` automation helper is not bundled.
+
+In 0.1.21, a session on a machine you reach over SSH opens in fewer round trips, and the
+first open after the app sat idle no longer fails and shows "Reconnecting". With CLI/daemon
+2.9.27 or later on that machine, the open takes 3 round trips instead of 11: in our
+measurement at a 150 ms round trip, the first screen was ready after about 0.5 s instead of
+2.0 s. With 2.9.27 there, typed keys also echo sooner on a slow link (at 150 ms, from about
+250 ms to about 170 ms), and a pane gets its screen and its newest 200 lines when it opens and
+loads older lines as you scroll up, on this Mac too. A setup guide for the window's look and
+the keys you'll use opens on first run, and again from Commands, Welcome to Tmux IDE….
 
 In 0.1.20, a machine you reach over SSH gets the version-gated features of its CLI/daemon
 version. With 2.9.26 or later on that machine, a session there with more than 24
@@ -221,7 +230,7 @@ The original cause of reported Spark connection drops remains under investigatio
 - **Apple Silicon and macOS 26 or later** for the complete one-Mac setup below,
   including the CLI/daemon. The native app itself declares macOS 14.2 as its
   minimum; that alone does not establish full setup support on older macOS.
-- **tmux-ide CLI/daemon 2.9.26** for the current managed installation.
+- **tmux-ide CLI/daemon 2.9.27** for the current managed installation.
   A separate fresh-machine compatibility check remains outstanding. The app itself
   bundles no Node.js. The installer requires the managed Node 24 supplied by the
   [universal CLI installer](/docs/getting-started#install).
@@ -232,13 +241,13 @@ This alpha does not provide an Intel Mac, Windows or Linux native app.
 
 ## Download and install
 
-The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026111801)
-and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111801/tmux-ide-gpui-0.1.20-macos-arm64.app.tar.gz)
+The [alpha release notes](https://github.com/wavyrai/tmux-ide/releases/tag/native-alpha-2026111901)
+and [signed Apple Silicon archive](https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111901/tmux-ide-gpui-0.1.21-macos-arm64.app.tar.gz)
 include the exact signed build used by the installer.
 
-Install the native alpha with one command. This also installs CLI 2.9.26 at
+Install the native alpha with one command. This also installs CLI 2.9.27 at
 `~/.local` when the managed CLI is missing, or upgrades an older stable version.
-An existing 2.9.26 installation is preserved. Newer or unrecognized CLI versions
+An existing 2.9.27 installation is preserved. Newer or unrecognized CLI versions
 are left untouched and require explicit review before native installation:
 
 ```bash

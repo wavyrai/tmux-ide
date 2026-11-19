@@ -83,9 +83,9 @@ applications_entry() {
   ' "$1" "$HOME" "$prefix" "$action"
 }
 applications_entry check
-base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111801
+base=https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026111901
 installer_sha=98cc545d26643ba03853effc5aa49ac01ed1aefec6cb81441627e73002280456
-archive_sha=fb848543b41e71b09bfe9e5a8fc1c46c798499209b65661dbdb190ca7b1f69f7
+archive_sha=d51cf917578ca7660c067597806d3a182696464c9ebf4018e78f0b25991a06de
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmux-native-alpha.XXXXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 trap 'exit 130' INT
@@ -100,7 +100,7 @@ case "$action" in
   uninstall) "$node" "$scratch/installer.mjs" uninstall --prefix "$prefix" ;;
   rollback) "$node" "$scratch/installer.mjs" rollback --prefix "$prefix" --policy "$scratch/policy.json" ;;
   install|update)
-    fetch "$base/tmux-ide-gpui-0.1.20-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
+    fetch "$base/tmux-ide-gpui-0.1.21-macos-arm64.app.tar.gz" "$scratch/app.tar.gz"
     verify "$scratch/app.tar.gz" "$archive_sha"
     # Only the pinned, checksum-verified archive reaches tar. Bound both reads.
     "$node" --input-type=module -e '
@@ -113,7 +113,7 @@ case "$action" in
       const extraction=spawnSync("/usr/bin/tar",["-xzf",archive,"-C",destination],{stdio:"inherit",timeout:120000});
       if(extraction.error || extraction.status!==0) process.exit(1);
     ' "$scratch/app.tar.gz" "$scratch"
-    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.20-2026111801 ;;
+    "$node" "$scratch/installer.mjs" "$action" --prefix "$prefix" --policy "$scratch/policy.json" --app "$scratch/TmuxIDE.app" --version 0.1.21-2026111901 ;;
 esac
 case "$action" in
   uninstall) applications_entry remove ;;
