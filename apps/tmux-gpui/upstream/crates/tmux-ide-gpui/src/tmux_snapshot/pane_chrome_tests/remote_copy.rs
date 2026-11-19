@@ -119,3 +119,20 @@ fn typing_counts_for_two_seconds(cx: &mut TestAppContext) {
     assert_eq!(clipboard(cx).as_deref(), Some("before"));
     assert!(cx.debug_bounds("remote-copy-accept:pane-a").is_some());
 }
+
+#[gpui::test]
+fn of_several_copies_in_one_tick_the_newest_lands(cx: &mut TestAppContext) {
+    let (view, cx, _receiver) = setup(cx);
+    type_into_focused_pane(&view, cx);
+    cx.update(|_, cx| {
+        view.update(cx, |v, cx| {
+            let now = cx.background_executor().now();
+            v.apply_remote_copies(
+                vec![copy("pane-a", "older"), copy("pane-a", "newer")],
+                now,
+                cx,
+            );
+        });
+    });
+    assert_eq!(clipboard(cx).as_deref(), Some("newer"));
+}
