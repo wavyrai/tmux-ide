@@ -316,7 +316,7 @@
     }
   ],
   "sources": {
-    "docs/components/themes-gallery/shown-presets.mjs": "8eb80decbf69fe20",
+    "docs/components/themes-gallery/shown-presets.mjs": "aab0c99dcd11698a",
     "docs/scripts/rasterize-theme-gallery.mjs": "72f62db7d6aafe36",
     "docs/scripts/render-theme-gallery.tsx": "6dfff7cece3d3cc1",
     "docs/scripts/tui-demo-fixture.ts": "db87220a3f7c7d9f",
