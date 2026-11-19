@@ -85,15 +85,16 @@ fn agent_shell(birth: &str) -> serde_json::Value {
     value
 }
 fn changed_agent_open(after_admission: bool) {
-    let (port, peer) = peer_many(if after_admission { 11 } else { 5 }, move |index| {
+    // The open is one request (attach-rtt): no catalog read around it.
+    let (port, peer) = peer_many(if after_admission { 9 } else { 5 }, move |index| {
         response(&match index {
             0 => identity(),
             1 => registrations(),
             3 => agent_shell(if after_admission { "1" } else { "2" }),
-            6 => {
+            5 => {
                 serde_json::json!({"version":1,"server":server_scope(),"workspaceName":"fixture","liveSessionId":format!("live-session.{}","a".repeat(20))})
             }
-            9 => agent_shell("2"),
+            7 => agent_shell("2"),
             _ => {
                 let mut rows = sessions(false);
                 rows["sessions"][0]["workspaceName"] = "fixture".into();

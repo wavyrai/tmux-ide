@@ -75,46 +75,46 @@ impl ServerClient {
             .workspace_inventory(live_session_id, workspace_name)?
             .panes)
     }
-    /// Read topology between two observations of the exact session incarnation.
+    /// The workspace's topology, read once (attach-rtt). The daemon checks
+    /// that the workspace still belongs to `live_session_id` under the current
+    /// generation (`liveSessionId`, since 2.9.0-beta.22) and answers 409
+    /// otherwise; `parse` checks the scope and the workspace name.
     pub fn workspace_inventory(
         &self,
         live_session_id: &str,
         workspace_name: &str,
     ) -> Result<WorkspaceInventory, Error> {
-        let matches = |sessions: &[super::Session]| {
-            sessions.iter().any(|s| {
-                s.live_session_id == live_session_id
-                    && s.workspace_name.as_deref() == Some(workspace_name)
-            })
-        };
-        if !matches(&self.sessions()?) {
-            return Err(Error::ServerChanged);
-        }
+        self.assert_current()?;
         let workspace: String =
             url::form_urlencoded::byte_serialize(workspace_name.as_bytes()).collect();
+        let live: String =
+            url::form_urlencoded::byte_serialize(live_session_id.as_bytes()).collect();
         let scope = self.scope();
         // A daemon without window-scoped streams ignores the version and
         // answers version 1, which has no windows.
         let version = if self.window_streams() {
-            "?version=2"
+            "version=2&"
         } else {
             ""
         };
         let path = format!(
-            "api/v1/tmux-servers/{}/{}/inventory/{workspace}{version}",
+            "api/v1/tmux-servers/{}/{}/inventory/{workspace}?{version}liveSessionId={live}",
             scope.server_id, scope.generation
         );
-        let bytes = self.daemon.get_resource(&path)?;
+        let result = self.daemon.get_resource(&path);
         self.assert_current()?;
+        let bytes =
+            result.map_err(|error| self.refused(error, live_session_id, Some(workspace_name)))?;
         let panes = parse(&bytes, scope, workspace_name)?;
-        if !matches(&self.sessions()?) {
-            return Err(Error::ServerChanged);
-        }
         self.assert_current()?;
         Ok(panes)
     }
 }
-fn parse(bytes: &[u8], scope: &ServerScope, workspace: &str) -> Result<WorkspaceInventory, Error> {
+pub(super) fn parse(
+    bytes: &[u8],
+    scope: &ServerScope,
+    workspace: &str,
+) -> Result<WorkspaceInventory, Error> {
     let envelope: Envelope = serde_json::from_slice(bytes).map_err(|_| Error::ResourceFormat)?;
     if !matches!(
         (envelope.version, &envelope.resource.windows),

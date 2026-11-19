@@ -32,6 +32,10 @@ pub enum ConnectionError {
 struct OnceConnector {
     port: u16,
     used: AtomicBool,
+    /// Set when ureq asked for a second socket and was refused. ureq asks its
+    /// connector once per request, before writing anything (no retries, no
+    /// redirects here), so a refused request sent nothing at all.
+    refused: Arc<AtomicBool>,
 }
 impl Connector for OnceConnector {
     type Out = <TcpConnector as Connector>::Out;
@@ -45,6 +49,7 @@ impl Connector for OnceConnector {
             || details.uri.port_u16() != Some(self.port)
             || self.used.swap(true, Ordering::AcqRel)
         {
+            self.refused.store(true, Ordering::Release);
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "SSH connection cannot be replaced",
@@ -62,7 +67,12 @@ pub struct VerifiedConnection {
     agent: ureq::Agent,
     base: String,
     descriptor: Arc<RemoteDescriptor>,
+    refused: Arc<AtomicBool>,
 }
+/// How long ureq keeps an idle proven socket. A daemon from attach-rtt on
+/// keeps an owner connection 65 s; an older one closes it after 5 s, which
+/// ureq notices before reuse, and the transport then proves a new one.
+const IDLE_SOCKET: Duration = Duration::from_secs(60);
 impl VerifiedConnection {
     pub fn connect(port: u16, descriptor: RemoteDescriptor) -> Result<Self, ConnectionError> {
         Self::connect_shared(port, Arc::new(descriptor), Duration::from_millis(2500))
@@ -85,12 +95,15 @@ impl VerifiedConnection {
             .max_redirects(0)
             .http_status_as_error(false)
             .timeout_global(Some(timeout))
+            .max_idle_age(IDLE_SOCKET)
             .build();
+        let refused = Arc::new(AtomicBool::new(false));
         let agent = ureq::Agent::with_parts(
             config,
             OnceConnector {
                 port,
                 used: AtomicBool::new(false),
+                refused: refused.clone(),
             },
             DefaultResolver::default(),
         );
@@ -115,7 +128,14 @@ impl VerifiedConnection {
             agent,
             base,
             descriptor,
+            refused,
         })
+    }
+    /// Whether this connection's socket closed while idle, so that a request
+    /// failed before sending anything: it is safe to send it once more on a
+    /// new identity-proven connection.
+    pub(crate) fn closed_before_send(&self) -> bool {
+        self.refused.load(Ordering::Acquire)
     }
     /// Fixed endpoint prevents untrusted remote catalog data selecting a new host.
     pub fn capabilities(&self) -> Result<Vec<u8>, ConnectionError> {

@@ -3,7 +3,7 @@ fn options() -> ConnectOptions {
     ConnectOptions {
         remote_peer: None,
         descriptor: serde_json::from_value(serde_json::json!({"protocolVersion":2,"webSocketUrl":"ws://127.0.0.1:4000/v2/terminal/pane-streams/redeem","subprotocol":SUBPROTOCOL,"redemptionTicket":"unused","daemonInstanceId":"unused","requestId":"unused","expiresAt":1,"panes":["pane.one"],"effectiveViewerMode":"read-only"})).unwrap(),
-        origin:"http://127.0.0.1:4000".into(),host_client_id:"native.test".into(),
+        origin:"http://127.0.0.1:4000".into(),host_client_id:"native.test".into(),upgrade:Default::default(),
     }
 }
 fn packet(header: serde_json::Value, payload: &[u8]) -> Vec<u8> {

@@ -1,8 +1,11 @@
 //! One issued pane-stream connection. Policy, leases and replica application belong to callers.
 mod boundary;
+mod upgrade;
 mod wire;
 mod worker;
 
+pub(crate) use upgrade::PreparedSocket;
+pub use upgrade::UpgradeHints;
 pub use wire::{ConnectOptions, Event, IssuedDescriptor, Ready, Topology, ViewerMode};
 pub(crate) use wire::{valid_identity, valid_pane};
 pub use worker::{Command, PaneStream};

@@ -35,6 +35,9 @@ pub struct Handoff {
     /// The local daemon's product version, for compatibility notices only; never broker JSON.
     #[serde(skip)]
     pub daemon_version: Option<String>,
+    /// attach-rtt: in-memory only; never broker JSON.
+    #[serde(skip)]
+    pub upgrade: crate::tmux_stream::UpgradeHints,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -112,6 +115,7 @@ impl Handoff {
                 descriptor: self.descriptor,
                 origin: self.origin,
                 host_client_id: self.host_client_id,
+                upgrade: self.upgrade,
             },
             self.workspace_name,
             self.selected_pane,
