@@ -11,6 +11,9 @@
 /** @type {readonly { id: string; attribution?: { scheme: string; licence: string; url: string } }[]} */
 export const SHOWN_PRESETS = [
   { id: "paper" },
+  // tmux-ide's own pair (#746).
+  { id: "linen" },
+  { id: "linen-dark" },
   {
     id: "solarized-light",
     attribution: {

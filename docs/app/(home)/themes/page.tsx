@@ -162,7 +162,7 @@ export default function ThemesPage() {
             </pre>
             <p className="type-body mt-6 text-fd-muted-foreground">
               <Link href="/docs/theming" className="marketing-link-action text-fd-primary">
-                Appearance and themes docs →
+                Change the tmux-ide theme in the docs →
               </Link>
             </p>
           </BandBody>
