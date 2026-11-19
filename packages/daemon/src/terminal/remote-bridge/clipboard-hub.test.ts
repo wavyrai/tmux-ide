@@ -154,7 +154,10 @@ describe("RemoteClipboardHub", () => {
     const stop = hub.subscribe((event) => seen.push(event.paneId));
     hub.publish(write("p1", "a"));
     hub.publish(write("p1", "b"));
+    expect(vi.getTimerCount()).toBe(1);
     stop();
+    // The held write's timer goes with it.
+    expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(REMOTE_CLIPBOARD_WINDOW_MS);
     expect(seen).toEqual(["p1"]);
     expect(hub.trackedPanes()).toBe(0);
