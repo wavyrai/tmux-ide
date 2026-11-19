@@ -223,6 +223,8 @@ mod controls;
 mod ink;
 #[path = "pane_chrome_tests/plain_browser.rs"]
 mod plain_browser;
+#[path = "pane_chrome_tests/remote_copy.rs"]
+mod remote_copy;
 
 /// #701 note N2, in #702 round 2: a pane whose source the daemon closed says so
 /// in its header; other panes don't.

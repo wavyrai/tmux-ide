@@ -277,6 +277,18 @@ impl SnapshotView {
             }
         });
         let events = self.remote_copy.take_events(now);
+        self.apply_remote_copies(events, now, cx);
+    }
+
+    /// Applies copies from the lane: the newest one the policy lets through
+    /// goes on the pasteboard, the others become offers or notes.
+    pub(super) fn apply_remote_copies(
+        &mut self,
+        events: Vec<BridgeEvent>,
+        now: Instant,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let wanted = self.browsing && self.browser_state.surface == browser::Surface::Workspace;
         let panes: Vec<String> = if wanted {
             self.browser_state
                 .panes
@@ -336,7 +348,6 @@ impl SnapshotView {
                 offer.machine
             );
             let (accept, dismiss) = (pane.to_owned(), pane.to_owned());
-            let hover = palette.element_hover;
             return Some(
                 div()
                     .flex()
@@ -356,7 +367,6 @@ impl SnapshotView {
                             .min_w_0()
                             .px(px(bezel_theme::Theme::SPACE / 2.))
                             .text_color(ink.text)
-                            .hover(move |s| s.bg(hover))
                             .child(div().min_w_0().truncate().child(label))
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 cx.stop_propagation();
@@ -377,7 +387,6 @@ impl SnapshotView {
                             })
                             .px(px(bezel_theme::Theme::SPACE / 2.))
                             .text_color(ink.muted)
-                            .hover(move |s| s.bg(hover))
                             .child("×")
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 cx.stop_propagation();
