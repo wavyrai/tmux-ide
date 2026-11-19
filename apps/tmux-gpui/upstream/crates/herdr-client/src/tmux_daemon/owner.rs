@@ -96,6 +96,9 @@ pub(super) fn remote_error(error: crate::tmux_ssh::TransportError) -> Error {
 }
 
 #[cfg(all(test, unix))]
+#[path = "owner_remote_open_tests.rs"]
+mod remote_open_tests;
+#[cfg(all(test, unix))]
 #[path = "owner_remote_terminal_tests.rs"]
 mod remote_terminal_tests;
 #[cfg(all(test, unix))]

@@ -199,7 +199,7 @@ test("the CLI bundle keeps only the contract schemas it references", async () =>
     entryPoints: [resolve("bin/cli.ts")],
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node24",
     format: "esm",
     plugins: cliBundlePlugins(),
     logLevel: "silent",

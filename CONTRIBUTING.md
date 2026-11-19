@@ -13,7 +13,7 @@ cd tmux-ide
 
 Requirements:
 
-- Node.js 20 or newer; use the same executable and ABI for installation, builds and tests
+- Node.js 24 or newer; use the same executable and ABI for installation, builds and tests
 - The pnpm version pinned in `packageManager` and Bun version in `.bun-version`
 - Native compiler prerequisites and the pinned, patched tmux bundle for TUI and installed-runtime checks (see the worktree guide below)
 

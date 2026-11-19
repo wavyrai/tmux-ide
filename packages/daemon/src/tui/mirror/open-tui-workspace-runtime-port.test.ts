@@ -1,5 +1,8 @@
 import { createTerminalFastLane } from "../../../../daemon-client/src/terminal-fast-lane.ts";
-import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
+import {
+  STOCK_CAPTURE_TAB_UNAVAILABLE,
+  TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -847,6 +850,10 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       viewerMode: "interactive",
       terminalDelivery: { encodings: ["semantic-compact-v1", "semantic-v1"] },
     });
+    // Capability 124: the endpoint holds pipelined patches, so it asks for them.
+    expect(test.options().stream.terminalDelivery?.protocolVersions).toContain(
+      TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+    );
     expect(test.options().hostClientId).toBe(OPEN_TUI_HOST_CLIENT_ID);
     expect(test.options()).not.toHaveProperty("onTerminalFrameArrival");
     expect(test.options()).not.toHaveProperty("onInputTransportStage");
@@ -2801,4 +2808,273 @@ describe("invalid coalesced delivery admission", () => {
         }
       });
     }
+});
+
+describe("review-454: TUI endpoint under pipelined daemon patches", () => {
+  it("R454-T1 accepts a patch based on a cooperatively decoding patch (what #454 sends)", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2_000), "401");
+    const second = compactHistoryPatchDelivery(
+      first.next,
+      1,
+      2,
+      uniqueHistoryRows(2_000, 3),
+      "402",
+    );
+    // The daemon hands A's envelope and every chunk to the socket, then pipelines B on A.
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    expect(test.client.ack).not.toHaveBeenCalled(); // A is decoding cooperatively
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    // Both decode cooperatively; under load that can take seconds.
+    await vi.waitFor(
+      () => expect(test.client.ack.mock.calls.length + test.client.close.mock.calls.length).toBe(2),
+      { timeout: 50_000, interval: 50 },
+    );
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+  }, 60_000);
+
+  it("holds a pipelined patch behind a frozen subscription's unsettled flight, then ACKs both in order", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2), "411");
+    const second = compactHistoryPatchDelivery(first.next, 1, 2, uniqueHistoryRows(2, 2), "412");
+    subscription.freeze();
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+    expect(state).toEqual(second.next);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("R454-T3 holds a pipelined patch arriving after the decode settled behind a frozen subscription's unsettled flight, then ACKs both in order", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2), "411");
+    const second = compactHistoryPatchDelivery(first.next, 1, 2, uniqueHistoryRows(2, 2), "412");
+    subscription.freeze();
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    // The first flight has decoded and now waits only for the frozen subscriber.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+    expect(state).toEqual(second.next);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("NACKs a queued patch as a gap after the flight before it fails, keeping the connection", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => {});
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const state = blankTerminalReplicaSnapshot(132, 41);
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2_000), "421");
+    const second = compactHistoryPatchDelivery(
+      first.next,
+      1,
+      2,
+      uniqueHistoryRows(2_000, 3),
+      "422",
+    );
+    // A's canonical hash is wrong: its cooperative decode fails after B is queued.
+    const broken = { ...first.envelope, canonicalStateHash: second.envelope.canonicalStateHash };
+    test.options().onTerminalDelivery(PANE_A, broken);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await vi.waitFor(() => expect(test.client.nack).toHaveBeenCalledTimes(2), { timeout: 50_000 });
+    expect(test.client.nack.mock.calls.map(([nack]) => [nack.transactionId, nack.reason])).toEqual([
+      [first.envelope.transactionId, "decode-failed"],
+      [second.envelope.transactionId, "gap"],
+    ]);
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+  }, 60_000);
+});
+
+describe("review-454b: TUI queue bounds", () => {
+  const cursorPatch = (previous: ReturnType<typeof blankTerminalReplicaSnapshot>) =>
+    applyTerminalReplicaPatch(previous, {
+      rows: [],
+      cursor: { ...previous.cursor, x: 1 },
+      modes: previous.modes,
+      placements: previous.placements,
+      bootstrap: previous.bootstrap,
+    });
+
+  async function open() {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => {});
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    return { test, port, subscription };
+  }
+  const send = (
+    test: ReturnType<typeof rig>,
+    d: { envelope: TerminalDeliveryEnvelope; chunks: unknown[] },
+  ) => {
+    test.options().onTerminalDelivery(PANE_A, d.envelope);
+    for (const chunk of d.chunks) test.options().onTerminalDelivery(PANE_A, chunk as never);
+  };
+
+  it("RB1 holds a pipelined patch behind a synchronously decoded, unsettled (frozen) flight", async () => {
+    const { test, subscription } = await open();
+    // The rig's seed is 4x2; a patch this small decodes synchronously.
+    const blank = blankTerminalReplicaSnapshot(4, 2);
+    const a = patchDelivery(PANE_A, blank, 0, 1, "501", "semantic-compact-v1");
+    const b = patchDelivery(PANE_A, cursorPatch(blank), 1, 2, "502", "semantic-compact-v1");
+    subscription.freeze();
+    send(test, a);
+    send(test, b);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      a.envelope.transactionId,
+      b.envelope.transactionId,
+    ]);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("RB2 a fourth unacknowledged delivery is not queued (depth bound)", async () => {
+    const { test, port } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "511");
+    const b = compactHistoryPatchDelivery(a.next, 1, 2, uniqueHistoryRows(2_000, 1), "512");
+    const c = compactHistoryPatchDelivery(b.next, 2, 3, uniqueHistoryRows(2_001, 1), "513");
+    const d = compactHistoryPatchDelivery(c.next, 3, 4, uniqueHistoryRows(2_002, 1), "514");
+    send(test, a);
+    send(test, b);
+    send(test, c);
+    expect(test.client.close).not.toHaveBeenCalled();
+    send(test, d);
+    await port.closed;
+    expect(test.client.close).toHaveBeenCalledOnce();
+  }, 60_000);
+
+  it("RB3 a patch not based on the newest flight is not queued", async () => {
+    const { test, port } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "521");
+    const wrong = compactHistoryPatchDelivery(a.next, 0, 2, uniqueHistoryRows(2_000, 1), "522");
+    send(test, a);
+    send(test, wrong);
+    await port.closed;
+    expect(test.client.close).toHaveBeenCalledOnce();
+    expect(test.client.ack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("RB4 three pipelined patches with a cooperative head all apply and ACK in order", async () => {
+    const { test } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "531");
+    const b = compactHistoryPatchDelivery(a.next, 1, 2, uniqueHistoryRows(2_000, 2_000), "532");
+    const c = compactHistoryPatchDelivery(b.next, 2, 3, uniqueHistoryRows(4_000, 1), "533");
+    send(test, a);
+    send(test, b);
+    send(test, c);
+    await vi.waitFor(
+      () => expect(test.client.ack.mock.calls.length + test.client.close.mock.calls.length).toBe(3),
+      { timeout: 50_000, interval: 50 },
+    );
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      a.envelope.transactionId,
+      b.envelope.transactionId,
+      c.envelope.transactionId,
+    ]);
+  }, 60_000);
 });

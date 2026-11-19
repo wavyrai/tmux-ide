@@ -155,9 +155,13 @@ impl Stage {
                 scope: scope.clone(),
                 request: body.clone(),
             },
-            Self::Open { target, .. } => CatalogAction::Open {
+            // attach-rtt: the open asks for the stream too, under the app's
+            // own window rule's inputs; `opened` checks what comes back.
+            Self::Open { target, preferred } => CatalogAction::Attach {
                 scope: target.scope.clone(),
                 live_session_id: target.live.clone(),
+                preferred: preferred.clone(),
+                max_panes: herdr_client::tmux_stream::MAX_PANES,
             },
             Self::Issue {
                 target,

@@ -39,31 +39,32 @@ actions!(
 /// (scripts/app-bundle-metadata.mjs) says the same.
 pub(crate) const APP_NAME: &str = "Tmux IDE";
 
-/// The keystroke each shortcut item stands for.
+/// The keystroke each shortcut item stands for, from the app's key table.
 pub(super) fn keystroke(action: &dyn Action) -> Option<&'static str> {
+    use super::keymap::Id;
     let any = action.as_any();
-    let pairs: [(bool, &'static str); 16] = [
-        (any.is::<CommandPalette>(), "f5"),
-        (any.is::<SessionsAndPanes>(), "f6"),
-        (any.is::<ShowHome>(), "f1"),
-        (any.is::<ShowTerminals>(), "f2"),
-        (any.is::<Attention>(), "f7"),
-        (any.is::<ToggleSidebar>(), "f10"),
-        (any.is::<SplitRight>(), "cmd-d"),
-        (any.is::<SplitDown>(), "cmd-shift-d"),
-        (any.is::<ZoomPane>(), "cmd-shift-enter"),
-        (any.is::<ClosePane>(), "cmd-w"),
-        (any.is::<FocusPaneLeft>(), "cmd-alt-left"),
-        (any.is::<FocusPaneRight>(), "cmd-alt-right"),
-        (any.is::<FocusPaneUp>(), "cmd-alt-up"),
-        (any.is::<FocusPaneDown>(), "cmd-alt-down"),
-        (any.is::<NewTerminalWindow>(), "cmd-t"),
-        (any.is::<NextWindow>(), "cmd-}"),
+    let pairs: [(bool, Id); 17] = [
+        (any.is::<CommandPalette>(), Id::Commands),
+        (any.is::<SessionsAndPanes>(), Id::SessionsAndPanes),
+        (any.is::<ShowHome>(), Id::Home),
+        (any.is::<ShowTerminals>(), Id::Terminals),
+        (any.is::<Attention>(), Id::Attention),
+        (any.is::<ToggleSidebar>(), Id::Sidebar),
+        (any.is::<SplitRight>(), Id::SplitRight),
+        (any.is::<SplitDown>(), Id::SplitDown),
+        (any.is::<ZoomPane>(), Id::Zoom),
+        (any.is::<ClosePane>(), Id::ClosePane),
+        (any.is::<FocusPaneLeft>(), Id::FocusLeft),
+        (any.is::<FocusPaneRight>(), Id::FocusRight),
+        (any.is::<FocusPaneUp>(), Id::FocusUp),
+        (any.is::<FocusPaneDown>(), Id::FocusDown),
+        (any.is::<NewTerminalWindow>(), Id::NewWindow),
+        (any.is::<NextWindow>(), Id::NextWindow),
+        (any.is::<PreviousWindow>(), Id::PreviousWindow),
     ];
     pairs
         .into_iter()
-        .find_map(|(matched, key)| matched.then_some(key))
-        .or_else(|| any.is::<PreviousWindow>().then_some("cmd-{"))
+        .find_map(|(matched, id)| matched.then(|| super::keymap::keystroke(id)))
 }
 
 /// The app's menus. Titles carry no hand-typed shortcuts (PM, #674): real key

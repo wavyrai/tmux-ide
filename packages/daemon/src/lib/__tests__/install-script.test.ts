@@ -16,7 +16,7 @@ function failedSubtests(tap: string): string[] {
   return failed;
 }
 
-// One authoritative installer suite serves the daemon gate and Node 20 package
+// One authoritative installer suite serves the daemon gate and Node 24 package
 // checks. The universal installer now owns its runtime and npm prefix, so the
 // former system-Node/global-manager fixtures no longer describe its contract.
 //

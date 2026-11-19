@@ -114,19 +114,18 @@ fn owner_replacement_requires_explicit_reset_and_reuses_the_worker() {
 }
 
 #[test]
-fn cancelling_during_session_validation_prevents_the_later_admission_post() {
+fn cancelling_before_the_open_is_sent_prevents_the_admission_post() {
+    // The open is one POST (attach-rtt); a cancel while the server is being
+    // selected for it means the POST never goes out.
     let (entered, waiting) = std::sync::mpsc::channel();
     let (release, held) = std::sync::mpsc::channel();
     let live = "live-session.0123456789abcdef0123";
-    let (port, peer) = peer_many(4, move |index| match index {
+    let (port, peer) = peer_many(3, move |index| match index {
         0 => response(&identity()),
-        2 => {
+        1 => {
             entered.send(()).unwrap();
             held.recv_timeout(Duration::from_secs(5)).unwrap();
-            let scope = server_scope();
-            response(
-                &serde_json::json!({"version":1,"server":{"serverId":scope.server_id,"generation":scope.generation},"sessions":[{"liveSessionId":live,"sessionName":"fixture","workspaceName":null,"paneCount":1}]}),
-            )
+            response(&registrations())
         }
         _ => response(&registrations()),
     });
@@ -147,6 +146,6 @@ fn cancelling_during_session_validation_prevents_the_later_admission_post() {
         CatalogResult::Servers(_)
     ));
     let requests = peer.join().unwrap();
-    assert_eq!(requests.matches("GET ").count(), 4);
+    assert_eq!(requests.matches("GET ").count(), 3);
     assert!(!requests.contains("POST "));
 }

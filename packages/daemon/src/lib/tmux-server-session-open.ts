@@ -8,7 +8,13 @@ import { WorkspaceCatalogLiveSessionIdSchemaZ } from "@tmux-ide/contracts";
 import { liveSessionIdForNativeIdentity } from "../terminal/protocol/live-session-identity.ts";
 import { fleetSessionIdForName } from "../command-center/resources/fleet-catalog.ts";
 import { isVisibleFleetSession } from "../command-center/discovery.ts";
-import { WorkspacePromotionAuthority } from "./workspace-promotion.ts";
+import {
+  ADOPTED_OPTION,
+  hasValidPaneStamp,
+  SEMANTIC_PANE_OPTION,
+  SEMANTIC_WINDOW_OPTION,
+  WorkspacePromotionAuthority,
+} from "./workspace-promotion.ts";
 import type { WorkspaceRegistry } from "./workspace-registry.ts";
 import { shellEscape } from "./shell.ts";
 
@@ -28,30 +34,62 @@ export function createNativeTmuxSessionOpener(options: {
   };
   const open = async (liveSessionId: string, observed?: ObservedAgent) => {
     assertOpen();
+    // One row per pane: the session's identity, whether it is adopted, and
+    // each window's and pane's stamp. tmux rejects tabs in session names, so
+    // the name is the last field; a pane stamp with a tab is invalid anyway.
     const records = await options.run([
-      "list-sessions",
+      "list-panes",
+      "-a",
       "-F",
-      "#{pid}\t#{session_id}\t#{session_created}\t#{session_name}",
+      `#{pid}\t#{session_id}\t#{session_created}\t#{${ADOPTED_OPTION}}\t#{${SEMANTIC_WINDOW_OPTION}}\t#{${SEMANTIC_PANE_OPTION}}\t#{session_name}`,
     ]);
-    // The final field is an exact session identity; spaces are valid name bytes.
-    const matches = records
+    const rows = records
       .replace(/\n+$/u, "")
       .split("\n")
       .map((line) => line.split("\t"))
+      .filter((fields) => fields.length >= 7)
+      .map((fields) => ({
+        // A tab can only come from a window or pane stamp: such a row never
+        // takes the fast path below.
+        exact: fields.length === 7,
+        pid: fields[0]!,
+        id: fields[1]!,
+        created: fields[2]!,
+        adopted: fields[3]!,
+        window: fields.slice(4, -2).join("\t"),
+        pane: fields.at(-2)!,
+        name: fields.at(-1)!,
+      }))
       .filter(
-        ([pid, id, created, name]) =>
-          pid &&
+        ({ pid, id, created, name }) =>
           /^\d+$/.test(pid) &&
-          id &&
           /^\$\d+$/.test(id) &&
-          created &&
           /^\d+$/.test(created) &&
           name &&
           isVisibleFleetSession(name) &&
           liveSessionIdForNativeIdentity(pid, id, created) === liveSessionId,
       );
-    if (matches.length !== 1) throw new Error("Selected live tmux session is no longer available");
-    const [, nativeSessionId, created, name] = matches[0]!;
+    if (new Set(rows.map((row) => row.id)).size !== 1)
+      throw new Error("Selected live tmux session is no longer available");
+    const { id: nativeSessionId, created, name } = rows[0]!;
+    // Re-opening a session that an earlier open already finished changes
+    // nothing: it is adopted, has exactly one durable alias, and every window
+    // and pane already carries a stamp. Promotion would only read it again
+    // (seven tmux commands), so skip it. Anything else promotes as before,
+    // which also stamps panes split since the last open.
+    const aliases = options.registry.list().filter((entry) => entry.sessionName === name);
+    if (
+      !observed &&
+      aliases.length === 1 &&
+      !options.registry.isVolatile(aliases[0]!.name) &&
+      rows.every(
+        (row) =>
+          row.exact && row.adopted === "1" && row.window.length > 0 && hasValidPaneStamp(row.pane),
+      )
+    ) {
+      assertOpen();
+      return { workspaceName: aliases[0]!.name, liveSessionId };
+    }
     // Each command checks the exact native session on the server accepting it.
     // A name-only validation followed by stamping would cross a session replacement.
     const run = async (args: readonly string[]) => {
@@ -62,7 +100,7 @@ export function createNativeTmuxSessionOpener(options: {
       const output = await options.run([
         "if-shell",
         "-t",
-        nativeSessionId!,
+        nativeSessionId,
         "-F",
         condition,
         command,
@@ -74,7 +112,7 @@ export function createNativeTmuxSessionOpener(options: {
       return output;
     };
     const agent = observed
-      ? await captureAgentAdmission(run, { id: nativeSessionId!, name: name! }, observed)
+      ? await captureAgentAdmission(run, { id: nativeSessionId, name }, observed)
       : null;
     await agent?.verify(false);
     const promotion = new WorkspacePromotionAuthority({
@@ -86,9 +124,9 @@ export function createNativeTmuxSessionOpener(options: {
       const result = await promotion.promote({
         operationId: randomUUID(),
         expectedDaemonInstanceId: options.generation,
-        intent: { sessionId: fleetSessionIdForName(name!) },
+        intent: { sessionId: fleetSessionIdForName(name) },
       });
-      await run(["display-message", "-p", "-t", nativeSessionId!, "#{session_id}"]);
+      await run(["display-message", "-p", "-t", nativeSessionId, "#{session_id}"]);
       const semanticPaneId = await agent?.verify(true);
       return {
         workspaceName: result.resource.workspaceName,

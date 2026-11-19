@@ -13,6 +13,8 @@ pub struct ServerClient {
     scope: ServerScope,
     retired: AtomicBool,
     request_cancelled: Option<Arc<AtomicBool>>,
+    /// attach-rtt: the next stream's socket, dialed when an open began.
+    pub(super) prepared: std::sync::Mutex<Option<crate::tmux_stream::PreparedSocket>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,6 +91,7 @@ impl super::owner::Owner {
             scope: scope.clone(),
             retired: AtomicBool::new(false),
             request_cancelled: None,
+            prepared: std::sync::Mutex::new(None),
         })
     }
 }
@@ -114,13 +117,17 @@ impl ServerClient {
             Ok(())
         }
     }
-    /// The daemon's product version, when it is the local one. A remote
-    /// daemon's version is not known, so it gets no feature gated on one.
+    /// The daemon's product version, local or over SSH. A remote one is the
+    /// version in its SSH descriptor, which each socket of the route proves:
+    /// the daemon's `/identity` on that socket must name the same version,
+    /// instance and start, or the socket is refused before any request. A
+    /// daemon updated underneath fails that proof, and the route that
+    /// replaces it carries the new version.
     pub(super) fn product_version(&self) -> Option<String> {
         match &self.daemon {
             super::owner::Owner::Local(local) => Some(local.product_version().to_owned()),
             #[cfg(unix)]
-            super::owner::Owner::Remote(_) => None,
+            super::owner::Owner::Remote(remote) => Some(remote.product_version().to_owned()),
         }
     }
     /// Whether this daemon streams one window (#806).

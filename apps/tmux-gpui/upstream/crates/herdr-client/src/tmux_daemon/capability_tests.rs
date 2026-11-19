@@ -233,6 +233,70 @@ fn released_daemons_before_2_9_25_keep_118_and_2_9_25_gets_120() {
     }
 }
 
+/// #718: capability 123 (each layout pane's browser kind) is offered to a
+/// daemon release that knows it, 2.9.26 or later, which also takes up to 16
+/// numbers. Released daemons refuse a tenth number, so for them, for a
+/// remote daemon (no version) and for anything that is not a plain release
+/// number the offer stays exactly as it was. A surface source, which has no
+/// header, never asks for it.
+#[test]
+fn the_browser_kind_is_offered_only_to_a_daemon_that_knows_it() {
+    for graphics in [false, true] {
+        for local_images in [false, true] {
+            for native_surfaces in [false, true] {
+                for interactive in [false, true] {
+                    for version in [
+                        None,
+                        Some("2.9.24"),
+                        Some("2.9.25"),
+                        Some("2.9.26"),
+                        Some("2.10.0"),
+                        Some("3.0.0"),
+                        Some("2.9.26-rc.1"),
+                        Some("dev"),
+                    ] {
+                        let case = (
+                            graphics,
+                            local_images,
+                            native_surfaces,
+                            interactive,
+                            version,
+                        );
+                        let before = offered_versions(
+                            graphics,
+                            local_images,
+                            native_surfaces,
+                            interactive,
+                            knows_topology_bundle(version),
+                        );
+                        let offer = with_browser_kind(before.clone(), graphics, version);
+                        let knows = matches!(version, Some("2.9.26" | "2.10.0" | "3.0.0"));
+                        if graphics && knows {
+                            assert_eq!(offer[..offer.len() - 1], before[..], "{case:?}");
+                            assert_eq!(offer.last(), Some(&123), "{case:?}");
+                            assert!(offer.len() <= 16, "{case:?}: {offer:?}");
+                        } else {
+                            assert_eq!(offer, before, "{case:?}");
+                            assert!(offer.len() <= 9, "{case:?}: {offer:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // A full 2.9.26 offer gets no 17th number.
+    let full: Vec<u32> = (200..216).collect();
+    assert_eq!(with_browser_kind(full.clone(), true, Some("2.9.26")), full);
+    assert_eq!(
+        with_browser_kind(
+            offered_versions(true, true, true, true, true),
+            true,
+            Some("2.9.26")
+        ),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123]
+    );
+}
+
 /// #806: a window-scoped selection names its window only to a daemon that
 /// knows window-scoped streams; a released daemon would refuse the field, so
 /// the selection fails here instead. A whole-session selection is unchanged.
@@ -273,4 +337,86 @@ fn an_invalid_window_id_cannot_reach_the_owner() {
     let mut s = selection();
     s.window = Some("window.two".into());
     assert!(s.validate().is_ok());
+}
+
+/// Capability 122 goes only to a daemon release that has it (2.9.27: the
+/// released 2.9.26 lacks #435); older or unknown daemons keep the same offer
+/// of at most nine numbers.
+#[test]
+fn history_on_demand_is_offered_only_from_2_9_27() {
+    for (graphics, local, surfaces, interactive) in [
+        (true, true, true, true),
+        (true, false, false, true),
+        (false, false, false, false),
+    ] {
+        let base = |version: &str| {
+            offered_versions(
+                graphics,
+                local,
+                surfaces,
+                interactive,
+                knows_topology_bundle(Some(version)),
+            )
+        };
+        for knowing in ["2.9.27", "2.10.0", "3.0.0"] {
+            let offer = with_partial_history(base(knowing), Some(knowing));
+            assert_eq!(offer.last(), Some(&122), "{knowing}: {offer:?}");
+            assert_eq!(offer[..offer.len() - 1], base(knowing)[..]);
+            assert!(offer.len() <= 16);
+        }
+        for older in ["2.9.25", "2.9.26", "2.9.27-rc.1", "bad"] {
+            let offer = with_partial_history(base(older), Some(older));
+            assert!(
+                !offer.contains(&122) && offer.len() <= 9,
+                "{older}: {offer:?}"
+            );
+        }
+        assert!(!with_partial_history(base("2.9.25"), None).contains(&122));
+    }
+}
+
+/// Capability 124 (pipelined delivery) goes only to a daemon release that
+/// has it (2.9.27); older or unknown daemons get the offer unchanged.
+#[test]
+fn pipelined_delivery_is_offered_only_from_2_9_27() {
+    let base = || vec![1, 101, 114, 120, 103, 104, 116, 105, 106];
+    for knowing in ["2.9.27", "2.10.0", "3.0.0"] {
+        let offer = with_pipelining(base(), Some(knowing));
+        assert_eq!(offer.last(), Some(&124), "{knowing}: {offer:?}");
+        assert_eq!(offer[..offer.len() - 1], base()[..]);
+    }
+    for older in ["2.9.25", "2.9.26", "2.9.27-rc.1", "bad"] {
+        assert_eq!(with_pipelining(base(), Some(older)), base(), "{older}");
+    }
+    assert_eq!(with_pipelining(base(), None), base());
+    // Never past the 16 numbers a daemon takes.
+    let full: Vec<u32> = (1..=16).collect();
+    assert_eq!(with_pipelining(full.clone(), Some("2.9.27")), full);
+}
+
+/// The offer the issue request sends, with every step in place: 123 (#446),
+/// then 122, then 124 for a daemon that knows each, and the released 2.9.25
+/// offer unchanged. A merge that drops any step fails here.
+#[test]
+fn the_issue_offer_carries_browser_kind_then_history_on_demand() {
+    let full = |version: &str| issue_versions(true, true, true, true, Some(version));
+    assert_eq!(full("2.9.25"), [1, 101, 114, 120, 103, 104, 116, 105, 106]);
+    assert_eq!(
+        full("2.9.25"),
+        offered_versions(
+            true,
+            true,
+            true,
+            true,
+            knows_topology_bundle(Some("2.9.25"))
+        )
+    );
+    assert_eq!(
+        full("2.9.26"),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123]
+    );
+    assert_eq!(
+        full("2.9.27"),
+        [1, 101, 114, 120, 103, 104, 116, 105, 106, 123, 122, 124]
+    );
 }

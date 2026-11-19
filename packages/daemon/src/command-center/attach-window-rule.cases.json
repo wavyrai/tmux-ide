@@ -1,0 +1,84 @@
+[
+  {
+    "name": "a session that fits streams whole, preferred pane selected",
+    "windows": [
+      { "id": "window.a", "active": false, "panes": ["pane.1", "pane.2"] },
+      { "id": "window.b", "active": true, "panes": ["pane.3"] }
+    ],
+    "preferred": "pane.3",
+    "maxPanes": 3,
+    "expect": { "window": null, "panes": ["pane.1", "pane.2", "pane.3"], "selected": "pane.3" }
+  },
+  {
+    "name": "a whole session without a preferred pane selects the first",
+    "windows": [{ "id": "window.a", "active": true, "panes": ["pane.1", "pane.2"] }],
+    "preferred": null,
+    "maxPanes": 2,
+    "expect": { "window": null, "panes": ["pane.1", "pane.2"], "selected": "pane.1" }
+  },
+  {
+    "name": "a preferred pane that is gone selects the first",
+    "windows": [{ "id": "window.a", "active": true, "panes": ["pane.1"] }],
+    "preferred": "pane.9",
+    "maxPanes": 24,
+    "expect": { "window": null, "panes": ["pane.1"], "selected": "pane.1" }
+  },
+  {
+    "name": "too many panes: the window holding the preferred pane",
+    "windows": [
+      { "id": "window.a", "active": true, "panes": ["pane.1", "pane.2"] },
+      { "id": "window.b", "active": false, "panes": ["pane.3", "pane.4"] }
+    ],
+    "preferred": "pane.4",
+    "maxPanes": 3,
+    "expect": { "window": "window.b", "panes": ["pane.3", "pane.4"], "selected": "pane.4" }
+  },
+  {
+    "name": "too many panes and no preferred pane: the active window",
+    "windows": [
+      { "id": "window.a", "active": false, "panes": ["pane.1", "pane.2"] },
+      { "id": "window.b", "active": true, "panes": ["pane.3", "pane.4"] }
+    ],
+    "preferred": null,
+    "maxPanes": 3,
+    "expect": { "window": "window.b", "panes": ["pane.3", "pane.4"], "selected": "pane.3" }
+  },
+  {
+    "name": "the wanted window does not fit: the active one",
+    "windows": [
+      { "id": "window.a", "active": false, "panes": ["pane.1", "pane.2", "pane.5"] },
+      { "id": "window.b", "active": true, "panes": ["pane.3"] }
+    ],
+    "preferred": "pane.2",
+    "maxPanes": 2,
+    "expect": { "window": "window.b", "panes": ["pane.3"], "selected": "pane.3" }
+  },
+  {
+    "name": "neither wanted nor active fits: the first that fits",
+    "windows": [
+      { "id": "window.a", "active": true, "panes": ["pane.1", "pane.2", "pane.5"] },
+      { "id": "window.b", "active": false, "panes": ["pane.3", "pane.6", "pane.7"] },
+      { "id": "window.c", "active": false, "panes": ["pane.4"] }
+    ],
+    "preferred": null,
+    "maxPanes": 2,
+    "expect": { "window": "window.c", "panes": ["pane.4"], "selected": "pane.4" }
+  },
+  {
+    "name": "nothing fits: no selection",
+    "windows": [
+      { "id": "window.a", "active": true, "panes": ["pane.1", "pane.2"] },
+      { "id": "window.b", "active": false, "panes": ["pane.3", "pane.4"] }
+    ],
+    "preferred": null,
+    "maxPanes": 1,
+    "expect": null
+  },
+  {
+    "name": "no panes: no selection",
+    "windows": [],
+    "preferred": null,
+    "maxPanes": 24,
+    "expect": null
+  }
+]

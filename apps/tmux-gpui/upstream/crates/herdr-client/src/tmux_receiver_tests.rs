@@ -8,6 +8,7 @@ fn receiver() -> Receiver {
     Receiver::new(
         Negotiated {
             alternate_screen_projection: None,
+            partial_history: None,
             protocol_version: 1,
             encoding: "semantic-compact-v1".into(),
             fallback_encoding: None,

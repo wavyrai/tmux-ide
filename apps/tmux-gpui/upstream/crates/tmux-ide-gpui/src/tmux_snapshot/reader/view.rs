@@ -32,6 +32,14 @@ struct PaneView {
     updated_at: Option<Instant>,
 }
 
+/// Where a reader paints: its pane's content area, and whether it reaches
+/// the canvas's right or bottom edge instead of the grid's.
+struct Place {
+    rect: Bounds<Pixels>,
+    right: bool,
+    bottom: bool,
+}
+
 struct Find {
     pane: String,
     input: Entity<SearchInput>,
@@ -78,9 +86,16 @@ impl SnapshotView {
             self.reader.panes.clear();
             return Vec::new();
         }
-        let Some(cards) = self.card_layout(width) else {
+        let Some(mut cards) = self.card_layout(width) else {
             return Vec::new();
         };
+        // A divider drag shows its preview before tmux answers; the reader
+        // follows it as the headers do.
+        if let Some(preview) = self.divider_content_preview() {
+            cards = cards.reflow(&preview.regions);
+        }
+        let right = cards.regions.iter().map(|r| r.left + r.width).max();
+        let bottom = cards.regions.iter().map(|r| r.top + r.height).max();
         if !cx.has_global::<LinksInstalled>() {
             bezel_markdown::AppExt::set_links::<super::ReaderLinks>(&mut **cx);
             cx.set_global(LinksInstalled);
@@ -94,8 +109,16 @@ impl SnapshotView {
             let Some(published) = self.painted_reader(&region.id) else {
                 continue;
             };
-            let rect = cards.content(region);
-            out.push(self.reader_body(&region.id, &published, rect, window, cx));
+            // A card on the canvas's right or bottom edge is painted out to
+            // that edge on every frame (`card_in`), before tmux answers a
+            // resize with a new grid. The reader reaches the same edge, so
+            // it reflows with the window, not when the grid catches up.
+            let place = Place {
+                rect: cards.content(region),
+                right: right == Some(region.left + region.width),
+                bottom: bottom == Some(region.top + region.height),
+            };
+            out.push(self.reader_body(&region.id, &published, place, window, cx));
         }
         out
     }
@@ -104,10 +127,11 @@ impl SnapshotView {
         &mut self,
         pane: &str,
         published: &Published,
-        rect: Bounds<Pixels>,
+        place: Place,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let rect = place.rect;
         let palette = crate::tmux_snapshot::design::palette(&self.theme());
         let view = self.reader.panes.entry(pane.to_owned()).or_default();
         if view.generation != published.generation {
@@ -133,8 +157,14 @@ impl SnapshotView {
             .absolute()
             .left(rect.origin.x)
             .top(rect.origin.y)
-            .w(rect.size.width)
-            .h(rect.size.height)
+            .map(|shell| match place.right {
+                true => shell.right(px(crate::tmux_snapshot::pane_cards::PAD)),
+                false => shell.w(rect.size.width),
+            })
+            .map(|shell| match place.bottom {
+                true => shell.bottom(px(crate::tmux_snapshot::pane_cards::V_PAD)),
+                false => shell.h(rect.size.height),
+            })
             .overflow_hidden()
             .occlude()
             .bg(palette.terminal_bg)

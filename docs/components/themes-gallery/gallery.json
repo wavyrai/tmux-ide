@@ -385,7 +385,7 @@
     "packages/daemon/src/tui/mirror/terminal-retained-row.ts": "28fe960aa61b00a2",
     "packages/daemon/src/tui/mirror/terminal-text.ts": "b2e96772883fa9af",
     "packages/daemon/src/tui/mirror/terminal-viewport.ts": "7bd010e9940f51d3",
-    "packages/daemon/src/tui/mirror/theme.ts": "00e45a02cff1e3f7",
+    "packages/daemon/src/tui/mirror/theme.ts": "7fa10070b8a7fc42",
     "packages/daemon/src/tui/mirror/ui/activity-indicator.tsx": "41a1d9670ca32056",
     "packages/daemon/src/tui/mirror/ui/agent-badge.tsx": "a6cb549d65533431",
     "packages/daemon/src/tui/mirror/ui/agent-row.tsx": "904ee2d8a89ec351",

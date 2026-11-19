@@ -3,7 +3,7 @@
 /**
  * Opt-in live stress for ADR-0003.
  *
- * Usage (Node 20+):
+ * Usage (Node 24+):
  *   node --experimental-strip-types --expose-gc \
  *     packages/daemon/scripts/stress-bounded-pty-input.mjs
  *

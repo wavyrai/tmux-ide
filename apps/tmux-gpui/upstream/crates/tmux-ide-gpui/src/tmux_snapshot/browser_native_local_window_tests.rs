@@ -80,3 +80,52 @@ fn the_active_window_comes_before_the_first_that_fits() {
         ("active", Some(OTHER_WINDOW))
     );
 }
+
+/// attach-rtt: the daemon chooses an attach's window with the same rule
+/// (packages/daemon …/tmux-server-attach.ts); both run this table.
+#[test]
+fn the_window_rule_matches_the_daemons_attach_table() {
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../../../packages/daemon/src/command-center/attach-window-rule.cases.json"
+    ))
+    .unwrap();
+    for case in cases.as_array().unwrap() {
+        let windows: Vec<InventoryWindow> = case["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| InventoryWindow {
+                id: w["id"].as_str().unwrap().into(),
+                active: w["active"].as_bool().unwrap(),
+                panes: serde_json::from_value(w["panes"].clone()).unwrap(),
+            })
+            .collect();
+        let mut panes = all(&windows);
+        panes.sort();
+        let preferred = case["preferred"].as_str();
+        let max = case["maxPanes"].as_u64().unwrap();
+        // What `opened` does: a window when the session does not fit, the
+        // whole session when it does, no stream when nothing fits.
+        let chosen = if panes.is_empty() {
+            None
+        } else {
+            match scope_within(&panes, Some(&windows), preferred, max) {
+                Some(scoped) => Some((Some(scoped.window), scoped.panes)),
+                None if u64::try_from(panes.len()).unwrap() <= max => Some((None, panes.clone())),
+                None => None,
+            }
+        };
+        let actual = chosen.map(|(window, panes)| {
+            let selected = preferred
+                .filter(|p| panes.iter().any(|q| q == p))
+                .map_or_else(|| panes[0].clone(), str::to_owned);
+            serde_json::json!({"window": window, "panes": panes, "selected": selected})
+        });
+        assert_eq!(
+            actual.unwrap_or(serde_json::Value::Null),
+            case["expect"],
+            "{}",
+            case["name"]
+        );
+    }
+}

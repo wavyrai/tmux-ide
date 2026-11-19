@@ -133,7 +133,24 @@ impl NativePresentation {
             && self
                 .viewport
                 .live()
-                .is_some_and(|s| !s.history.is_complete())
+                .is_some_and(|s| s.history.is_deferred())
+    }
+    /// Capability 122: the selected pane's older history rows are wanted, as
+    /// the view nears the oldest loaded row (within a screen) or a restore
+    /// waits for them. Only rows the scrollback can show count: once it holds
+    /// fewer rows than are loaded (`tmux_history::MAX_ROWS` and `MAX_BYTES`),
+    /// older rows would never be shown.
+    pub fn history_wanted(&self) -> bool {
+        let Some(s) = self.viewport.live() else {
+            return false;
+        };
+        let loaded = s.history.materialized().map_or(0, <[_]>::len);
+        !s.modes.alternate_screen
+            && s.history.unloaded_rows() > 0
+            && !s.history.is_deferred()
+            && self.viewport.history_len() == loaded
+            && loaded < herdr_client::tmux_history::MAX_ROWS
+            && (self.pending_restore.is_some() || self.viewport.offset() + 2 * s.rows >= loaded)
     }
     pub fn restore_history(&mut self, token: String, now_ms: u64) {
         self.applied = None;
@@ -144,7 +161,7 @@ impl NativePresentation {
             && self
                 .viewport
                 .live()
-                .is_some_and(|s| s.history.is_complete())
+                .is_some_and(|s| history_ready(s, self.viewport.history_len()))
         {
             self.pending_restore = None;
             self.history_action = self
@@ -280,7 +297,7 @@ impl NativePresentation {
         }
         let was_historical = self.viewport.offset() > 0;
         self.viewport.update(scope, canonical.clone());
-        if canonical.history.is_complete()
+        if !canonical.history.is_deferred()
             && let Some(command) = self.pending_materialized_scroll.take()
         {
             self.viewport.scroll(command);
@@ -302,7 +319,7 @@ impl NativePresentation {
         self.proof = Some(proof.clone());
         self.restoration
             .observe(proof.clone(), &mut self.viewport, now_ms);
-        if canonical.history.is_complete()
+        if history_ready(canonical, self.viewport.history_len())
             && let Some((token, requested_at)) = self.pending_restore.take()
         {
             self.history_action =
@@ -425,52 +442,52 @@ impl NativePresentation {
             }
             self.selected = Some(paint.selected_pane.clone());
         }
-        let selection_identity = if coherent && canonical.history.is_complete() && !self.restoring()
-        {
-            let identity = &source.source.identity;
-            let key = digest(&[
-                "selection",
-                &self.scope,
-                &paint.window,
-                &paint.selected_pane,
-                &identity.generation,
-                &identity.incarnation,
-                &format!(
-                    "{width}:{height}:{}:{}:{}:{}:{}",
-                    region.left,
-                    region.top,
-                    region.width,
-                    region.height,
-                    snapshot.modes.alternate_screen
-                ),
-            ]);
-            let same = self.selection.as_ref().is_some_and(|old| {
-                old.key == key
-                    && old.rows.len() == snapshot.grid.len()
-                    && old
-                        .rows
-                        .iter()
-                        .zip(&snapshot.grid)
-                        .all(|(a, b)| Arc::ptr_eq(a, b))
-            });
-            if !same {
-                self.serial = self
-                    .serial
-                    .checked_add(1)
-                    .ok_or(Error::Invalid("native selection serial exhausted"))?;
-                self.selection = Some(Selection {
-                    token: digest(&[&key, &self.serial.to_string()]),
-                    key,
-                    rows: snapshot.grid.clone(),
+        let selection_identity =
+            if coherent && !canonical.history.is_deferred() && !self.restoring() {
+                let identity = &source.source.identity;
+                let key = digest(&[
+                    "selection",
+                    &self.scope,
+                    &paint.window,
+                    &paint.selected_pane,
+                    &identity.generation,
+                    &identity.incarnation,
+                    &format!(
+                        "{width}:{height}:{}:{}:{}:{}:{}",
+                        region.left,
+                        region.top,
+                        region.width,
+                        region.height,
+                        snapshot.modes.alternate_screen
+                    ),
+                ]);
+                let same = self.selection.as_ref().is_some_and(|old| {
+                    old.key == key
+                        && old.rows.len() == snapshot.grid.len()
+                        && old
+                            .rows
+                            .iter()
+                            .zip(&snapshot.grid)
+                            .all(|(a, b)| Arc::ptr_eq(a, b))
                 });
-            }
-            self.selection
-                .as_ref()
-                .map(|selection| selection.token.clone())
-        } else {
-            self.selection = None;
-            None
-        };
+                if !same {
+                    self.serial = self
+                        .serial
+                        .checked_add(1)
+                        .ok_or(Error::Invalid("native selection serial exhausted"))?;
+                    self.selection = Some(Selection {
+                        token: digest(&[&key, &self.serial.to_string()]),
+                        key,
+                        rows: snapshot.grid.clone(),
+                    });
+                }
+                self.selection
+                    .as_ref()
+                    .map(|selection| selection.token.clone())
+            } else {
+                self.selection = None;
+                None
+            };
         state.renderer_probe_scope =
             super::renderer_probe::runtime::enabled().then(|| super::renderer_probe::Scope {
                 pane: paint.selected_pane.clone(),
@@ -594,6 +611,17 @@ fn pointer_modes(modes: &herdr_client::tmux_delivery::Modes) -> Option<decode::P
 #[path = "browser_direct_tests.rs"]
 mod tests;
 
+/// Every history row the scrollback can show is here: the whole history, or,
+/// for a partial one, more rows than the scrollback holds (`shown`, bounded
+/// by `tmux_history::MAX_ROWS` and `MAX_BYTES`).
+fn history_ready(snapshot: &herdr_client::tmux_delivery::Snapshot, shown: usize) -> bool {
+    let history = &snapshot.history;
+    let loaded = history.materialized().map_or(0, <[_]>::len);
+    !history.is_deferred()
+        && (history.unloaded_rows() == 0
+            || shown < loaded
+            || loaded >= herdr_client::tmux_history::MAX_ROWS)
+}
 /// Menu actions expire across focus changes; input/focus lifetime identities stay stable.
 pub(super) fn action_token(
     input_token: &str,

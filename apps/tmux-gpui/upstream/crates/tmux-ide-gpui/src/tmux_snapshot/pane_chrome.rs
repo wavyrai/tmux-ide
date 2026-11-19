@@ -633,6 +633,11 @@ impl SnapshotView {
             .iter()
             .find(|pane| pane.id == header.id)
             .and_then(|pane| pane.browser_icon.as_deref());
+        // #718: a plain terminal browser has no controls; say so after the
+        // title. Controls that did arrive win over a stale kind.
+        let plain = browser.is_none()
+            && self.browser_state.plain_browsers.contains(&header.id)
+            && !self.browser_state.browser_controls.contains_key(&header.id);
         let selected = self.browser_state.selected_pane.as_deref() == Some(&header.id);
         let theme = self.theme();
         let ink = header_ink(&theme);
@@ -710,6 +715,21 @@ impl SnapshotView {
                     .child(label(&self.browser_state, &header.id))
                     .into_any_element()
             }))
+            .when(plain, |row| {
+                row.child(
+                    div()
+                        .debug_selector({
+                            let id = header.id.clone();
+                            move || format!("pane-plain-browser:{id}")
+                        })
+                        .min_w_0()
+                        .flex_shrink(2.)
+                        .truncate()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(ink.muted)
+                        .child(PLAIN_BROWSER),
+                )
+            })
             // The agent's spinner or pill follows the title (#746 v3).
             .children(indicator)
     }
@@ -824,3 +844,5 @@ impl SnapshotView {
         result
     }
 }
+/// A plain terminal browser's header line (#718).
+pub(super) const PLAIN_BROWSER: &str = "This browser has no Tmux IDE controls";
