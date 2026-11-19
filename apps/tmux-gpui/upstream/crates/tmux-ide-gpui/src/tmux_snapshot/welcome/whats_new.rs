@@ -12,6 +12,9 @@ pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
         "0.1.21",
         &[
             "A setup guide for the window's look and the keys you'll use: Commands, Welcome to Tmux IDE…",
+            "Sessions on other machines open faster over SSH and no longer fail to open after a pause.",
+            "Typed keys show sooner over slow SSH links.",
+            "Panes load their older lines as you scroll up to them, instead of all at once.",
         ],
     ),
     (
