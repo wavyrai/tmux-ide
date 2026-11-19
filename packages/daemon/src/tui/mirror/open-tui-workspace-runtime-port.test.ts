@@ -1,5 +1,8 @@
 import { createTerminalFastLane } from "../../../../daemon-client/src/terminal-fast-lane.ts";
-import { STOCK_CAPTURE_TAB_UNAVAILABLE } from "@tmux-ide/contracts";
+import {
+  STOCK_CAPTURE_TAB_UNAVAILABLE,
+  TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -847,6 +850,10 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       viewerMode: "interactive",
       terminalDelivery: { encodings: ["semantic-compact-v1", "semantic-v1"] },
     });
+    // Capability 124: the endpoint holds pipelined patches, so it asks for them.
+    expect(test.options().stream.terminalDelivery?.protocolVersions).toContain(
+      TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
+    );
     expect(test.options().hostClientId).toBe(OPEN_TUI_HOST_CLIENT_ID);
     expect(test.options()).not.toHaveProperty("onTerminalFrameArrival");
     expect(test.options()).not.toHaveProperty("onInputTransportStage");
@@ -2922,5 +2929,112 @@ describe("review-454: TUI endpoint under pipelined daemon patches", () => {
     ]);
     expect(test.client.ack).not.toHaveBeenCalled();
     expect(test.client.close).not.toHaveBeenCalled();
+  }, 60_000);
+});
+
+describe("review-454b: TUI queue bounds", () => {
+  const cursorPatch = (previous: ReturnType<typeof blankTerminalReplicaSnapshot>) =>
+    applyTerminalReplicaPatch(previous, {
+      rows: [],
+      cursor: { ...previous.cursor, x: 1 },
+      modes: previous.modes,
+      placements: previous.placements,
+      bootstrap: previous.bootstrap,
+    });
+
+  async function open() {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    subscription.onUpdate(() => {});
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    return { test, port, subscription };
+  }
+  const send = (
+    test: ReturnType<typeof rig>,
+    d: { envelope: TerminalDeliveryEnvelope; chunks: unknown[] },
+  ) => {
+    test.options().onTerminalDelivery(PANE_A, d.envelope);
+    for (const chunk of d.chunks) test.options().onTerminalDelivery(PANE_A, chunk as never);
+  };
+
+  it("RB1 holds a pipelined patch behind a synchronously decoded, unsettled (frozen) flight", async () => {
+    const { test, subscription } = await open();
+    // The rig's seed is 4x2; a patch this small decodes synchronously.
+    const blank = blankTerminalReplicaSnapshot(4, 2);
+    const a = patchDelivery(PANE_A, blank, 0, 1, "501", "semantic-compact-v1");
+    const b = patchDelivery(PANE_A, cursorPatch(blank), 1, 2, "502", "semantic-compact-v1");
+    subscription.freeze();
+    send(test, a);
+    send(test, b);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.ack).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      a.envelope.transactionId,
+      b.envelope.transactionId,
+    ]);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("RB2 a fourth unacknowledged delivery is not queued (depth bound)", async () => {
+    const { test, port } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "511");
+    const b = compactHistoryPatchDelivery(a.next, 1, 2, uniqueHistoryRows(2_000, 1), "512");
+    const c = compactHistoryPatchDelivery(b.next, 2, 3, uniqueHistoryRows(2_001, 1), "513");
+    const d = compactHistoryPatchDelivery(c.next, 3, 4, uniqueHistoryRows(2_002, 1), "514");
+    send(test, a);
+    send(test, b);
+    send(test, c);
+    expect(test.client.close).not.toHaveBeenCalled();
+    send(test, d);
+    await port.closed;
+    expect(test.client.close).toHaveBeenCalledOnce();
+  }, 60_000);
+
+  it("RB3 a patch not based on the newest flight is not queued", async () => {
+    const { test, port } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "521");
+    const wrong = compactHistoryPatchDelivery(a.next, 0, 2, uniqueHistoryRows(2_000, 1), "522");
+    send(test, a);
+    send(test, wrong);
+    await port.closed;
+    expect(test.client.close).toHaveBeenCalledOnce();
+    expect(test.client.ack).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it("RB4 three pipelined patches with a cooperative head all apply and ACK in order", async () => {
+    const { test } = await open();
+    const blank = blankTerminalReplicaSnapshot(132, 41);
+    const a = compactHistoryPatchDelivery(blank, 0, 1, uniqueHistoryRows(0, 2_000), "531");
+    const b = compactHistoryPatchDelivery(a.next, 1, 2, uniqueHistoryRows(2_000, 2_000), "532");
+    const c = compactHistoryPatchDelivery(b.next, 2, 3, uniqueHistoryRows(4_000, 1), "533");
+    send(test, a);
+    send(test, b);
+    send(test, c);
+    await vi.waitFor(
+      () => expect(test.client.ack.mock.calls.length + test.client.close.mock.calls.length).toBe(3),
+      { timeout: 50_000, interval: 50 },
+    );
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      a.envelope.transactionId,
+      b.envelope.transactionId,
+      c.envelope.transactionId,
+    ]);
   }, 60_000);
 });
