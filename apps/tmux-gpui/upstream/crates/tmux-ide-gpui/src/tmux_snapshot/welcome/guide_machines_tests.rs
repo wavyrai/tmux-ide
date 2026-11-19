@@ -116,7 +116,7 @@ fn a_machine_that_could_not_connect_says_why_in_ssh_s_words() {
     assert_eq!(rows[1].status, "Couldn't connect");
     assert_eq!(
         rows[1].problem.as_deref(),
-        Some("spark: ssh said “Permission denied (publickey).”. The machine stays saved.")
+        Some("spark: ssh said: Permission denied (publickey). The machine stays saved.")
     );
     assert_eq!(rows[1].retry.as_deref(), Some("spark"));
     assert_eq!(
@@ -399,7 +399,7 @@ fn try_again_and_copy_details(cx: &mut TestAppContext) {
     assert_eq!(
         copied.as_deref(),
         Some(
-            "spark: ssh said “ssh: connect to host spark port 22: No route to host”. The machine stays saved."
+            "spark: ssh said: ssh: connect to host spark port 22: No route to host. The machine stays saved."
         )
     );
     click(cx, "welcome-retry-0");

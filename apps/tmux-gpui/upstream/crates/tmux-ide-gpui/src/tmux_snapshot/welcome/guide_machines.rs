@@ -191,7 +191,10 @@ pub(super) fn problem(label: &str, target: &str, said: Option<&str>, conflict: b
         );
     }
     match said {
-        Some(said) => format!("{label}: ssh said “{said}”. The machine stays saved."),
+        Some(said) => {
+            let end = if said.ends_with('.') { "" } else { "." };
+            format!("{label}: ssh said: {said}{end} The machine stays saved.")
+        }
         None => format!(
             "{label}: couldn't connect. Check that ssh {target} works in Terminal, then try again. The machine stays saved."
         ),
@@ -350,13 +353,15 @@ impl SnapshotView {
                                 .truncate()
                                 .child(row.label.clone()),
                         )
-                        .child(
-                            div()
-                                .text_style(TextStyle::Callout)
-                                .text_color(bezel.text_muted)
-                                .truncate()
-                                .child(row.detail.clone()),
-                        ),
+                        .when(row.detail != row.label, |d| {
+                            d.child(
+                                div()
+                                    .text_style(TextStyle::Callout)
+                                    .text_color(bezel.text_muted)
+                                    .truncate()
+                                    .child(row.detail.clone()),
+                            )
+                        }),
                 )
                 .child(
                     div()
@@ -406,11 +411,9 @@ impl SnapshotView {
                     .aria_label("Machine to add")
                     .flex_1()
                     .min_w_0()
-                    .px(px(8.))
-                    .py(px(4.))
-                    .rounded(px(6.))
+                    .rounded(px(8.))
                     .border_1()
-                    .border_color(bezel.border_faint)
+                    .border_color(transparent_black())
                     .when(field.read(cx).focus.is_focused(window), |d| {
                         d.border_color(field_ring)
                     })
@@ -595,16 +598,16 @@ pub(in crate::tmux_snapshot) fn capture(state: &mut browser::State) -> Result<()
     }))?);
     let session =
         |id: &str, name: &str| serde_json::json!({"id": id, "name": name, "paneCount": 2});
-    let group = |id: &str, state: &str, sessions: Vec<serde_json::Value>| {
-        serde_json::json!({"id": id, "label": id, "state": state, "conflict": false,
+    let group = |id: &str, label: &str, state: &str, sessions: Vec<serde_json::Value>| {
+        serde_json::json!({"id": id, "label": label, "state": state, "conflict": false,
             "omittedSessions": 0, "sessions": sessions})
     };
     state.fleet = Some(serde_json::from_value(serde_json::json!({
         "omittedGroups": 0,
         "groups": [
-            group("local", "ready", vec![session("l1", "api"), session("l2", "web"), session("l3", "notes")]),
-            group(SPARK, "ready", vec![session("s1", "train"), session("s2", "logs")]),
-            group(BUILD, "disconnected", vec![]),
+            group("local", "This Mac", "ready", vec![session("l1", "api"), session("l2", "web"), session("l3", "notes")]),
+            group(SPARK, "spark", "ready", vec![session("s1", "train"), session("s2", "logs")]),
+            group(BUILD, "build-box", "disconnected", vec![]),
         ],
     }))?);
     state.ssh_failure = Some(browser::SshFailure {
