@@ -234,30 +234,30 @@ fn bad_layout_does_not_replace_coherent_cache() {
 }
 #[test]
 fn styles_wide_continuations_and_placeholder_semantics_match_legacy_painter() {
-    let cell = Cell {
-        grapheme: Arc::from("界"),
+    let cell = CellRef {
+        grapheme: "界",
         width: 2,
         foreground: Color::Indexed { index: 17 },
         background: Color::Rgb { value: 0x123456 },
         attributes: 0xff,
     };
-    let paint = painter_cell(&cell).unwrap();
+    let paint = painter_cell(cell).unwrap();
     assert_eq!(paint.symbol, "界");
     assert_eq!(paint.fg, 0x01000011);
     assert_eq!(paint.bg, 0x02123456);
     assert_eq!(paint.modifier, 0x1cf);
     assert!(!paint.skip);
-    let continuation = Cell {
-        grapheme: Arc::from(""),
+    let continuation = CellRef {
+        grapheme: "",
         width: 0,
-        ..cell.clone()
-    };
-    assert!(painter_cell(&continuation).unwrap().skip);
-    let placeholder = Cell {
-        grapheme: Arc::from("\u{10eeee}"),
         ..cell
     };
-    assert_eq!(painter_cell(&placeholder).unwrap().symbol, " ");
+    assert!(painter_cell(continuation).unwrap().skip);
+    let placeholder = CellRef {
+        grapheme: "\u{10eeee}",
+        ..cell
+    };
+    assert_eq!(painter_cell(placeholder).unwrap().symbol, " ");
 }
 
 #[test]

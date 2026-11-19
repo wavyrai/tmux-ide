@@ -1,6 +1,8 @@
+pub use super::row::Row;
+pub use super::rows::Rows;
 use serde::Serialize;
 use std::sync::Arc;
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Color {
     Default,
@@ -14,32 +16,6 @@ pub struct Cell {
     pub foreground: Color,
     pub background: Color,
     pub attributes: u8,
-}
-/// Cells and their cached digest cannot be mutated after validation.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Row {
-    pub(super) cells: Vec<Cell>,
-    pub(super) wrapped: bool,
-    pub(super) digest: u64,
-}
-impl Row {
-    pub fn cells(&self) -> &[Cell] {
-        &self.cells
-    }
-    pub fn wrapped(&self) -> bool {
-        self.wrapped
-    }
-    pub fn digest(&self) -> u64 {
-        self.digest
-    }
-    pub(super) fn new(cells: Vec<Cell>, wrapped: bool) -> Self {
-        let digest = super::hash::hash_row(&cells, wrapped);
-        Self {
-            cells,
-            wrapped,
-            digest,
-        }
-    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -132,28 +108,28 @@ pub struct DeferredHistory {
 #[derive(Debug, Clone)]
 pub struct PartialHistory {
     pub unloaded: DeferredHistory,
-    pub loaded: Arc<Vec<Arc<Row>>>,
+    pub loaded: Rows,
 }
 #[derive(Debug, Clone)]
 pub enum History {
-    Complete(Arc<Vec<Arc<Row>>>),
+    Complete(Rows),
     Deferred(DeferredHistory),
     Partial(PartialHistory),
 }
 impl History {
     /// The history rows held here: all of them, or the loaded newest ones of
     /// a partial history. `None` for a deferred (projection) history.
-    pub fn materialized(&self) -> Option<&[Arc<Row>]> {
+    pub fn materialized(&self) -> Option<&Rows> {
         match self {
             Self::Complete(rows) => Some(rows),
             Self::Partial(partial) => Some(&partial.loaded),
             Self::Deferred(_) => None,
         }
     }
-    pub fn materialized_mut(&mut self) -> Option<&mut Vec<Arc<Row>>> {
+    pub fn materialized_mut(&mut self) -> Option<&mut Rows> {
         match self {
-            Self::Complete(rows) => Some(Arc::make_mut(rows)),
-            Self::Partial(partial) => Some(Arc::make_mut(&mut partial.loaded)),
+            Self::Complete(rows) => Some(rows),
+            Self::Partial(partial) => Some(&mut partial.loaded),
             Self::Deferred(_) => None,
         }
     }
@@ -182,7 +158,7 @@ impl History {
 }
 impl From<Vec<Arc<Row>>> for History {
     fn from(rows: Vec<Arc<Row>>) -> Self {
-        Self::Complete(Arc::new(rows))
+        Self::Complete(rows.into())
     }
 }
 #[derive(Debug, Clone)]

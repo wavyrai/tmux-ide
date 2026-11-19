@@ -67,7 +67,7 @@ impl Budget {
         }
         let a = array(v, 2)?;
         let wrapped = bit(&a[0])?;
-        let mut cells = Vec::new();
+        let mut cells = super::row::Builder::default();
         for r in list(&a[1], 1_000_000)? {
             self.runs += 1;
             if self.runs > 1_000_000 {
@@ -79,26 +79,22 @@ impl Budget {
             if self.cells > self.max_cells || cells.len() + count > 4096 {
                 return invalid("cell budget");
             }
-            let c = Cell {
-                grapheme: Arc::from(string(&r[1], false)?),
-                width: int(&r[2], 0, 2)? as u8,
-                foreground: color(&r[3])?,
-                background: color(&r[4])?,
-                attributes: int(&r[5], 0, 255)? as u8,
-            };
-            cells.extend(std::iter::repeat_n(c, count));
+            cells.push(
+                count,
+                string(&r[1], false)?,
+                int(&r[2], 0, 2)? as u8,
+                &color(&r[3])?,
+                &color(&r[4])?,
+                int(&r[5], 0, 255)? as u8,
+            );
         }
-        if cells.is_empty() || cols.is_some_and(|n| n != cells.len()) {
+        if cells.len() == 0 || cols.is_some_and(|n| n != cells.len()) {
             return invalid("row width");
         }
-        for (i, c) in cells.iter().enumerate() {
-            if (c.width == 2 && cells.get(i + 1).map(|c| c.width) != Some(0))
-                || (c.width == 0 && (i == 0 || cells[i - 1].width != 2))
-            {
-                return invalid("wide cell pairing");
-            }
+        if !cells.paired() {
+            return invalid("wide cell pairing");
         }
-        Ok(Arc::new(Row::new(cells, wrapped)))
+        Ok(Arc::new(cells.finish(wrapped)))
     }
     fn rows(&mut self, v: &Value, cols: Option<usize>, max: usize) -> Result<Vec<Arc<Row>>> {
         list(v, max)?.iter().map(|v| self.row(v, cols)).collect()

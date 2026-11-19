@@ -58,8 +58,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         {
             let observed = snapshot.grid.iter().any(|row| {
                 row.cells()
-                    .iter()
-                    .map(|c| c.grapheme.as_ref())
+                    .map(|c| c.grapheme)
                     .collect::<String>()
                     .contains("RIG_NATIVE_CONTROL_DONE")
             });

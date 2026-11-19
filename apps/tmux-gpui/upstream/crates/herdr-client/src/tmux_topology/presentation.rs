@@ -160,10 +160,7 @@ impl Presentation {
                 return Ok(None);
             };
             if snapshot.grid.len() != snapshot.rows
-                || snapshot
-                    .grid
-                    .iter()
-                    .any(|row| row.cells().len() != snapshot.cols)
+                || snapshot.grid.iter().any(|row| row.len() != snapshot.cols)
             {
                 return Err(Error::Bounds);
             }

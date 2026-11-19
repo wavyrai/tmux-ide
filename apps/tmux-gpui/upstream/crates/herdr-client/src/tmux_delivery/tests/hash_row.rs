@@ -110,7 +110,7 @@ fn row_digests_are_byte_identical_to_the_string_building_hash() {
     assert!(cells > 500_000, "corpus too small: {cells} cells");
     for (index, (cells, wrapped)) in rows.iter().enumerate() {
         assert_eq!(
-            hash::hash_row(cells, *wrapped),
+            Row::new(cells.clone(), *wrapped).digest(),
             reference_hash_row(cells, *wrapped),
             "row {index}"
         );
@@ -130,7 +130,10 @@ fn every_colour_index_and_attribute_hashes_as_before() {
             attributes: n,
         };
         let row = [cell];
-        assert_eq!(hash::hash_row(&row, false), reference_hash_row(&row, false));
+        assert_eq!(
+            Row::new(row.to_vec(), false).digest(),
+            reference_hash_row(&row, false)
+        );
     }
 }
 
@@ -140,6 +143,7 @@ fn every_colour_index_and_attribute_hashes_as_before() {
 fn row_hash_bench() {
     let rows = corpus(4_000);
     let cells: usize = rows.iter().map(|(c, _)| c.len()).sum();
+    let compact: Vec<_> = rows.iter().map(|(c, w)| Row::new(c.clone(), *w)).collect();
     for _ in 0..5 {
         let start = Instant::now();
         for (c, w) in &rows {
@@ -147,8 +151,8 @@ fn row_hash_bench() {
         }
         let before = start.elapsed().as_nanos() as f64 / cells as f64;
         let start = Instant::now();
-        for (c, w) in &rows {
-            std::hint::black_box(hash::hash_row(c, *w));
+        for row in &compact {
+            std::hint::black_box(hash::hash_row(row.cells(), row.wrapped()));
         }
         let after = start.elapsed().as_nanos() as f64 / cells as f64;
         eprintln!(

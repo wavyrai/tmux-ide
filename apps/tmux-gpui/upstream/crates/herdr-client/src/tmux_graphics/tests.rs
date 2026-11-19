@@ -146,7 +146,6 @@ fn a_placeholder_character_in_default_colours_is_text() {
     assert!(
         snapshot.grid[0]
             .cells()
-            .iter()
             .any(|cell| cell.grapheme.starts_with('\u{10eeee}'))
     );
     let committed = CommittedPane {

@@ -9,7 +9,7 @@
 use super::{Error, hit_regions::Region};
 use crate::terminal_painter::NativeFrame;
 use herdr_client::protocol::{CellData, CursorState};
-use herdr_client::tmux_delivery::{Cell, Color, CursorStyle, Row, Snapshot};
+use herdr_client::tmux_delivery::{CellRef, Color, CursorStyle, Row, Snapshot};
 use std::{collections::HashMap, sync::Arc};
 
 pub(super) struct PaneSurface<'a> {
@@ -70,11 +70,11 @@ impl DirectProjection {
         }
         self.rows
             .project(width, height, &surfaces, selected, |row| {
-                row.cells().iter().map(painter_cell).collect()
+                row.cells().map(painter_cell).collect()
             })
     }
 }
-fn painter_cell(cell: &Cell) -> Result<CellData, Error> {
+fn painter_cell(cell: CellRef<'_>) -> Result<CellData, Error> {
     let color = |color: &Color| -> Result<u32, Error> {
         Ok(match color {
             Color::Default => 0,

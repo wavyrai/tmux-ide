@@ -144,7 +144,7 @@ impl NativePresentation {
         let Some(s) = self.viewport.live() else {
             return false;
         };
-        let loaded = s.history.materialized().map_or(0, <[_]>::len);
+        let loaded = s.history.materialized().map_or(0, |rows| rows.len());
         !s.modes.alternate_screen
             && s.history.unloaded_rows() > 0
             && !s.history.is_deferred()
@@ -616,7 +616,7 @@ mod tests;
 /// by `tmux_history::MAX_ROWS` and `MAX_BYTES`).
 fn history_ready(snapshot: &herdr_client::tmux_delivery::Snapshot, shown: usize) -> bool {
     let history = &snapshot.history;
-    let loaded = history.materialized().map_or(0, <[_]>::len);
+    let loaded = history.materialized().map_or(0, |rows| rows.len());
     !history.is_deferred()
         && (history.unloaded_rows() == 0
             || shown < loaded

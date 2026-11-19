@@ -72,8 +72,8 @@ fn runs(row: &Row, y: usize) -> Result<Vec<Rect>, Error> {
     let mut result = Vec::new();
     let mut left = None;
     let mut run: Option<Rect> = None;
-    for (x, source) in row.cells().iter().enumerate() {
-        let cell = decode(&source.grapheme, &source.foreground, left);
+    for (x, source) in row.cells().enumerate() {
+        let cell = decode(source.grapheme, &source.foreground, left);
         left = cell;
         if let (Some(cell), Some(run)) = (cell, run.as_mut())
             && cell.image == run.image
