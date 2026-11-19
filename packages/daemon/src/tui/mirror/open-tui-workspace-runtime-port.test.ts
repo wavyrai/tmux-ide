@@ -2893,6 +2893,46 @@ describe("review-454: TUI endpoint under pipelined daemon patches", () => {
     expect(test.client.nack).not.toHaveBeenCalled();
   }, 60_000);
 
+  it("R454-T3 holds a pipelined patch arriving after the decode settled behind a frozen subscription's unsettled flight, then ACKs both in order", async () => {
+    const test = rig(true, false, "semantic-compact-v1");
+    const port = await connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    });
+    const subscription = await port.subscribeTerminal({
+      workspaceName: WORKSPACE,
+      semanticPaneId: PANE_A,
+    });
+    let state = blankTerminalReplicaSnapshot(132, 41);
+    subscription.onUpdate((update: CanonicalTerminalReplicaUpdate) => {
+      if (update.type === "terminal.patch") state = applyTerminalReplicaPatch(state, update.patch);
+    });
+    test.client.ack.mockClear();
+    test.client.nack.mockClear();
+    test.client.close.mockClear();
+    const first = compactHistoryPatchDelivery(state, 0, 1, uniqueHistoryRows(0, 2), "411");
+    const second = compactHistoryPatchDelivery(first.next, 1, 2, uniqueHistoryRows(2, 2), "412");
+    subscription.freeze();
+    test.options().onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    // The first flight has decoded and now waits only for the frozen subscriber.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    test.options().onTerminalDelivery(PANE_A, second.envelope);
+    for (const chunk of second.chunks) test.options().onTerminalDelivery(PANE_A, chunk);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(test.client.ack).not.toHaveBeenCalled();
+    expect(test.client.nack).not.toHaveBeenCalled();
+    expect(test.client.close).not.toHaveBeenCalled();
+    subscription.thaw();
+    await vi.waitFor(() => expect(test.client.ack).toHaveBeenCalledTimes(2), { timeout: 20_000 });
+    expect(test.client.ack.mock.calls.map(([ack]) => ack.transactionId)).toEqual([
+      first.envelope.transactionId,
+      second.envelope.transactionId,
+    ]);
+    expect(state).toEqual(second.next);
+    expect(test.client.nack).not.toHaveBeenCalled();
+  }, 60_000);
+
   it("NACKs a queued patch as a gap after the flight before it fails, keeping the connection", async () => {
     const test = rig(true, false, "semantic-compact-v1");
     const port = await connectOpenTuiWorkspaceRuntimePort({
