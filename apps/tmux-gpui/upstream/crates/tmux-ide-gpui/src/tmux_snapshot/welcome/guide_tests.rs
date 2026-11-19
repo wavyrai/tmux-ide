@@ -374,3 +374,36 @@ fn voiceover_reads_the_guide(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// Commands → Welcome to Tmux IDE… starts at Set up with every step open,
+/// whether the guide was closed further on or is still open at a later step.
+#[gpui::test]
+fn reopening_from_commands_starts_at_set_up_with_every_step_open(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    act(&view, cx, G::Next);
+    assert_eq!(step(&view, cx), Step::Look);
+    cx.simulate_keystrokes("escape");
+    assert!(!shown(cx));
+    let reopen = |view: &Entity<SnapshotView>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+        draw(cx);
+        assert!(shown(cx));
+        assert_eq!(step(view, cx), Step::SetUp);
+        view.read_with(cx, |v, _| {
+            for s in Step::ALL {
+                assert!(v.welcome.guide.enabled(s), "{s:?}");
+            }
+        });
+    };
+    reopen(&view, cx);
+    // Still open at Keys: Commands brings it back to the first step.
+    act(&view, cx, G::Next);
+    act(&view, cx, G::Next);
+    assert_eq!(step(&view, cx), Step::Keys);
+    reopen(&view, cx);
+    assert!(
+        focused(&view, cx, slot::NEXT),
+        "set up: Continue has the keyboard"
+    );
+}
