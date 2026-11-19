@@ -193,3 +193,15 @@ fn a_ten_thousand_row_history_pages_in_and_scrolls_to_its_top() {
     assert!(Arc::ptr_eq(&viewport.view().unwrap().grid[0], &all[0]));
     assert_eq!(viewport.capture_index(), Some(0));
 }
+
+/// The screen is at most 1,000,000 cells, as before.
+#[test]
+fn the_screen_is_bounded_by_cells() {
+    let wide = row(" ", 4096);
+    for (rows, accepted) in [(244, true), (245, false)] {
+        let mut s = snapshot(4096, Vec::new());
+        s.rows = rows;
+        s.grid = vec![wide.clone(); rows];
+        assert_eq!(store::validate(&s).is_ok(), accepted, "{rows} rows");
+    }
+}

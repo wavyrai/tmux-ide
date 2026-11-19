@@ -151,6 +151,24 @@ fn the_byte_bound_holds_rows_up_to_exactly_max_bytes() {
         assert!(Arc::ptr_eq(&v.view().unwrap().grid[0], &oldest));
     }
 }
+/// The byte bound keeps the newest rows: past it, an old wide row is dropped
+/// while the narrow newer rows stay.
+#[test]
+fn the_byte_bound_drops_the_oldest_rows_first() {
+    let fixed = row("x", 1).heap_bytes() - 1;
+    let cols = 2048 - fixed;
+    let narrow = row(" ", cols);
+    let wide = row("123", cols);
+    assert!(wide.heap_bytes() > 2 * narrow.heap_bytes());
+    let fit = MAX_BYTES / narrow.heap_bytes();
+    let mut history = vec![wide.clone(); 2];
+    history.extend(vec![narrow.clone(); fit - 1]);
+    let mut v = Viewport::default();
+    v.update(scope(), with_history(history, cols));
+    assert_eq!(v.history_len(), fit - 1);
+    v.scroll(Scroll::Home);
+    assert!(Arc::ptr_eq(&v.view().unwrap().grid[0], &narrow));
+}
 #[test]
 fn byte_cap_and_alternate_screen_clear_history() {
     // Each row holds 4096 cells of a three-byte grapheme: about 28 KiB.
