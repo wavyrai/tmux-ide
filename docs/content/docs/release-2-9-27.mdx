@@ -1,0 +1,106 @@
+---
+title: tmux-ide 2.9.27
+metaTitle: "What's new in 2.9.27"
+description: "Sessions open faster over SSH, typed keys echo sooner on slow links, panes load their history when you scroll to it, and npm installs need Node.js 24."
+---
+
+`2.9.27` is a CLI/daemon release that makes the Mac app faster over SSH: a
+session opens in fewer round trips, typed keys echo sooner on a slow link, and a
+pane sends only its newest history until you scroll up. An npm install now
+needs Node.js 24. It adds no commands. Native Mac alpha 0.1.21 uses all three
+with a daemon of 2.9.27 or later; older apps and other clients work with it as
+before.
+
+## Sessions open faster over SSH
+
+Opening a session over SSH took 11 round trips before its first screen could be
+drawn. With Mac app 0.1.21 it takes 3:
+
+- One request opens the session, lists its windows and panes, and issues the
+  stream for the window the app shows. The daemon picks that window with the
+  same rule as the app.
+- The stream's first message can travel in the request that opens it, so the
+  daemon starts sending the screen one round trip earlier.
+- A session that an earlier open already set up is not set up again. Opening it
+  a second time costs 2 tmux commands instead of 8.
+
+The daemon also keeps an idle connection from the Mac app open for 65 s instead
+of 5 s. Before, the first open after a pause of more than 5 s could fail and
+show "Reconnecting".
+
+Measured on 18 Nov on one Mac: two test daemons on private tmux servers,
+reached over SSH through a private SSH server with a delay added, with the Mac
+app's own connection code. "Before" is main just before these changes, "After"
+is main with them; both daemons were built with the version set to 2.9.27. Each
+value is the middle of 3 to 5 alternating runs of 5 opens in milliseconds, with
+the range across runs in brackets. The Mac's load average was between 3 and 21.
+
+| What happens                                | Round trip | Before           | After         |
+| ------------------------------------------- | ---------- | ---------------- | ------------- |
+| The session's first screen is ready to draw | 150 ms     | 1966 [1966–2004] | 502 [480–509] |
+| The first typed key echoes                  | 150 ms     | 2311             | 845           |
+| The session's first screen is ready to draw | 5 ms       | 169 [161–180]    | 44 [40–56]    |
+| Open again after 8 s idle                   | 150 ms     | fails at the 2nd | 3 of 3 open   |
+
+The app's own drawing is not included, and it was not run against a real remote
+machine.
+
+## Typed keys echo sooner on a slow link
+
+On a link with a round trip of 150 ms, each typed key waited for the client to
+confirm the previous key's screen change before its own went out. A client that
+offers capability 124 now gets up to 3 screen changes before it confirms the
+first. Only changes go out this way, while the pane has less than 256 KiB
+unconfirmed; a whole screen still waits. The Mac app 0.1.21 offers 124 to daemons of
+2.9.27 or later, and the TUI of this release offers it too. Other clients get
+one change at a time, as before.
+
+Measured on 19 Nov on one Mac: a test daemon on a private tmux server, reached
+through the Mac app's own SSH tunnel to a private SSH server with a 150 ms
+round trip, and the Mac app's own key path. "Before" is main just before this
+change. Each value is the middle of 3 alternating runs in milliseconds, from
+the key press until the key is in the app's picture of the screen, with the
+range across runs in brackets. The Mac's load average was about 1.
+
+| What you do                       | Link            | Before        | After         |
+| --------------------------------- | --------------- | ------------- | ------------- |
+| Type one key                      | 150 ms          | 252 [249–253] | 166 [166–167] |
+| Slowest 1 in 10 keys              | 150 ms          | 318 [317–329] | 172 [172–172] |
+| Type one key                      | 150 ms, 1% loss | 241 [240–241] | 171 [164–172] |
+| Type 30 keys 60 ms apart (middle) | 150 ms          | 249 [248–253] | 158 [157–161] |
+
+It was not run against a real remote machine, with busy neighbour panes, or
+over a 5 ms link.
+
+## History loads when you scroll to it
+
+A client that offers capability 122 gets the visible screen and the newest 200
+lines of history when a pane opens, and asks for older lines when it needs
+them. Every chunk is checked against a digest of the whole history, so a client
+holding only the newest lines still verifies each update. Mac app 0.1.21 offers
+122 to daemons of 2.9.27 or later and loads older lines as you scroll up. Other
+clients get the whole history, as before.
+
+Measured on one Mac with a test daemon on a private tmux server: switching to a
+window of 10 panes, each with about 2000 lines of history, sent 1607 KB before
+and 184 KB with 122. A reviewer measured one 63 by 24 pane with 2000 lines: a
+full seed of 166,030 bytes against 18,870.
+
+## npm installs need Node.js 24
+
+An npm install of tmux-ide needs Node.js 24 or newer. Node.js 20 reached end of
+life on 30 April 2026, and 22 is no longer tested. On an older Node.js the CLI
+exits at once and says which version it needs, and `tmux-ide doctor` checks for
+Node.js 24. The website installer brings its own Node.js 24, so installs made
+with it are not affected.
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. If you installed with
+npm on Node.js 20 or 22, install Node.js 24 first. A running older daemon
+restarts on 2.9.27 by itself; your tmux sessions keep running. Update remote
+machines too: the faster open, the key echo and history on demand are in the
+daemon on the machine that runs tmux.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
