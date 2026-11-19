@@ -89,6 +89,13 @@ export interface AppTheme {
   /** Explicit palette mode or terminal-following mode. Defaults to following the terminal. */
   mode: ThemeModeSetting;
   preset?: string;
+  /**
+   * The presets `mode: "system"` uses when the terminal (or macOS, in the
+   * Mac app) is light or dark. Kept only when each names a preset of that
+   * appearance; unset, system mode follows the host palette as before.
+   */
+  light?: string;
+  dark?: string;
   /** Primary/brand accent (default `colour75`). */
   accent: string;
   /** Muted/secondary foreground for dim text (default `colour240`). */
@@ -368,6 +375,12 @@ function appThemeOverrideProvenance(
  * back to its default, so partial and garbage configs both resolve to a complete,
  * well-typed {@link AppConfig}. Never throws.
  */
+/** `theme.light` / `theme.dark`, when the id names a preset of that appearance. */
+function systemSide(value: unknown, appearance: "light" | "dark"): Partial<AppTheme> {
+  const preset = findVisualThemePreset(value);
+  return preset?.appearance === appearance ? { [appearance]: preset.id } : {};
+}
+
 export function parseAppConfig(input: unknown): AppConfig {
   const D = DEFAULT_APP_CONFIG;
   const root = asObject(input);
@@ -405,6 +418,8 @@ export function parseAppConfig(input: unknown): AppConfig {
         findVisualThemePreset(theme.preset)?.appearance ?? D.theme.mode,
       ),
       ...(findVisualThemePreset(theme.preset) ? { preset: String(theme.preset) } : {}),
+      ...systemSide(theme.light, "light"),
+      ...systemSide(theme.dark, "dark"),
       accent: pickString(theme.accent, D.theme.accent),
       muted: pickString(theme.muted, D.theme.muted),
       fg: pickString(theme.fg, D.theme.fg),

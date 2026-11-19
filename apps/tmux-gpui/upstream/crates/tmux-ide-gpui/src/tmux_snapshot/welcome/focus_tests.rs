@@ -96,7 +96,13 @@ fn new_session_from_the_welcome_leaves_it_for_the_dialog(cx: &mut TestAppContext
     let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
     cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
     assert!(shown(cx));
-    assert!(primary_focused(&view, cx));
+    assert!(
+        cx.update(
+            |window, cx| view.read_with(cx, |v, _| v.welcome.focus[guide::slot::NEXT]
+                .is_focused(window))
+        ),
+        "set up: Continue is the first stop"
+    );
     let request = view.update(cx, |v, _| {
         v.browser_state.create_session = Some(browser::CreateSession {
             phase: browser::CreatePhase::Idle,
@@ -160,12 +166,13 @@ fn one_tab_on_the_welcome_moves_one_stop(cx: &mut TestAppContext) {
     let focused = |cx: &mut VisualTestContext, i: usize| {
         cx.update(|window, cx| view.read_with(cx, |v, _| v.welcome.focus[i].is_focused(window)))
     };
-    for expected in [2, 0, 1, 2] {
+    use guide::slot::*;
+    for expected in [SKIP, RAIL, SECONDARY, PRIMARY] {
         press(cx, "tab", false);
         assert!(focused(cx, expected), "Tab to {expected}");
     }
     press(cx, "shift-tab", false);
-    assert!(focused(cx, 1));
+    assert!(focused(cx, SECONDARY));
     assert!(no_setup(&rx));
 }
 
@@ -175,6 +182,7 @@ fn notes_are_for_exactly_one_version() {
     assert!(whats_new::notes("0.1.18").is_some());
     assert!(whats_new::notes("0.1.19").is_some());
     assert!(whats_new::notes("0.1.20").is_some());
+    assert!(whats_new::notes("0.1.21").is_some());
     for version in [
         "0.1.1", "0.1.170", "0.1.17.1", "0.1.180", "0.1.190", "0.1.200", "0.1.2", "0.1", "",
         "Earlier",
@@ -479,16 +487,24 @@ fn the_newest_notes_are_not_older_than_the_shipped_app() {
     assert!(whats_new::notes(newest).is_some());
 }
 
-/// Each session's Open button is a keyboard stop, before the footer's
-/// buttons as on screen, and Return on one opens that session.
+/// Tab visits every stop in the order they are drawn, once each: the
+/// rail, the step's controls, then Skip, Back and Continue; the theme grid
+/// is one stop, its arrows move inside it.
 #[gpui::test]
-fn tab_reaches_each_sessions_open_button(cx: &mut TestAppContext) {
+fn tab_reaches_every_stop_in_order(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
-    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
+    let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
+    let appearance = crate::tmux_snapshot::appearance::native::Owner::load(None)
+        .unwrap()
+        .publication();
+    cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.appearance = Some(appearance);
+            v.open_welcome(window, cx);
+            v.guide_act(guide::Act::Go(guide::Step::Look), window, cx);
+        })
+    });
     draw(cx);
-    assert!(cx.debug_bounds("welcome-session-1").is_some());
-    while rx.try_recv().is_ok() {}
     let focused = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| {
             view.read_with(cx, |v, _| {
@@ -496,69 +512,56 @@ fn tab_reaches_each_sessions_open_button(cx: &mut TestAppContext) {
             })
         })
     };
-    let start = focused(cx).unwrap();
-    assert!(start < 3, "focus starts on a footer button: {start}");
+    use guide::slot::*;
+    assert_eq!(focused(cx), Some(SEGMENT), "Look starts on its segment");
+    // Fonts aren't listed and the switches' files aren't read in a test
+    // window, so those controls are disabled and never stops.
     let mut seen = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..9 {
         press(cx, "tab", false);
         seen.push(focused(cx).unwrap());
     }
-    assert!(seen.contains(&3) && seen.contains(&4), "{seen:?}");
-    let first = seen.iter().position(|&i| i == 3).unwrap();
-    assert_eq!(seen[first + 1], 4, "the rows in order: {seen:?}");
-    assert!(seen[first + 2] < 3, "then the footer: {seen:?}");
-    // Return on the second row's Open opens that session.
-    while focused(cx) != Some(4) {
-        press(cx, "tab", false);
-    }
-    assert!(rx.try_recv().is_err());
-    press(cx, "enter", false);
-    assert!(
-        rx.try_iter().next().is_some(),
-        "Return on Open sends the open"
+    assert_eq!(
+        seen,
+        [
+            GRID,
+            GRID_DARK,
+            SKIP,
+            BACK,
+            NEXT,
+            RAIL,
+            RAIL + 1,
+            RAIL + 2,
+            SEGMENT
+        ],
+        "Match macOS: a row for each side"
     );
 }
 
-/// A focused Open button whose row goes away (its session ended, or the
-/// list was lost) does not keep the keyboard on nothing: the welcome's
-/// start button takes it, and Tab and Return work again.
+/// A focused stop that goes away (Set up pressed, so it is disabled while
+/// setup runs) does not keep the keyboard on nothing: the step's start stop
+/// takes it, and Tab and Return work again.
 #[gpui::test]
-fn a_focused_open_button_that_disappears_hands_the_keyboard_on(cx: &mut TestAppContext) {
+fn a_focused_stop_that_disappears_hands_the_keyboard_on(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
-    let (view, cx, rx) = home(cx, None, &[("api", "api"), ("notes", "notes")], fresh(&dir));
-    cx.update(|window, cx| view.update(cx, |v, cx| v.open_welcome(window, cx)));
-    draw(cx);
-    let focused = |cx: &mut VisualTestContext| {
-        cx.update(|window, cx| {
-            view.read_with(cx, |v, _| {
-                v.welcome.focus.iter().position(|f| f.is_focused(window))
-            })
+    let (view, cx, _rx) = home(cx, Some(Phase::Available), &[], fresh(&dir));
+    assert!(primary_focused(&view, cx));
+    cx.update(|_, cx| {
+        view.update(cx, |v, cx| {
+            v.browser_state.local_setup = Some(browser::local_setup::Setup {
+                phase: Phase::Running,
+            });
+            cx.notify();
         })
+    });
+    draw(cx);
+    let on = |cx: &mut VisualTestContext, slot: usize| {
+        cx.update(|window, cx| view.read_with(cx, |v, _| v.welcome.focus[slot].is_focused(window)))
     };
-    // The second row goes, then the first: each time its Open had the keyboard.
-    for gone in [1usize, 0] {
-        for _ in 0..8 {
-            if focused(cx) == Some(3 + gone) {
-                break;
-            }
-            press(cx, "tab", false);
-        }
-        assert_eq!(focused(cx), Some(3 + gone), "fixture: on row {gone}'s Open");
-        cx.update(|_, cx| {
-            view.update(cx, |v, cx| {
-                v.browser_state.sessions.truncate(gone);
-                cx.notify();
-            })
-        });
-        draw(cx);
-        assert!(shown(cx), "the welcome stays open");
-        let at = focused(cx);
-        assert!(
-            at.is_some_and(|stop| stop < 3 + gone),
-            "the keyboard is on a button that is on screen: {at:?}"
-        );
-        press(cx, "tab", false);
-        assert_ne!(focused(cx), at, "Tab moves again");
-    }
-    let _ = rx;
+    assert!(on(cx, guide::slot::SKIP), "Skip setup takes the keyboard");
+    press(cx, "tab", false);
+    assert!(on(cx, guide::slot::RAIL));
+    press(cx, "tab", false);
+    press(cx, "enter", false);
+    assert!(!shown(cx), "Return on Skip setup closes the guide");
 }

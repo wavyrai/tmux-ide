@@ -112,6 +112,7 @@ impl Settings {
 impl SnapshotView {
     pub(super) fn load_developer_mode(&mut self, cx: &mut Context<Self>) {
         self.load_cursor_motion(cx);
+        self.load_opaque_window(cx);
         if self.developer_mode.started {
             return;
         }

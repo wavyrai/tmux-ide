@@ -12,7 +12,7 @@ mod new_agent;
 pub(super) mod palette;
 mod pane_commands;
 pub(super) mod plugins;
-mod reference;
+pub(super) mod reference;
 mod render;
 mod saved_machines;
 mod sidebar_visibility;

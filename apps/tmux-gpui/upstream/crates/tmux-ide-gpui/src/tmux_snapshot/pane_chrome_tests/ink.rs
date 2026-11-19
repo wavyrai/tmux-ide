@@ -41,6 +41,8 @@ fn appearance(colors: Colors) -> Appearance {
             name: "Preset".into(),
         }],
         error: None,
+        light: crate::tmux_snapshot::appearance::native::DEFAULT_LIGHT.into(),
+        dark: crate::tmux_snapshot::appearance::native::DEFAULT_DARK.into(),
     }
 }
 

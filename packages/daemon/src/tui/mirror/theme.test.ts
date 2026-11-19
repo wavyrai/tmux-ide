@@ -108,6 +108,20 @@ describe("semantic theme snapshots", () => {
     expect(createSemanticThemeSnapshot({ mode: "system" }, "light").setting).toBe("system");
   });
 
+  it("follows system mode's chosen light and dark presets on the side the host is on", () => {
+    const pair = { mode: "system" as const, light: "paper", dark: "nord" };
+    const key = (config: Parameters<typeof createSemanticThemeSnapshot>[0], host?: "light") =>
+      JSON.stringify(createSemanticThemeSnapshot(config, host ?? "dark").canonical);
+    expect(key({ mode: "dark", preset: "nord" })).not.toBe(key({ mode: "dark" }));
+    expect(key(pair)).toBe(key({ mode: "dark", preset: "nord" }));
+    expect(key(pair, "light")).toBe(key({ mode: "light", preset: "paper" }, "light"));
+    // An explicit preset still wins, and a side of the wrong kind is ignored.
+    expect(key({ ...pair, preset: "dracula" })).toBe(key({ mode: "dark", preset: "dracula" }));
+    expect(key({ mode: "system", dark: "paper" })).toBe(key({ mode: "system" }));
+    // Without a pair, system mode is unchanged.
+    expect(key({ mode: "system" })).not.toBe(key(pair));
+  });
+
   it("projects the common fixture and dark/light/high-contrast canonical roles exactly", () => {
     const cases = [
       {
