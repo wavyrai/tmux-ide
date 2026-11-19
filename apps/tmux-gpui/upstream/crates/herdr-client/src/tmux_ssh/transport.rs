@@ -197,7 +197,7 @@ impl RemoteTransport {
     }
     fn request(
         &self,
-        action: impl FnOnce(&VerifiedConnection) -> Result<Vec<u8>, ConnectionError>,
+        action: impl Fn(&VerifiedConnection) -> Result<Vec<u8>, ConnectionError>,
     ) -> Result<Vec<u8>, TransportError> {
         self.request_with(
             Duration::from_millis(2500),
@@ -210,7 +210,7 @@ impl RemoteTransport {
     fn request_until(
         &self,
         deadline: Instant,
-        action: impl FnOnce(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
+        action: impl Fn(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
     ) -> Result<Vec<u8>, TransportError> {
         let left = deadline.saturating_duration_since(Instant::now());
         self.request_with(left, action, Some(deadline))
@@ -218,12 +218,12 @@ impl RemoteTransport {
     fn request_with(
         &self,
         connect_timeout: Duration,
-        action: impl FnOnce(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
+        action: impl Fn(&VerifiedConnection, Duration) -> Result<Vec<u8>, ConnectionError>,
         deadline: Option<Instant>,
     ) -> Result<Vec<u8>, TransportError> {
         self.tunnel.check()?;
         let mut slot = self.connection.lock().map_err(|_| TunnelError::Worker)?;
-        let connection = match slot.take() {
+        let mut connection = match slot.take() {
             Some(connection) => connection,
             None => VerifiedConnection::connect_shared(
                 self.tunnel.port(),
@@ -235,7 +235,25 @@ impl RemoteTransport {
         let left = deadline.map_or(Duration::from_millis(2500), |deadline| {
             deadline.saturating_duration_since(Instant::now())
         });
-        let result = action(&connection, left);
+        let mut result = action(&connection, left);
+        if result.is_err() && connection.closed_before_send() {
+            // The daemon closed the idle socket and nothing was sent: prove a
+            // new connection and send the request on it, once (attach-rtt).
+            self.tunnel.check()?;
+            let left = deadline.map_or(connect_timeout, |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
+            connection = VerifiedConnection::connect_shared(
+                self.tunnel.port(),
+                self.descriptor.clone(),
+                left,
+            )?;
+            self.tunnel.check()?;
+            let left = deadline.map_or(Duration::from_millis(2500), |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
+            result = action(&connection, left);
+        }
         self.tunnel.check()?;
         // Never replay a failed request. A later explicit operation may establish
         // a new identity-proven connection, while retaining this tunnel generation.

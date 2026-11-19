@@ -9,6 +9,12 @@ use bezel_ui::widgets::{ButtonStyle, Buttons as _};
 /// "Earlier" collects what came before versions were listed.
 pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
     (
+        "0.1.21",
+        &[
+            "A setup guide for the window's look and the keys you'll use: Commands, Welcome to Tmux IDE…",
+        ],
+    ),
+    (
         "0.1.20",
         &[
             "Sessions over 24 panes on other machines open one window at a time, as on this Mac.",

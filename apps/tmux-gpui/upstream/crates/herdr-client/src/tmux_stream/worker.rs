@@ -21,6 +21,8 @@ use super::{ConnectOptions, Error, Event, MAX_CLIENT_BYTES, MAX_SERVER_BYTES, SU
 /// pace the loop.
 const POLL: Duration = Duration::from_millis(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+/// attach-rtt: the redeem frame in the upgrade request, and the daemon's yes.
+const REDEEM_HEADER: &str = "x-tmux-ide-redeem";
 /// How often the worker measures the round trip with a ping of its own.
 fn ping_every() -> Duration {
     #[cfg(test)]
@@ -292,15 +294,31 @@ fn run(
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let port = url.port().ok_or(Error::Descriptor)?;
-    let socket = TcpStream::connect_timeout(&SocketAddr::new(ip, port), CONNECT_TIMEOUT)?;
-    socket.set_nodelay(true)?;
-    socket.set_nonblocking(true)?;
+    let mut options = options;
+    // A socket proven while the open was in flight (attach-rtt) stands in for
+    // the dial and the proof below; it was proven against this same peer.
+    let prepared = match (options.upgrade.prepared.take(), &peer, ip) {
+        (Some(prepared), Some(peer), IpAddr::V4(_)) => prepared.take(port, peer, CONNECT_TIMEOUT),
+        _ => None,
+    };
+    let proven = prepared.is_some();
+    let socket = match prepared {
+        Some(socket) => socket,
+        None => {
+            let socket = TcpStream::connect_timeout(&SocketAddr::new(ip, port), CONNECT_TIMEOUT)?;
+            socket.set_nodelay(true)?;
+            socket.set_nonblocking(true)?;
+            socket
+        }
+    };
     {
         let mut owned = cancel.socket.lock().map_err(|_| Error::Cancelled)?;
         cancel.check()?;
         *owned = Some(socket.try_clone()?);
     }
-    if let Some(peer) = peer {
+    if let Some(peer) = peer
+        && !proven
+    {
         crate::tmux_ssh::verify_socket_identity(&socket, &peer, CONNECT_TIMEOUT)
             .map_err(Error::RemoteIdentity)?;
         cancel.check()?;
@@ -324,6 +342,18 @@ fn run(
                 .map_err(|_| Error::Headers)?,
             tungstenite::http::HeaderValue::from_str(value).map_err(|_| Error::Headers)?,
         );
+    }
+    let redeem = wire::redeem(&options)?;
+    if redeem.len() > MAX_CLIENT_BYTES {
+        return Err(Error::FrameBound);
+    }
+    if options.upgrade.redeem_in_upgrade {
+        use base64::Engine as _;
+        let carried = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(redeem.as_bytes());
+        let mut value =
+            tungstenite::http::HeaderValue::from_str(&carried).map_err(|_| Error::Headers)?;
+        value.set_sensitive(true);
+        request.headers_mut().insert(REDEEM_HEADER, value);
     }
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_SERVER_BYTES))
@@ -369,11 +399,16 @@ fn run(
         .socket
         .set_write_timeout(Some(Duration::from_millis(250)))?;
     cancel.check()?;
-    let redeem = wire::redeem(&options)?;
-    if redeem.len() > MAX_CLIENT_BYTES {
-        return Err(Error::FrameBound);
+    // A daemon that took the frame from the upgrade says so; to any other the
+    // frame goes on the socket as before. Never both: one ticket, one redeem.
+    let carried = options.upgrade.redeem_in_upgrade
+        && response
+            .headers()
+            .get(REDEEM_HEADER)
+            .is_some_and(|value| value.as_bytes() == b"accepted");
+    if !carried {
+        socket.send(Message::Text(redeem.into()))?;
     }
-    socket.send(Message::Text(redeem.into()))?;
     let mut verified = false;
     let mut live = wire::Live::new(&options);
     // Whether the socket may have bytes, or tungstenite a whole frame read

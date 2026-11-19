@@ -256,6 +256,14 @@ impl Local {
                 }
                 Ok(())
             }
+            Command::ThemeFor { side, id } => {
+                if let Some(owner) = &mut self.appearance {
+                    owner.select_for(side, &id);
+                    self.state.appearance = Some(owner.publication());
+                    self.publish()?;
+                }
+                Ok(())
+            }
             Command::NativeSplitLayout {
                 id,
                 request,

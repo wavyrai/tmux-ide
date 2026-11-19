@@ -79,6 +79,34 @@ cargo fmt --all -- --check
 The pinned toolchain is in `upstream/rust-toolchain.toml`. See `VALIDATION.md` for the checks actually run. This is an experimental development preview, not a supported general-purpose
 tmux GUI.
 
+## First run: the setup guide
+
+Someone who has never had `~/.config/tmux-ide/gpui-onboarding.json` (or
+`$XDG_CONFIG_HOME/tmux-ide/gpui-onboarding.json`) sees the setup guide in
+Home's place, whether or not the background service is already running. The
+sidebar, Commands and terminals keep working while it is open.
+
+- **Set up** is the welcome: the command-line tool, the background service and
+  the sessions already there, with Set up / Try again / I've installed it. When
+  setup can't finish here, **Continue without it** goes on.
+- **Look** has Match macOS / Light / Dark and the themes drawn in their own
+  colours. Picking one applies it to the window and saves it at once, as
+  **Appearance…** does. Under Match macOS you choose the theme for light mode
+  and the one for dark mode; they are saved as `theme.light` and `theme.dark`
+  in `~/.tmux-ide/config.json` (the TUI reads them too). The step also has
+  terminal text size, cursor animation and **Opaque window**
+  (`gpui-opaque.json`), which turns the frosted chrome off.
+- **Keys** lists eight keys from the app's one key table (`keymap.rs`), the
+  table the menu bar and Keyboard shortcuts… use. Pressing one ticks it.
+  **Start using Tmux IDE** opens the most recent session, or New session….
+
+Each choice is saved when it is made; Esc or **Skip setup** closes the guide at
+any step, and it doesn't come back by itself. Open it again from **Commands →
+Welcome to Tmux IDE…**. Anyone whose file already exists (0.1.17 or later)
+never gets the guide by itself; an unreadable file shows it only where setup is
+needed. The file is version 2 (`guide: { reached, finished, setup_skipped }`);
+an older app treats it as unreadable, which costs at most one extra welcome.
+
 ## Sidebar visibility
 
 Use the sidebar icon in the application bar, press **F10** (or **Fn-F10** if macOS
@@ -937,8 +965,8 @@ The sidebar and title bar sit on Bezel's chrome material: the window blurs the
 desktop behind it and the palette's frost, tinted with the theme's surface,
 covers it in dark themes. Light themes keep opaque chrome. Text on the chrome is
 inked to 4.5:1 over any desktop. The terminal remains opaque. Reduce
-Transparency/Increase Contrast use opaque chrome; runtime accessibility
-notifications request a redraw.
+Transparency/Increase Contrast use opaque chrome, as does the setup guide's
+**Opaque window** switch; runtime accessibility notifications request a redraw.
 
 A separate synthetic debug window verified native activation, clickable theme
 selection, dark/light changes, narrow-width clipping and clean exit. This is

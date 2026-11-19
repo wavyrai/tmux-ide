@@ -69,12 +69,12 @@ const MAX_TMUX_OUTPUT_BYTES = 128 * 1024;
 // is proven, immediately before registry admission. The promotion marker is
 // DELIBERATELY distinct from the m32 open marker so a promoted session is a
 // separate provenance.
-const ADOPTED_OPTION = "@tmux_ide_adopted";
+export const ADOPTED_OPTION = "@tmux_ide_adopted";
 const SESSION_PROMOTED_MARKER_OPTION = "@tmux_ide_workspace_promoted_v1";
 const SESSION_WORKSPACE_OPTION = "@tmux_ide_workspace_name";
 const SESSION_OPERATION_OPTION = "@tmux_ide_workspace_promote_operation";
-const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
-const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
+export const SEMANTIC_PANE_OPTION = "@tmux_ide_pane_id";
+export const SEMANTIC_WINDOW_OPTION = "@tmux_ide_window_id";
 
 // Distinctive multi-char field/line delimiters — collision-resistant against
 // arbitrary pane paths, window names and user-controlled `@agent_*` values,
@@ -301,7 +301,7 @@ function isInternalSession(name: string): boolean {
 const VALID_SEMANTIC_PANE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const RESERVED_DISCOVERED_PREFIX = "terminal.discovered.";
 
-function hasValidPaneStamp(value: string): boolean {
+export function hasValidPaneStamp(value: string): boolean {
   return (
     value.length > 0 &&
     value.length <= 128 &&

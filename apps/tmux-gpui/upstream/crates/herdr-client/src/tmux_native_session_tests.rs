@@ -52,6 +52,7 @@ fn fixture() -> (TcpListener, ConnectOptions) {
             descriptor,
             origin: "http://127.0.0.1:4000".into(),
             host_client_id: "native.test".into(),
+            upgrade: Default::default(),
         },
     )
 }

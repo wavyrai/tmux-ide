@@ -13,6 +13,8 @@ pub struct ServerClient {
     scope: ServerScope,
     retired: AtomicBool,
     request_cancelled: Option<Arc<AtomicBool>>,
+    /// attach-rtt: the next stream's socket, dialed when an open began.
+    pub(super) prepared: std::sync::Mutex<Option<crate::tmux_stream::PreparedSocket>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,6 +91,7 @@ impl super::owner::Owner {
             scope: scope.clone(),
             retired: AtomicBool::new(false),
             request_cancelled: None,
+            prepared: std::sync::Mutex::new(None),
         })
     }
 }

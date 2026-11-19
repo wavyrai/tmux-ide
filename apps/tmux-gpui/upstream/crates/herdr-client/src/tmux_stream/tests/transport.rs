@@ -40,6 +40,7 @@ pub(super) fn options(port: u16) -> ConnectOptions {
         },
         origin: "http://127.0.0.1:4000".into(),
         host_client_id: "native.test".into(),
+        upgrade: Default::default(),
     }
 }
 

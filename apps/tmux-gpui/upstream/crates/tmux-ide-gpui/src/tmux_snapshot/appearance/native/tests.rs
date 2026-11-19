@@ -191,3 +191,82 @@ fn linens_needs_input_pill_is_the_accent_on_its_wash() {
         }
     }
 }
+/// Match macOS switches between a chosen light theme and a chosen dark one
+/// (owner, 18 Nov), saved as theme.light / theme.dark next to the TUI's keys.
+#[test]
+fn match_macos_follows_the_chosen_light_and_dark_themes() {
+    let scratch = Scratch::new();
+    let path = scratch.config();
+    fs::write(
+        &path,
+        br#"{"theme":{"mode":"dark","preset":"tokyo"},"keep":1}"#,
+    )
+    .unwrap();
+    let mut owner = Owner::load(Some(path.clone())).unwrap();
+    // Unset, the pair is Linen.
+    assert_eq!(
+        (owner.state.light.as_str(), owner.state.dark.as_str()),
+        ("linen", "linen-dark")
+    );
+    let colors = |id: &str, side: System| {
+        let p = catalog().iter().find(|p| p.id == id).unwrap();
+        match side {
+            System::Light => p.light.background,
+            System::Dark => p.dark.background,
+        }
+    };
+    owner.select_for(System::Dark, "nord");
+    owner.select_for(System::Light, "paper");
+    assert!(owner.state.error.is_none());
+    assert_eq!(
+        owner.state.selected, "system",
+        "choosing a side is Match macOS"
+    );
+    assert_eq!(owner.state.theme.background, colors("nord", System::Dark));
+    owner.system(System::Light);
+    assert_eq!(owner.state.theme.background, colors("paper", System::Light));
+    let raw: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(raw["theme"]["mode"], "system");
+    assert_eq!(raw["theme"]["preset"], "");
+    assert_eq!(raw["theme"]["light"], "paper");
+    assert_eq!(raw["theme"]["dark"], "nord");
+    assert_eq!(raw["keep"], 1);
+    // A new owner reads the pair back, and picking one theme keeps it.
+    let mut back = Owner::load(Some(path.clone())).unwrap();
+    assert_eq!(
+        (back.state.light.as_str(), back.state.dark.as_str()),
+        ("paper", "nord")
+    );
+    back.select("gruvbox");
+    let raw: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(raw["theme"]["light"], "paper");
+    assert_eq!(raw["theme"]["preset"], "gruvbox");
+    // A side takes only a theme of its own kind, and nothing is written.
+    let before = fs::read(&path).unwrap();
+    back.select_for(System::Light, "nord");
+    assert!(back.state.error.is_some());
+    assert_eq!(back.state.selected, "gruvbox");
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+#[test]
+fn a_pair_naming_an_unknown_or_wrong_kind_theme_falls_back_to_linen() {
+    let scratch = Scratch::new();
+    let path = scratch.config();
+    for (light, dark) in [("nord", "paper"), ("nope", "also-nope"), ("system", "dark")] {
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"theme": {"mode": "system", "light": light, "dark": dark}}))
+                .unwrap(),
+        )
+        .unwrap();
+        let owner = Owner::load(Some(path.clone())).unwrap();
+        assert_eq!(owner.state.light, "linen", "{light}");
+        let dark_ok = dark == "dark";
+        assert_eq!(
+            owner.state.dark,
+            if dark_ok { "dark" } else { "linen-dark" },
+            "{dark}"
+        );
+        assert!(owner.publication().valid());
+    }
+}

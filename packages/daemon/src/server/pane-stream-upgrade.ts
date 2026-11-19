@@ -28,6 +28,35 @@ function rawHeaderValues(
   return values;
 }
 
+/**
+ * attach-rtt: the client may carry its redeem frame in the upgrade request
+ * (base64url of the frame's JSON text), so the daemon answers the 101 and the
+ * seed without waiting a round trip for the frame. The 101 says so with
+ * `X-Tmux-Ide-Redeem: accepted`; a client that sees no such header sends the
+ * frame as before. Absent, the upgrade is exactly as it was.
+ */
+export const PANE_STREAM_REDEEM_HEADER = "x-tmux-ide-redeem";
+
+/** The frame a redeem header carries, `null` for none, or "invalid". */
+function upgradeRedeemFrame(
+  request: import("node:http").IncomingMessage,
+): Buffer | null | "invalid" {
+  const values = rawHeaderValues(request, PANE_STREAM_REDEEM_HEADER);
+  if (values.length === 0) return null;
+  const value = values[0]!;
+  if (
+    values.length > 1 ||
+    value.length === 0 ||
+    value.length > Math.ceil((PANE_STREAM_MAX_REDEMPTION_BYTES * 4) / 3) ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  )
+    return "invalid";
+  const frame = Buffer.from(value, "base64url");
+  return frame.byteLength === 0 || frame.byteLength > PANE_STREAM_MAX_REDEMPTION_BYTES
+    ? "invalid"
+    : frame;
+}
+
 function rejectUpgrade(socket: Socket, status: number): void {
   const phrase =
     status === 403
@@ -77,7 +106,11 @@ export function attachPaneStreamWebSocket(
   });
 
   // Old clients ignore the header and answer the pings by protocol.
-  wss.on("headers", (headers) => heartbeat.advertise(headers));
+  const redeemed = new WeakSet<import("node:http").IncomingMessage>();
+  wss.on("headers", (headers, request) => {
+    heartbeat.advertise(headers);
+    if (redeemed.has(request)) headers.push("X-Tmux-Ide-Redeem: accepted");
+  });
 
   const upgrade = (
     request: import("node:http").IncomingMessage,
@@ -123,6 +156,11 @@ export function attachPaneStreamWebSocket(
       rejectUpgrade(socket, 403);
       return;
     }
+    const redeemFrame = upgradeRedeemFrame(request);
+    if (redeemFrame === "invalid") {
+      rejectUpgrade(socket, 403);
+      return;
+    }
     if (!isCurrent()) {
       rejectUpgrade(socket, 410);
       return;
@@ -141,12 +179,14 @@ export function attachPaneStreamWebSocket(
     const cancelUnbound = (): void => decision.admission.cancelBeforeBind();
     socket.once("close", cancelUnbound);
     socket.once("error", cancelUnbound);
+    if (redeemFrame) redeemed.add(request);
     try {
       wss.handleUpgrade(request, socket, head, (ws) => {
         socket.off("close", cancelUnbound);
         socket.off("error", cancelUnbound);
         heartbeat.watch(ws, `pane-stream ${redemptionPath}`);
         decision.admission.bind(ws as unknown as DirectTerminalSocket);
+        if (redeemFrame) decision.admission.redeemFromUpgrade(redeemFrame);
       });
     } catch {
       socket.off("close", cancelUnbound);

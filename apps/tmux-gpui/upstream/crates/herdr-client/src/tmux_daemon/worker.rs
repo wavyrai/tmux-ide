@@ -98,6 +98,14 @@ pub enum CatalogAction {
         scope: ServerScope,
         live_session_id: String,
     },
+    /// attach-rtt: open for a stream, issued with the open where the daemon
+    /// can (`ServerClient::attach_session`).
+    Attach {
+        scope: ServerScope,
+        live_session_id: String,
+        preferred: Option<String>,
+        max_panes: usize,
+    },
     Create {
         scope: ServerScope,
         operation_id: Uuid,
@@ -136,6 +144,13 @@ pub enum CatalogResult {
         panes: Vec<String>,
         /// #806: the verified windows, from a daemon that streams one window.
         windows: Option<Vec<super::InventoryWindow>>,
+    },
+    /// `Opened`, and the stream the daemon issued with it, if any.
+    Attached {
+        workspace_name: String,
+        panes: Vec<String>,
+        windows: Option<Vec<super::InventoryWindow>>,
+        stream: Option<Box<super::PreparedStream>>,
     },
     Created(CreatedSession),
     Issued(Box<Handoff>),
@@ -418,6 +433,7 @@ fn execute(
         | CatalogAction::ReaderAsset { scope, .. }
         | CatalogAction::Sessions { scope }
         | CatalogAction::Open { scope, .. }
+        | CatalogAction::Attach { scope, .. }
         | CatalogAction::Create { scope, .. }
         | CatalogAction::Issue { scope, .. }
         | CatalogAction::SplitLayout { scope, .. }
@@ -523,6 +539,19 @@ fn execute(
                 windows: inventory.windows,
             })
         }
+        CatalogAction::Attach {
+            live_session_id,
+            preferred,
+            max_panes,
+            ..
+        } => client
+            .attach_session(&live_session_id, preferred.as_deref(), max_panes)
+            .map(|attached| CatalogResult::Attached {
+                workspace_name: attached.workspace_name,
+                panes: attached.inventory.panes,
+                windows: attached.inventory.windows,
+                stream: attached.stream,
+            }),
         CatalogAction::Create {
             operation_id,
             display_name,

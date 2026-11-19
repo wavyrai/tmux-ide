@@ -315,6 +315,12 @@ export type PaneStreamUpgradeDecision =
 export interface PaneStreamPreAuthAdmission {
   bind(socket: DirectTerminalSocket): void;
   cancelBeforeBind(): void;
+  /**
+   * Redeem with the frame the upgrade request carried (attach-rtt), exactly
+   * as if it were the socket's first message. A frame sent afterwards is a
+   * second redemption and closes the socket.
+   */
+  redeemFromUpgrade(frame: Buffer): void;
 }
 
 export interface PaneStreamAdmissionSnapshot {
@@ -1080,6 +1086,10 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
 
   cancelBeforeBind(): void {
     this.close(1008, "upgrade-rejected");
+  }
+
+  redeemFromUpgrade(frame: Buffer): void {
+    this.#onMessage(frame, false);
   }
 
   promote(): void {
