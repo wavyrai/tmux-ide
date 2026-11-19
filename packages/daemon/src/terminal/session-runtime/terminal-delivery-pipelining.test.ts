@@ -833,3 +833,127 @@ describe("capability 124 and the pipelining guards", () => {
     }
   });
 });
+
+describe("pipelined bytes and the connection budget", () => {
+  /** One pane's source, for a connection with two panes. */
+  class PaneOwner implements TerminalDeliverySourceOwner {
+    listener: ((update: CanonicalTerminalReplicaUpdate) => void) | undefined;
+    constructor(readonly pane: string) {}
+    async subscribeSource(listener: (update: CanonicalTerminalReplicaUpdate) => void) {
+      this.listener = listener;
+      return { generation, semanticPaneId: this.pane, close: async () => {} };
+    }
+    seed(snapshot: TerminalReplicaSnapshot) {
+      this.listener!({
+        type: "terminal.seed",
+        workspaceName: "w",
+        semanticPaneId: this.pane,
+        generation,
+        incarnation,
+        revision: 0,
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        snapshot,
+        stateHash: hashTerminalReplicaSnapshot(snapshot),
+        hashAlgorithm: "fnv1a64-v1",
+      });
+    }
+    /** Redraw the first `rows` rows with heavy cells: one patch of ~150 KiB. */
+    redraw(from: TerminalReplicaSnapshot, revision: number, rows: number) {
+      const next = structuredClone(from);
+      for (let y = 0; y < rows; y++)
+        for (const [x, cell] of next.grid[y]!.cells.entries()) {
+          cell.grapheme = String.fromCharCode(65 + ((x + y + revision) % 26));
+          cell.foreground = { kind: "rgb", value: 0xabcdef - revision };
+          cell.background = { kind: "rgb", value: 0x123456 + revision };
+        }
+      this.listener!({
+        type: "terminal.patch",
+        workspaceName: "w",
+        semanticPaneId: this.pane,
+        generation,
+        incarnation,
+        baseRevision: revision - 1,
+        revision,
+        cols: next.cols,
+        rows: next.rows,
+        patch: {
+          rows: next.grid
+            .slice(0, rows)
+            .map((row, index) => ({ index, row: structuredClone(row) })),
+        },
+        stateHash: hashTerminalReplicaSnapshot(next),
+        hashAlgorithm: "fnv1a64-v1",
+      } as CanonicalTerminalReplicaUpdate);
+      return next;
+    }
+  }
+
+  it("holds another pane while one pane's pipelined bytes fill the connection's budget", async () => {
+    const owners = new Map([
+      ["pane-a", new PaneOwner("pane-a")],
+      ["pane-b", new PaneOwner("pane-b")],
+    ]);
+    const hub = new SessionRuntimeTerminalDeliveryHub(
+      generation,
+      "w",
+      (pane) => owners.get(pane)!,
+      { connectionHoldMs: 60_000, connectionCongestedMs: 0 },
+    );
+    const messages: TerminalDeliveryServerMessage[] = [];
+    const offer = {
+      protocolVersions: [1, 124],
+      encodings: ["semantic-v1" as const],
+      richPlacements: false,
+    };
+    const sink = (m: TerminalDeliveryServerMessage) => {
+      messages.push(m);
+    };
+    const a = await hub.open("client", "pane-a", offer, sink);
+    const b = await hub.open("client", "pane-b", offer, sink);
+    const of = (pane: string) => deliveries(messages).filter((e) => e.semanticPaneId === pane);
+    try {
+      const wide = structuredClone(blankTerminalReplicaSnapshot(300, 30));
+      owners.get("pane-a")!.seed(wide);
+      await vi.waitFor(() => expect(of("pane-a")).toHaveLength(1), { timeout: 20_000 });
+      a.ack(
+        apply(
+          createTerminalDeliveryClientState(a.negotiation.negotiated, "w", "pane-a"),
+          of("pane-a")[0]!,
+          messages,
+        ).ack,
+      );
+      await settle();
+      const next = owners.get("pane-a")!.redraw(wide, 1, 4);
+      await vi.waitFor(() => expect(of("pane-a")).toHaveLength(2));
+      owners.get("pane-a")!.redraw(next, 2, 4);
+      await vi.waitFor(() => expect(of("pane-a")).toHaveLength(3));
+      const [first, second] = of("pane-a").slice(1);
+      // The oldest flight alone is under the budget; with the pipelined one it is over.
+      expect(first!.representationBytes).toBeLessThan(TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES);
+      expect(first!.representationBytes + second!.representationBytes).toBeGreaterThanOrEqual(
+        TERMINAL_DELIVERY_CONNECTION_UNACKED_BYTES,
+      );
+      owners.get("pane-b")!.seed(initial());
+      await settle();
+      await new Promise((r) => setTimeout(r, 100));
+      expect(of("pane-b")).toHaveLength(0);
+      // The ACKs free the budget and pane-b goes out.
+      let client = apply(
+        createTerminalDeliveryClientState(a.negotiation.negotiated, "w", "pane-a"),
+        of("pane-a")[0]!,
+        messages,
+      );
+      for (const e of [first!, second!]) {
+        client = apply(client.state, e, messages);
+        a.ack(client.ack);
+      }
+      await vi.waitFor(() => expect(of("pane-b")).toHaveLength(1), { timeout: 20_000 });
+      expect(faults(messages)).toEqual([]);
+    } finally {
+      await a.close();
+      await b.close();
+      await hub.close();
+    }
+  }, 60_000);
+});
