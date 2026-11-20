@@ -1,7 +1,7 @@
-//! The setup guide (onboarding, phase 1): Set up, Look and Keys in Home's
-//! place, behind a step rail, with Skip, Back and Continue. Every choice is
-//! saved when it is made; Esc closes it at any step. Machines and Agents are
-//! later phases and join the rail when they are built.
+//! The setup guide (onboarding, phases 1 and 2): Set up, Machines, Look and
+//! Keys in Home's place, behind a step rail, with Skip, Back and Continue.
+//! Every choice is saved when it is made; Esc closes it at any step. Agents
+//! is a later phase and joins the rail when it is built.
 use super::*;
 use crate::tmux_snapshot::appearance::{System, native};
 
@@ -14,7 +14,8 @@ pub(in crate::tmux_snapshot) const ALL_REACHED: u8 = 5;
 #[serde(deny_unknown_fields)]
 pub(in crate::tmux_snapshot) struct Progress {
     /// The furthest step reached, by its place in the five-step guide
-    /// (1 Set up, 3 Look, 5 Keys); 0 before the guide first opens.
+    /// (1 Set up, 2 Machines, 3 Look, 5 Keys); 0 before the guide first
+    /// opens.
     pub reached: u8,
     /// Closed from its last step.
     pub finished: bool,
@@ -26,23 +27,26 @@ pub(in crate::tmux_snapshot) struct Progress {
 pub(in crate::tmux_snapshot) enum Step {
     #[default]
     SetUp,
+    Machines,
     Look,
     Keys,
 }
 impl Step {
-    pub const ALL: [Step; 3] = [Step::SetUp, Step::Look, Step::Keys];
+    pub const ALL: [Step; 4] = [Step::SetUp, Step::Machines, Step::Look, Step::Keys];
     pub fn name(self) -> &'static str {
         match self {
             Step::SetUp => "Set up",
+            Step::Machines => "Machines",
             Step::Look => "Look",
             Step::Keys => "Keys",
         }
     }
-    /// Its place in the five-step guide the design lays out, Machines
-    /// second and Agents fourth, so `reached` keeps its meaning as they land.
+    /// Its place in the five-step guide the design lays out, Agents
+    /// fourth, so `reached` keeps its meaning as it lands.
     pub fn place(self) -> u8 {
         match self {
             Step::SetUp => 1,
+            Step::Machines => 2,
             Step::Look => 3,
             Step::Keys => 5,
         }
@@ -136,6 +140,12 @@ pub(in crate::tmux_snapshot) enum Act {
     CursorMotion(bool),
     Opaque(bool),
     Tick(usize),
+    /// Machines: add what the field holds, a suggested Host, or try a
+    /// saved machine again, all through the add-machine path.
+    Add,
+    Connect(String),
+    /// Machines: put a failure's words on the clipboard.
+    Copy(String),
 }
 
 /// The guide's keyboard stops, by slot in `State.focus`. Set up keeps the
@@ -146,15 +156,24 @@ pub(in crate::tmux_snapshot) mod slot {
     pub const SKIP: usize = 2;
     pub const BACK: usize = 3;
     pub const NEXT: usize = 4;
+    /// One per step of the five.
     pub const RAIL: usize = 5;
-    pub const SEGMENT: usize = 8;
-    pub const GRID: usize = 9;
-    pub const GRID_DARK: usize = 10;
-    pub const FONT_DOWN: usize = 11;
-    pub const FONT_UP: usize = 12;
-    pub const CURSOR: usize = 13;
-    pub const OPAQUE: usize = 14;
-    pub const COUNT: usize = 15;
+    pub const SEGMENT: usize = RAIL + 5;
+    pub const GRID: usize = SEGMENT + 1;
+    pub const GRID_DARK: usize = SEGMENT + 2;
+    pub const FONT_DOWN: usize = SEGMENT + 3;
+    pub const FONT_UP: usize = SEGMENT + 4;
+    pub const CURSOR: usize = SEGMENT + 5;
+    pub const OPAQUE: usize = SEGMENT + 6;
+    pub const FIELD: usize = OPAQUE + 1;
+    pub const ADD: usize = OPAQUE + 2;
+    /// Host suggestions, then each failed machine's Try again and Copy
+    /// details, up to `MANY` of each.
+    pub const MANY: usize = 8;
+    pub const CHIP: usize = ADD + 1;
+    pub const RETRY: usize = CHIP + MANY;
+    pub const COPY: usize = RETRY + MANY;
+    pub const COUNT: usize = COPY + MANY;
 }
 
 /// How a stop answers Return and Space. Return on a stop that isn't a
@@ -165,6 +184,8 @@ pub(in crate::tmux_snapshot) enum Kind {
     Press,
     /// Space flips it.
     Switch,
+    /// A text field: Return presses its button; other keys are its own.
+    Field,
     /// Arrows move inside it.
     Group,
 }
@@ -188,6 +209,8 @@ pub(in crate::tmux_snapshot) struct Guide {
     pub reopened: bool,
     /// A theme change that could not be sent.
     pub note: Option<&'static str>,
+    /// The Machines step: its field, suggestions and the add in progress.
+    pub machines: guide_machines::Machines,
 }
 impl Guide {
     pub(super) fn from_progress(progress: Progress) -> Self {
@@ -251,7 +274,7 @@ impl SnapshotView {
             Act::Skip => self.close_welcome(cx),
             Act::ContinueWithout => {
                 guide.setup_skipped = true;
-                guide.go(Step::Look);
+                guide.go(Step::Machines);
                 self.save_welcome(cx);
             }
             Act::Filter(filter) => {
@@ -297,6 +320,9 @@ impl SnapshotView {
                     *tried = true;
                 }
             }
+            Act::Add => self.machines_add(window, cx),
+            Act::Connect(target) => self.machines_connect(target, window, cx),
+            Act::Copy(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
         }
         cx.notify();
     }
@@ -383,6 +409,12 @@ impl SnapshotView {
                         let act = act.clone();
                         self.press(act, window, cx);
                     }
+                    Some((_, act, Kind::Field)) if enter => {
+                        let act = act.clone();
+                        self.press(act, window, cx);
+                    }
+                    // Space in a field is text.
+                    Some((_, _, Kind::Field)) => return,
                     _ if enter => match next {
                         Some(act) => self.press(act, window, cx),
                         None => return,

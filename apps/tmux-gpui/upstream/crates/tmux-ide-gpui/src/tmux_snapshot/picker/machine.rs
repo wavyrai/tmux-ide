@@ -19,7 +19,7 @@ impl Form {
     }
 }
 
-pub(super) fn target(value: &str) -> Option<String> {
+pub(in crate::tmux_snapshot) fn target(value: &str) -> Option<String> {
     let value = value.trim();
     fn name(value: &str) -> bool {
         value

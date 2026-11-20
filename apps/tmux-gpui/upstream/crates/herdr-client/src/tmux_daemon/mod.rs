@@ -181,6 +181,20 @@ pub enum Error {
     #[error("The local daemon process has exited")]
     OwnerExited,
 }
+impl Error {
+    /// ssh's own one-line reason when reaching a machine failed in SSH
+    /// discovery (`tmux_ssh::Said`); nothing else ssh or the remote wrote.
+    pub fn ssh_said(&self) -> Option<&str> {
+        match self {
+            #[cfg(unix)]
+            Error::Remote(error) => match error.as_ref() {
+                crate::tmux_ssh::TransportError::Discovery(discovery) => discovery.said(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

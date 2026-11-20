@@ -22,8 +22,10 @@ pub enum Error {
 
 #[cfg(unix)]
 mod discovery;
+mod said;
 #[cfg(unix)]
 pub use discovery::{DiscoveryError, discover};
+pub use said::Said;
 
 mod connection;
 pub use connection::{ConnectionError, VerifiedConnection};

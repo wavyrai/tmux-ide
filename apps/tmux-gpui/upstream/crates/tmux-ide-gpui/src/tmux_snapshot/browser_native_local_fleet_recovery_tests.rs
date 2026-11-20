@@ -77,7 +77,7 @@ fn security_and_protocol_errors_never_schedule_recovery() {
     {
         use herdr_client::tmux_ssh::{DiscoveryError, TransportError, TunnelError};
         for error in [
-            TransportError::Discovery(DiscoveryError::Authentication),
+            TransportError::Discovery(DiscoveryError::Authentication(Default::default())),
             TransportError::Tunnel(TunnelError::HostKey),
         ] {
             assert!(!transient(&DaemonError::Remote(Box::new(error))));
@@ -116,11 +116,13 @@ fn http_timeout_recovers_but_http_unauthorized_does_not() {
 fn an_unreachable_machine_is_retried_and_an_unknown_ssh_exit_is_not() {
     use herdr_client::tmux_ssh::{DiscoveryError, TransportError};
     let remote = |error| DaemonError::Remote(Box::new(TransportError::Discovery(error)));
-    assert!(transient(&remote(DiscoveryError::Unreachable)));
+    assert!(transient(&remote(DiscoveryError::Unreachable(
+        Default::default()
+    ))));
     for fatal in [
-        DiscoveryError::Exit,
-        DiscoveryError::Authentication,
-        DiscoveryError::HostKey,
+        DiscoveryError::Exit(Default::default()),
+        DiscoveryError::Authentication(Default::default()),
+        DiscoveryError::HostKey(Default::default()),
         DiscoveryError::MissingCli,
     ] {
         assert!(!transient(&remote(fatal)));
@@ -130,7 +132,7 @@ fn an_unreachable_machine_is_retried_and_an_unknown_ssh_exit_is_not() {
     retries.failed(
         "remote",
         uuid::Uuid::new_v4(),
-        &remote(DiscoveryError::Unreachable),
+        &remote(DiscoveryError::Unreachable(Default::default())),
         now,
     );
     assert_eq!(retries.wait(now), Some(Duration::from_secs(1)));

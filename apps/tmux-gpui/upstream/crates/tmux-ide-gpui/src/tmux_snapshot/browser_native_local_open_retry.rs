@@ -100,6 +100,15 @@ impl Local {
         error: &herdr_client::tmux_daemon::Error,
     ) -> Result<(), Error> {
         let failure = reconnect::Failure::of(error);
+        // ssh's own words for a saved machine it could not reach, for the
+        // setup guide; this Mac's daemon has none.
+        self.state.ssh_failure = error
+            .ssh_said()
+            .filter(|_| self.selected_profile.is_some())
+            .map(|said| SshFailure {
+                machine: self.machine_id.clone(),
+                said: said.into(),
+            });
         if self.recovery.is_some() {
             // Bounded messages only: codes and numbers, no payloads.
             eprintln!("tmux-ide: reconnect attempt failed: {error}");

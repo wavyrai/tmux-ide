@@ -5,6 +5,7 @@ mod fleet_servers;
 mod fonts;
 mod keys;
 mod machine;
+pub(super) use machine::target as ssh_target;
 mod machine_edit;
 mod machine_remove;
 mod navigation_commands;

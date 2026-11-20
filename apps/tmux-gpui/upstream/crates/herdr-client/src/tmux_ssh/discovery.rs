@@ -1,6 +1,6 @@
 //! Blocking worker-only discovery. Both pipes are nonblocking and drained with a
 //! per-turn budget; inherited pipe writers cannot outlive the operation deadline.
-use super::{RemoteDescriptor, SshTarget, discovery_command};
+use super::{RemoteDescriptor, Said, SshTarget, discovery_command};
 use std::{
     io::{self, Read},
     os::fd::AsFd,
@@ -21,20 +21,34 @@ pub enum DiscoveryError {
     #[error("Remote tmux-ide CLI is missing")]
     MissingCli,
     #[error("SSH host key verification failed")]
-    HostKey,
+    HostKey(Said),
     #[error("SSH authentication failed")]
-    Authentication,
+    Authentication(Said),
     #[error("SSH discovery failed")]
-    Exit,
+    Exit(Said),
     /// ssh said the machine can't be reached: no route, refused, an
     /// unreachable network, an unresolved name or a timed-out connect. The
     /// machine is likely off or away; retried like a timeout (r4).
     #[error("SSH could not reach the machine")]
-    Unreachable,
+    Unreachable(Said),
     #[error("SSH discovery I/O failed")]
     Io(#[from] io::Error),
     #[error(transparent)]
     Descriptor(#[from] super::Error),
+}
+
+impl DiscoveryError {
+    /// ssh's own one-line reason for the failure, when it gave one in its
+    /// own words (`Said`); never anything else the process wrote.
+    pub fn said(&self) -> Option<&str> {
+        match self {
+            Self::HostKey(said)
+            | Self::Authentication(said)
+            | Self::Exit(said)
+            | Self::Unreachable(said) => said.line(),
+            _ => None,
+        }
+    }
 }
 
 struct OwnedChild(Child);
@@ -207,14 +221,15 @@ impl Diagnostics {
         self.unreachable |= text.lines().any(ssh_unreachable);
     }
     pub(super) fn failure(&self) -> DiscoveryError {
+        let said = Said::from_stderr(&self.tail);
         if self.host_key {
-            DiscoveryError::HostKey
+            DiscoveryError::HostKey(said)
         } else if self.authentication {
-            DiscoveryError::Authentication
+            DiscoveryError::Authentication(said)
         } else if self.unreachable {
-            DiscoveryError::Unreachable
+            DiscoveryError::Unreachable(said)
         } else {
-            DiscoveryError::Exit
+            DiscoveryError::Exit(said)
         }
     }
 }

@@ -67,6 +67,7 @@ fn at_look<'a>(
     appearance.selected = selected.into();
     cx.update(|_, cx| view.update(cx, |v, _| v.browser_state.appearance = Some(appearance)));
     act(&view, cx, G::Next);
+    act(&view, cx, G::Next);
     assert_eq!(step(&view, cx), Step::Look);
     (view, cx, rx)
 }
@@ -160,6 +161,7 @@ fn without_appearance_look_says_so_and_still_offers_the_rest(cx: &mut TestAppCon
     let dir = tempfile::tempdir().unwrap();
     let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
     act(&view, cx, G::Next);
+    act(&view, cx, G::Next);
     assert!(cx.debug_bounds("welcome-look-unavailable").is_some());
     assert!(cx.debug_bounds("welcome-filter").is_none());
     assert!(cx.debug_bounds("welcome-font-size").is_some());
@@ -244,8 +246,9 @@ fn cursor_animation_is_saved_from_look(cx: &mut TestAppContext) {
 fn the_keys_step_ticks_a_listed_key_instead_of_running_it(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
-    act(&view, cx, G::Next);
-    act(&view, cx, G::Next);
+    for _ in 0..3 {
+        act(&view, cx, G::Next);
+    }
     assert_eq!(step(&view, cx), Step::Keys);
     assert!(focused(&view, cx, slot::NEXT), "Start using comes first");
     let hidden = view.read_with(cx, |v, _| v.sidebar_hidden);
@@ -268,7 +271,7 @@ fn the_keys_step_ticks_a_listed_key_instead_of_running_it(cx: &mut TestAppContex
 
 #[gpui::test]
 fn esc_closes_the_guide_at_every_step_and_remembers_how_far(cx: &mut TestAppContext) {
-    for (nexts, reached) in [(0, 1), (1, 3), (2, 5)] {
+    for (nexts, reached) in [(0, 1), (1, 2), (2, 3), (3, 5)] {
         let dir = tempfile::tempdir().unwrap();
         let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
         for _ in 0..nexts {
@@ -291,17 +294,20 @@ fn the_rail_opens_only_steps_reached_and_back_returns(cx: &mut TestAppContext) {
     // Setup isn't done: Continue can't be pressed or reached.
     click(cx, "welcome-next");
     assert_eq!(step(&view, cx), Step::SetUp);
-    click(cx, "welcome-rail-2");
+    click(cx, "welcome-rail-3");
     assert_eq!(step(&view, cx), Step::SetUp, "Keys not reached yet");
-    // Set up: Continue to Look, saved as reached.
+    // Set up: Continue to Machines, saved as reached.
     tests::publish(&view, cx, None);
     click(cx, "welcome-next");
-    assert_eq!(step(&view, cx), Step::Look);
-    assert_eq!(saved(&dir, cx).guide.reached, 3);
+    assert_eq!(step(&view, cx), Step::Machines);
+    assert_eq!(saved(&dir, cx).guide.reached, 2);
     click(cx, "welcome-back");
     assert_eq!(step(&view, cx), Step::SetUp);
     click(cx, "welcome-rail-1");
-    assert_eq!(step(&view, cx), Step::Look, "a reached step opens");
+    assert_eq!(step(&view, cx), Step::Machines, "a reached step opens");
+    click(cx, "welcome-next");
+    assert_eq!(step(&view, cx), Step::Look);
+    assert_eq!(saved(&dir, cx).guide.reached, 3);
     // Return on the segment (not a button) is Continue.
     assert!(cx.debug_bounds("welcome-back").is_some());
     cx.simulate_keystrokes("enter");
@@ -314,7 +320,8 @@ fn start_using_without_setup_closes_to_home(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (view, cx, rx) = home(cx, Some(Phase::Missing), &[], fresh(&dir));
     click(cx, "welcome-skip");
-    assert_eq!(step(&view, cx), Step::Look, "Continue without it");
+    assert_eq!(step(&view, cx), Step::Machines, "Continue without it");
+    act(&view, cx, G::Next);
     act(&view, cx, G::Next);
     click(cx, "welcome-next");
     assert!(!shown(cx));
@@ -354,9 +361,10 @@ fn voiceover_reads_the_guide(cx: &mut TestAppContext) {
     for (role, label) in [
         ("Region", render::LOOK_TITLE),
         ("List", "Setup steps"),
-        ("Button", "Step 1 of 3, Set up, visited"),
-        ("Button", "Step 2 of 3, Look, current"),
-        ("Button", "Step 3 of 3, Keys, not reached yet"),
+        ("Button", "Step 1 of 4, Set up, visited"),
+        ("Button", "Step 2 of 4, Machines, visited"),
+        ("Button", "Step 3 of 4, Look, current"),
+        ("Button", "Step 4 of 4, Keys, not reached yet"),
         ("RadioGroup", "Appearance"),
         ("RadioButton", "Match macOS"),
         ("RadioGroup", "Theme"),
@@ -382,7 +390,7 @@ fn reopening_from_commands_starts_at_set_up_with_every_step_open(cx: &mut TestAp
     let dir = tempfile::tempdir().unwrap();
     let (view, cx, _rx) = home(cx, None, &[("api", "api")], fresh(&dir));
     act(&view, cx, G::Next);
-    assert_eq!(step(&view, cx), Step::Look);
+    assert_eq!(step(&view, cx), Step::Machines);
     cx.simulate_keystrokes("escape");
     assert!(!shown(cx));
     let reopen = |view: &Entity<SnapshotView>, cx: &mut VisualTestContext| {
@@ -398,8 +406,9 @@ fn reopening_from_commands_starts_at_set_up_with_every_step_open(cx: &mut TestAp
     };
     reopen(&view, cx);
     // Still open at Keys: Commands brings it back to the first step.
-    act(&view, cx, G::Next);
-    act(&view, cx, G::Next);
+    for _ in 0..3 {
+        act(&view, cx, G::Next);
+    }
     assert_eq!(step(&view, cx), Step::Keys);
     reopen(&view, cx);
     assert!(

@@ -517,7 +517,7 @@ fn tab_reaches_every_stop_in_order(cx: &mut TestAppContext) {
     // Fonts aren't listed and the switches' files aren't read in a test
     // window, so those controls are disabled and never stops.
     let mut seen = Vec::new();
-    for _ in 0..9 {
+    for _ in 0..10 {
         press(cx, "tab", false);
         seen.push(focused(cx).unwrap());
     }
@@ -532,6 +532,7 @@ fn tab_reaches_every_stop_in_order(cx: &mut TestAppContext) {
             RAIL,
             RAIL + 1,
             RAIL + 2,
+            RAIL + 3,
             SEGMENT
         ],
         "Match macOS: a row for each side"
