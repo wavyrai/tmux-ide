@@ -110,4 +110,40 @@ describe("daemon capability negotiation", () => {
       (await (await read("?nativeSurfaces=1")).json()).capabilities.nativeSurfaces.available,
     ).toBe(false);
   });
+  it("advertises the bridge only on opt-in and only while it is attached", async () => {
+    let attached = true;
+    const app = createApp({
+      remoteAccess: { ownerToken: OWNER },
+      remoteBridgeAvailable: () => attached,
+    });
+    const read = async (query: string) =>
+      (
+        await app.request(`/api/v2/capabilities${query}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json" },
+          body: "{}",
+        })
+      ).json();
+    expect((await read("")).capabilities).not.toHaveProperty("remoteBridge");
+    expect((await read("?remoteBridge=1")).capabilities.remoteBridge).toEqual({
+      version: 1,
+      path: "/api/v2/bridge",
+      features: ["clipboard-write"],
+    });
+    expect(
+      (await read("?remoteBridge=1&nativeSurfaces=1")).capabilities.remoteBridge,
+    ).toBeDefined();
+    attached = false;
+    expect((await read("?remoteBridge=1")).capabilities).not.toHaveProperty("remoteBridge");
+    // A daemon built without the bridge says nothing about it.
+    const bare = createApp({ remoteAccess: { ownerToken: OWNER } });
+    const answer = await (
+      await bare.request("/api/v2/capabilities?remoteBridge=1", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${OWNER}`, "Content-Type": "application/json" },
+        body: "{}",
+      })
+    ).json();
+    expect(answer.capabilities).not.toHaveProperty("remoteBridge");
+  });
 });

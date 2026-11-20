@@ -163,6 +163,8 @@ import {
   type TerminalAttachmentWebSocketBoundary,
 } from "../server/terminal-attachment-upgrade.ts";
 import { attachNativeSurfaceProvider } from "../server/native-surface-provider-upgrade.ts";
+import { attachRemoteBridge, type RemoteBridgeBoundary } from "../server/remote-bridge-upgrade.ts";
+import { daemonRemoteClipboardHub } from "../terminal/remote-bridge/clipboard-hub.ts";
 import {
   attachPaneStreamWebSocket,
   type PaneStreamWebSocketBoundary,
@@ -947,6 +949,7 @@ async function startHttpServer({
 
   const authService = new AuthService(authConfig.secret);
 
+  let remoteBridge: RemoteBridgeBoundary | null = null;
   const app = createApp({
     tmuxServerOwners: serverOwners.owners,
     authService,
@@ -979,6 +982,8 @@ async function startHttpServer({
       serverOwners.isDefaultCurrent() && paneStreamRuntime.nativeSurfaces !== undefined,
     nativeSurfaceProviderAvailable: () =>
       serverOwners.isDefaultCurrent() && paneStreamRuntime.nativeSurfaces?.available === true,
+    remoteBridgeAvailable: () =>
+      remoteBridge !== null && !!localBypassToken && serverOwners.isDefaultCurrent(),
     applicationShellInventoryBackend: terminalInventoryRuntime,
     startupReadinessAttachmentBackend: terminalInventoryRuntime,
     catalogLiveSessions,
@@ -1044,8 +1049,15 @@ async function startHttpServer({
         () => serverOwners.isDefaultCurrent(),
       )
     : null;
+  remoteBridge = attachRemoteBridge(server, {
+    ownerToken: localBypassToken ?? null,
+    hub: daemonRemoteClipboardHub,
+    isCurrent: () => serverOwners.isDefaultCurrent(),
+  });
   const paneStreamBoundary: PaneStreamWebSocketBoundary = {
     async close() {
+      remoteBridge?.close();
+      remoteBridge = null;
       nativeProviderBoundary?.close();
       await paneStreamSocketBoundary.close();
     },

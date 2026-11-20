@@ -31,6 +31,7 @@ export * from "./terminals.ts";
 export * from "./issue-error.ts";
 export * from "./terminal-attachments.ts";
 export * from "./pane-stream.ts";
+export * from "./remote-bridge.ts";
 export * from "./control.ts";
 export * from "./commands.ts";
 export * from "./command-catalog.ts";

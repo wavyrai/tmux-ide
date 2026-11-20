@@ -1,4 +1,9 @@
-import { TERMINAL_SURFACE_CAPABILITY_VERSION } from "@tmux-ide/contracts";
+import {
+  REMOTE_BRIDGE_FEATURES,
+  REMOTE_BRIDGE_PATH,
+  REMOTE_BRIDGE_VERSION,
+  TERMINAL_SURFACE_CAPABILITY_VERSION,
+} from "@tmux-ide/contracts";
 import { mountAutomationRoutes } from "./automation.ts";
 import { mountTmuxServerRoutes } from "./tmux-servers.ts";
 import { streamBoundedLogs } from "./log-stream.ts";
@@ -207,6 +212,8 @@ export interface CreateAppOptions {
   /** Current authenticated provider availability, never inferred from platform or PID. */
   nativeSurfaceProviderAvailable?: () => boolean;
   nativeSurfaceProviderSupported?: () => boolean;
+  /** True while `/api/v2/bridge` is attached to this daemon's HTTP server. */
+  remoteBridgeAvailable?: () => boolean;
   applicationShellInventoryBackend?: {
     discoverApplicationShellSession(
       requestedSessionName: string,
@@ -725,6 +732,16 @@ export function createApp(options: CreateAppOptions = {}): Hono {
                       available: false as const,
                       reason: "This daemon has no pane-stream backend.",
                     },
+              }
+            : {}),
+          // Feature detection for the per-machine bridge; older apps never ask.
+          ...(c.req.query("remoteBridge") === "1" && options.remoteBridgeAvailable?.() === true
+            ? {
+                remoteBridge: {
+                  version: REMOTE_BRIDGE_VERSION,
+                  path: REMOTE_BRIDGE_PATH,
+                  features: [...REMOTE_BRIDGE_FEATURES],
+                },
               }
             : {}),
           appWindowMutation:
