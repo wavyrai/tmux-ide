@@ -64,6 +64,7 @@ mod pointer;
 mod presence;
 mod reader;
 mod reconnect_retry;
+mod remote_copy;
 mod renderer_probe;
 mod roster_counts;
 mod selection;
@@ -396,6 +397,7 @@ fn show_owned(
                         fit_settle: Default::default(),
                         window_size: Default::default(),
                         images_lost: Default::default(),
+                        remote_copy: remote_copy::RemoteCopy::new(owner.clone()),
                         marked: String::new(),
                         marked_selection: None,
                         input_geometry: None,
@@ -497,6 +499,7 @@ struct SnapshotView {
     fit_settle: geometry::FitSettle,
     window_size: window_size_notice::Watch,
     images_lost: images_lost_notice::Watch,
+    remote_copy: remote_copy::RemoteCopy,
     marked: String,
     marked_selection: Option<std::ops::Range<usize>>,
     input_cell_width: Option<f32>,
@@ -516,21 +519,6 @@ struct SnapshotView {
     painter: Rc<RefCell<TerminalPainter>>,
     reader: reader::Views,
 }
-impl SnapshotView {
-    /// Repaint when an image completes; ask the bridge for absent images.
-    fn flush_kitty_graphics(&mut self, cx: &mut Context<Self>) {
-        if self.graphics.store.take_changed() {
-            cx.notify();
-        }
-        let missing = self.graphics.store.take_missing();
-        if !missing.is_empty()
-            && let Some(sender) = &self.browser_commands
-        {
-            let _ = sender.try_send(browser::Command::KittyMissing { digests: missing });
-        }
-    }
-}
-
 impl SnapshotView {
     /// The window became active or inactive: drop transient gestures and
     /// queue the presence change.

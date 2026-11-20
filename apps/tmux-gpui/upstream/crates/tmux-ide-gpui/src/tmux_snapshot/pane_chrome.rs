@@ -764,7 +764,9 @@ impl SnapshotView {
                 let frame = self.browser_state.frame.clone();
                 let regions = self.browser_state.regions.clone();
                 let request = self.browser_request;
-                self.pane_header_label(h, width, self.browser_header(&h.id, cx))
+                let content =
+                    (self.remote_copy_header(&h.id, cx)).or_else(|| self.browser_header(&h.id, cx));
+                self.pane_header_label(h, width, content)
                     .id(SharedString::from(format!("pane-card-header:{id}")))
                     .debug_selector({
                         let id = id.clone();

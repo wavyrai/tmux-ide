@@ -190,6 +190,15 @@ fn issue_versions(
         daemon_version,
     )
 }
+/// The first daemon release with the per-machine bridge (remote copy). An
+/// earlier daemon is not asked for it at all. Not yet set by a release: the
+/// PM confirms it when 2.9.28 ships.
+const REMOTE_BRIDGE_SINCE: [u64; 3] = [2, 9, 28];
+/// Whether the app may ask this daemon for the bridge. The daemon's
+/// capabilities answer still decides whether it offers one.
+pub(super) fn knows_remote_bridge(product_version: Option<&str>) -> bool {
+    release_at_least(product_version, REMOTE_BRIDGE_SINCE)
+}
 /// Whether `product_version` is a plain release number at least `since`.
 fn release_at_least(product_version: Option<&str>, since: [u64; 3]) -> bool {
     let Some(version) = product_version else {

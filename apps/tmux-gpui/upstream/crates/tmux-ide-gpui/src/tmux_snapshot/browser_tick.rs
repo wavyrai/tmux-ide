@@ -38,6 +38,10 @@ impl IdleTick {
         }
         self.nudge();
     }
+    /// What wakes the UI task from another thread.
+    pub(super) fn waker(&self) -> Option<browser::Mailbox> {
+        self.mailbox.clone()
+    }
     /// Wakes the UI task to flush what the activity queued.
     pub(super) fn nudge(&self) {
         if let Some(mailbox) = &self.mailbox {
@@ -155,6 +159,7 @@ impl SnapshotView {
             self.palette.due_at(),
             self.window_size.due_at(),
             self.images_lost.due_at(),
+            self.remote_copy.due_at(),
             self.graphics.store.waiting().then_some(now + IMAGE_POLL),
             #[cfg(test)]
             self.idle_tick.deadline,
@@ -196,6 +201,7 @@ impl SnapshotView {
         self.flush_attention();
         self.flush_palette(cx);
         self.flush_kitty_graphics(cx);
+        self.tick_remote_copy(cx);
         self.tick_agent_indicators(cx);
         if self.chrome.take_policy_change() {
             cx.notify();

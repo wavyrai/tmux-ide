@@ -73,6 +73,19 @@ impl CatalogSource {
             stopped: AtomicBool::new(false),
         }))
     }
+    /// Names the machine this source reaches: two sources with the same key
+    /// share one route. Never contains credentials.
+    pub fn machine_key(&self) -> String {
+        match self {
+            Self::Local(record) => format!("local:{}", record.display()),
+            #[cfg(unix)]
+            Self::Remote(source) => format!(
+                "ssh:{}|{}",
+                source.target.as_str(),
+                source.expected_environment.as_deref().unwrap_or_default()
+            ),
+        }
+    }
     pub(super) fn discover(&self, cancelled: &Arc<AtomicBool>) -> Result<Owner, Error> {
         match self {
             Self::Local(record) => {

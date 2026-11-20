@@ -223,6 +223,8 @@ pub(super) struct State {
     /// Home is live, but the session the user chose has too many panes to
     /// open; this names it and says what to do instead.
     pub home_notice: Option<String>,
+    /// The machine's name as the app shows it, for remote copy. Worker-owned.
+    pub machine_label: String,
     /// Panes whose source the daemon closed; their headers say so (#701, #702).
     pub unavailable_panes: Vec<String>,
     pub native_frame_scope: Option<super::browser_native_preview::Route>,
@@ -678,6 +680,7 @@ impl Reader {
             pane_split: None,
             window_stream: false,
             home_notice: None,
+            machine_label: String::new(),
             unavailable_panes: Vec::new(),
             native_frame_scope: p.native_frame_scope,
             native_retained_preview: p.native_retained_preview,
