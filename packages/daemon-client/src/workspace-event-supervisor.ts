@@ -769,7 +769,9 @@ export function createWorkspaceEventSupervisor(
       socket.removeEventListener?.("open", onOpen);
       socket.removeEventListener?.("message", onMessage);
       socket.removeEventListener?.("close", onClose);
-      socket.removeEventListener?.("error", onError);
+      // Keep onError (inert once disposed): closing a socket that is still
+      // connecting emits 'error', and an EventEmitter socket with no 'error'
+      // listener turns that into an uncaught exception in its host process.
       for (const waiter of ackWaiters.values()) {
         waiter.reject(new Error("workspace event supervisor disposed"));
       }
