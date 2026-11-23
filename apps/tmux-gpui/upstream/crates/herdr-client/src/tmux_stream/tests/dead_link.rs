@@ -195,6 +195,9 @@ fn probing_all_streams_reaches_the_open_ones_and_forgets_the_ended() {
     assert_eq!(PaneStream::probe_only(&[&open, &ended]), 1);
     assert!(open.probing(), "the open stream was not probed");
     assert!(!ended.probing(), "an ended stream was probed");
+    // Asked directly, an ended stream has no probe to wait for either.
+    ended.probe();
+    assert!(!ended.probing());
     let started = Instant::now();
     while open.probing() {
         assert!(started.elapsed() < WAIT, "the answer never ended the probe");
@@ -293,8 +296,9 @@ mod timer {
     #[test]
     fn the_worker_wakes_for_the_next_ping_or_for_the_verdict() {
         let (mut pinger, start) = timer();
+        // `start` is the timer's own start rounded up to a millisecond.
         let next = pinger.wake_at(start);
-        assert!(next >= start + EVERY && next <= start + EVERY + MS * 2);
+        assert!(next <= start + EVERY && next + MS > start + EVERY);
         let at = start + EVERY;
         pinger.sent(ID, at);
         // The verdict: the limit after the ping, or after what was heard

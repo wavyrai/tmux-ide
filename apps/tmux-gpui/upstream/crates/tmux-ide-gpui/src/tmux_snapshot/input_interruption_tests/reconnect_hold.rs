@@ -240,6 +240,7 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
         "other-pane",
         "other-session",
         "navigated",
+        "navigating",
         "home",
         "no-input-target",
         "window-left",
@@ -268,13 +269,15 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
                         view.browser_request += 1;
                         state.request = view.browser_request;
                     }
+                    // The view asked for another request; this state is the old one's.
+                    "navigating" => view.browser_request += 1,
                     "home" => state.surface = browser::Surface::Home,
                     "no-input-target" => state.input_targets.clear(),
                     "window-left" => state.presence_revision += 1,
                     _ => unreachable!(),
                 }
                 view.apply_browser_state(Some(state), cx);
-                view.age_pending_input_by(Duration::from_millis(5100));
+                // At once: not when the hold's limit passes.
                 view.browser_tick(cx);
                 let delivered: Vec<_> = sent(&receiver)
                     .into_iter()

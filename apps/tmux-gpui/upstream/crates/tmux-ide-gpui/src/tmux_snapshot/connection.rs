@@ -709,16 +709,21 @@ impl SnapshotView {
         .then(|| reconnecting_words(held.map_or(0, |(keys, _)| keys)))
     }
 
+    /// What the pane's toast says: the keys not sent, else the reconnect card.
+    pub(super) fn pane_notice(&self) -> Option<String> {
+        if self.key_refused() {
+            Some(not_sent_words(self.connection.keys_not_sent))
+        } else {
+            self.reconnect_card()
+        }
+    }
+
     /// In the pane the keys were typed in, on glass: "N keys not sent…" from
     /// the first key a reconnect could not deliver until the stream is back;
     /// otherwise, from 2 s into a drop, "Reconnecting…" with "Retry now".
     pub(super) fn not_sent_toast(&self, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
         let refused = self.key_refused();
-        let words = if refused {
-            not_sent_words(self.connection.keys_not_sent)
-        } else {
-            self.reconnect_card()?
-        };
+        let words = self.pane_notice()?;
         // Over the selected pane's card, or over the whole terminal without cards.
         let rect = self.card_layout(width).and_then(|cards| {
             let selected = self.browser_state.selected_pane.as_ref()?;

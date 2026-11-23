@@ -5,7 +5,6 @@
 //! the same way until its probe is answered.
 use super::reconnect_hold::{PANE, back, dropped, live, sent, view_with};
 use super::*;
-use crate::tmux_snapshot::connection::not_sent_words;
 use std::time::Duration;
 
 fn type_keys(
@@ -86,8 +85,8 @@ fn the_pane_counts_the_keys_a_reconnect_could_not_deliver(cx: &mut TestAppContex
             type_keys(view, &["x"], window, cx);
             assert_eq!(view.connection.keys_not_sent, 4);
             assert_eq!(
-                not_sent_words(view.connection.keys_not_sent),
-                "4 keys not sent. Type them again when the connection is back."
+                view.pane_notice().as_deref(),
+                Some("4 keys not sent. Type them again when the connection is back.")
             );
             let state = back(view);
             view.apply_browser_state(Some(state), cx);
@@ -138,6 +137,7 @@ fn a_delivery_once_begun_finishes_past_the_limit(cx: &mut TestAppContext) {
             view.apply_browser_state(Some(state), cx);
             let mut got = sent(&receiver);
             assert_eq!(got.len(), 2, "the queue takes two");
+            assert!(!view.reconnect_hold_waiting(), "delivering, not waiting");
             view.age_pending_input_by(Duration::from_secs(10));
             while view.pending_input.is_some() {
                 view.browser_tick(cx);
@@ -315,4 +315,78 @@ fn the_card_counts_held_keys_and_offers_no_retry_while_only_probing(cx: &mut Tes
             "probing: {probing}"
         );
     }
+}
+
+/// The stream is replaced again while held keys are still going out: the
+/// rest never goes to the newer stream, and the pane says how many.
+#[gpui::test]
+fn a_stream_replaced_mid_delivery_gets_none_of_the_rest(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(2);
+    let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            receiver.try_iter().for_each(drop);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["a", "enter", "b", "enter", "c"], window, cx);
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            assert_eq!(sent(&receiver).len(), 2, "the queue takes two");
+            let mut state = back(view);
+            state.input_targets[0].token = "c".repeat(64);
+            view.apply_browser_state(Some(state), cx);
+            view.browser_tick(cx);
+            assert!(
+                sent(&receiver).is_empty(),
+                "held keys reached a newer stream"
+            );
+            assert!(view.pending_input.is_none());
+            assert_eq!(view.connection.keys_not_sent, 3);
+        })
+    });
+}
+
+/// Leaving the session forgets the count with the notice.
+#[gpui::test]
+fn the_count_goes_when_the_session_is_left(cx: &mut TestAppContext) {
+    let (view, _receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["l", "s"], window, cx);
+            view.age_pending_input_by(Duration::from_millis(5100));
+            view.browser_tick(cx);
+            assert_eq!(view.connection.keys_not_sent, 2);
+            let mut state = view.browser_state.clone();
+            state.surface = browser::Surface::Home;
+            view.apply_browser_state(Some(state), cx);
+            assert_eq!(view.connection.keys_not_sent, 0);
+        })
+    });
+}
+
+/// The hold's limit is reported when it passes, with no key, tick or
+/// publication to notice it.
+#[gpui::test]
+fn the_limit_is_reported_when_it_passes_without_another_event(cx: &mut TestAppContext) {
+    let (view, _receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["l", "s"], window, cx);
+            // The wake reads the test's clock; the limit, the real one.
+            view.age_pending_input_by(Duration::from_millis(5100));
+        })
+    });
+    cx.executor().advance_clock(Duration::from_millis(5200));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(view.pending_input.is_none(), "nothing noticed the limit");
+        assert_eq!(view.connection.keys_not_sent, 2);
+    });
 }

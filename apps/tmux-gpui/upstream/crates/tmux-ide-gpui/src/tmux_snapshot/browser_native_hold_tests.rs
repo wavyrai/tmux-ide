@@ -32,7 +32,12 @@ fn a_dropped_stream_keeps_its_last_frame_read_only_with_the_attempt() {
     let mut hold = Hold::default();
     hold.begin(&live(7), false);
     assert!(hold.active());
+    // The held frame was probed when its stream ended: nothing is now.
+    let mut frame = live(7);
+    frame.link_probe = true;
+    hold.begin(&frame, false);
     let shown = hold.publication(&reconnecting(7, 3));
+    assert!(!shown.link_probe);
     assert!(shown.frame.is_some());
     assert!(shown.retained_preview);
     assert!(!shown.input_ready);
