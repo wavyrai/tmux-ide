@@ -367,3 +367,45 @@ fn a_wake_before_the_drop_does_not_hurry_its_recovery() {
         );
     }
 }
+
+/// A try that could not reach the daemon makes the next one look its owner
+/// up again (the record may name a new port or token), on the same worker.
+/// Without it the app asks the old address for ever.
+#[test]
+fn after_an_unreachable_try_the_next_one_rediscovers_the_owner() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(
+        !local.worker.reset_pending(),
+        "the first try trusts the route"
+    );
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    local.recovery.as_mut().unwrap().due = Some(Instant::now());
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Issue { .. })));
+    assert!(
+        local.worker.reset_pending(),
+        "the old route was asked again"
+    );
+}
+
+/// A wake during the first wait, before any try failed: the route is proven
+/// again, not trusted. A tunnel can outlive the network it ran over.
+#[test]
+fn a_wake_before_the_first_try_rediscovers_the_owner() {
+    let (mut local, _events) = attached();
+    local.reconnect_start().unwrap();
+    let recovery = local.recovery.as_mut().unwrap();
+    recovery.local_record = None;
+    recovery.due = Some(Instant::now() + Duration::from_secs(30));
+    assert!(!local.worker.reset_pending());
+    crate::tmux_snapshot::connection::network_watch::simulate_wake();
+    local.reconnect_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Issue { .. })));
+    assert!(
+        local.worker.reset_pending(),
+        "the route was trusted across the wake"
+    );
+}

@@ -324,6 +324,10 @@ impl CatalogWorker {
         self.cancel();
         self.reset_requested.store(true, Ordering::Release);
     }
+    /// A reset waits for the next job, which will rediscover the owner.
+    pub fn reset_pending(&self) -> bool {
+        self.reset_requested.load(Ordering::Acquire)
+    }
     /// A cancelled mutation may already have committed. Retain its operation ID
     /// and explicitly reconcile; this worker never retries or replays it.
     pub fn cancel(&mut self) {
