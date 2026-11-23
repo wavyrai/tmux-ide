@@ -340,3 +340,30 @@ fn a_silent_stream_proves_its_route_on_the_first_try() {
     local.reconnect_after(Cause::Lost).unwrap();
     assert!(!local.recovery.as_ref().unwrap().rediscover_owner);
 }
+
+/// Only a wake after the drop is news: one from before it hurries nothing,
+/// whether the stream dropped or never opened.
+#[test]
+fn a_wake_before_the_drop_does_not_hurry_its_recovery() {
+    for begun_by in ["a drop", "a failed open"] {
+        crate::tmux_snapshot::connection::network_watch::simulate_wake();
+        let (mut local, _events) = attached();
+        if begun_by == "a drop" {
+            local.reconnect_after(Cause::Lost).unwrap();
+        } else {
+            let target = local.active.as_ref().unwrap().target.clone();
+            local
+                .reconnect_opening(target, None, Failure::Unreachable)
+                .unwrap();
+        }
+        let recovery = local.recovery.as_mut().unwrap();
+        recovery.local_record = None;
+        recovery.due = Some(Instant::now() + Duration::from_secs(30));
+        local.stage = None;
+        local.reconnect_tick().unwrap();
+        assert!(
+            local.stage.is_none(),
+            "{begun_by}: an old wake hurried a try"
+        );
+    }
+}

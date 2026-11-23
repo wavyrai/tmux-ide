@@ -189,7 +189,13 @@ fn keys_typed_while_the_link_is_probed_wait_for_its_answer(cx: &mut TestAppConte
 /// counted from the drop, and the keys go to the new stream.
 #[gpui::test]
 fn a_failed_probe_becomes_a_drop_and_the_keys_follow_the_new_stream(cx: &mut TestAppContext) {
-    for (back_after_drop, delivered) in [(4900, true), (5100, false)] {
+    // However long the probe was unanswered before the drop.
+    for (probed_for, back_after_drop, delivered) in [
+        (5000, 4900, true),
+        (5000, 5100, false),
+        (1000, 4900, true),
+        (1000, 5100, false),
+    ] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -200,7 +206,7 @@ fn a_failed_probe_becomes_a_drop_and_the_keys_follow_the_new_stream(cx: &mut Tes
                 type_keys(view, &["held"], window, cx);
                 // The pong limit passes: the stream ends as silent. The held
                 // frame's publication probes nothing (`browser_native_hold`).
-                view.age_pending_input_by(Duration::from_millis(5000));
+                view.age_pending_input_by(Duration::from_millis(probed_for));
                 let mut state = dropped(view, false);
                 state.link_probe = false;
                 view.apply_browser_state(Some(state), cx);
@@ -222,5 +228,91 @@ fn a_failed_probe_becomes_a_drop_and_the_keys_follow_the_new_stream(cx: &mut Tes
                 }
             })
         });
+    }
+}
+
+/// A probe is answered or becomes a drop within the stream's pong limit. One
+/// that does neither holds keys for twice the reconnect limit, then drops
+/// them all and says how many.
+#[gpui::test]
+fn a_probe_that_never_ends_drops_the_held_keys_at_twice_the_limit(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let mut state = view.browser_state.clone();
+            state.link_probe = true;
+            view.apply_browser_state(Some(state), cx);
+            type_keys(view, &["ls", "enter"], window, cx);
+            view.age_pending_input_by(Duration::from_millis(9900));
+            view.browser_tick(cx);
+            assert!(
+                view.pending_input.is_some(),
+                "dropped before twice the limit"
+            );
+            view.age_pending_input_by(Duration::from_millis(200));
+            view.browser_tick(cx);
+            assert!(view.pending_input.is_none(), "held past twice the limit");
+            assert!(view.input_interrupted);
+            assert_eq!(view.connection.keys_not_sent, 2);
+            assert!(sent(&receiver).is_empty());
+        })
+    });
+}
+
+/// Held text is joined only up to what one input carries (1024 UTF-16
+/// units): the rest follows as the next input, in order.
+#[gpui::test]
+fn held_text_is_joined_up_to_one_input_and_no_further(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            let (a, b) = ("a".repeat(512), "b".repeat(512));
+            type_keys(view, &[&a, &b, "c", "d"], window, cx);
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            let got = sent(&receiver);
+            let texts: Vec<&str> = got.iter().map(|(_, text, _)| text.as_str()).collect();
+            assert_eq!(texts, [format!("{a}{b}").as_str(), "cd"]);
+        })
+    });
+}
+
+/// The pane's card counts the keys that wait, from 2 s into the hold. On a
+/// link that is only probed there is nothing to retry: no "Retry now".
+#[gpui::test]
+fn the_card_counts_held_keys_and_offers_no_retry_while_only_probing(cx: &mut TestAppContext) {
+    for probing in [false, true] {
+        let (view, _receiver, cx) = view_with(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                live(view, cx);
+                let mut state = if probing {
+                    view.browser_state.clone()
+                } else {
+                    dropped(view, false)
+                };
+                state.link_probe = probing;
+                view.apply_browser_state(Some(state), cx);
+                type_keys(view, &["l", "s"], window, cx);
+                assert_eq!(view.reconnect_card(), None, "a card before 2 s");
+                view.age_pending_input_by(Duration::from_millis(2100));
+                assert_eq!(
+                    view.reconnect_card().as_deref(),
+                    Some("Reconnecting… 2 keys wait to be sent."),
+                    "probing: {probing}"
+                );
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert!(cx.debug_bounds("tmux-reconnect-card").is_some());
+        assert_eq!(
+            cx.debug_bounds("tmux-reconnect-retry").is_some(),
+            !probing,
+            "probing: {probing}"
+        );
     }
 }

@@ -171,9 +171,10 @@ fn a_short_drop_changes_nothing_and_a_long_one_only_the_slot_and_titles(cx: &mut
             ));
         });
         assert_eq!(bounds(cx), before, "{ms} ms: chrome moved");
-        // Reconnect, 19 Nov (owner's goal, replaces r1's "the slot is the only
-        // retry"): from 2 s the pane shows a calm card with "Retry now". It
-        // floats over the pane: no chrome moves for it.
+        // Reconnect, 19 Nov (the PM's recommendation; the owner's decision is
+        // open on card #863; changes r1's "the slot is the only retry"): from
+        // 2 s the pane shows a calm card with "Retry now". It floats over the
+        // pane: no chrome moves for it.
         let card = ms >= 2_000;
         assert_eq!(
             cx.debug_bounds("tmux-reconnect-card").is_some(),
@@ -301,8 +302,11 @@ fn a_refused_key_shows_not_sent_at_once_and_nothing_is_sent_later(cx: &mut TestA
         view.update(cx, |view, cx| assert!(!view.offer_terminal_input(cx)));
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    // The next frame: the toast in the pane, the slot at its words.
+    // The next frame: the toast in the pane, the slot at its words. Keys
+    // were refused: the toast is not the reconnect card and has no retry.
     assert!(cx.debug_bounds("tmux-not-sent").is_some());
+    assert!(cx.debug_bounds("tmux-reconnect-card").is_none());
+    assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
     view.read_with(cx, |view, _| {
         assert_eq!(view.connection_stage(), Stage::Words);
     });

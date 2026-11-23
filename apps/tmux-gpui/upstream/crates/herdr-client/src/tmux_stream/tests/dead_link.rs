@@ -179,3 +179,127 @@ fn a_key_on_a_quiet_dead_link_is_found_at_the_limit() {
     drop(client);
     peer.join().unwrap();
 }
+
+/// A wake or a network change probes every open stream, and forgets the
+/// ended ones. A stream is registered for it from its start.
+#[test]
+fn probing_all_streams_reaches_the_open_ones_and_forgets_the_ended() {
+    let (open, open_peer) = peer(None, hold_open);
+    let (ended, ended_peer) = peer(None, |socket| {
+        let _ = socket.close(None);
+        hold_open(socket);
+    });
+    assert!(open.registered() && ended.registered());
+    ended.completion().recv_timeout(WAIT).unwrap();
+    assert!(!open.probing());
+    assert_eq!(PaneStream::probe_only(&[&open, &ended]), 1);
+    assert!(open.probing(), "the open stream was not probed");
+    assert!(!ended.probing(), "an ended stream was probed");
+    let started = Instant::now();
+    while open.probing() {
+        assert!(started.elapsed() < WAIT, "the answer never ended the probe");
+        thread::sleep(Duration::from_millis(5));
+    }
+    drop((open, ended));
+    open_peer.join().unwrap();
+    ended_peer.join().unwrap();
+}
+
+/// A few seconds, and well inside the daemon's 40 s heartbeat limit.
+#[test]
+fn a_ping_waits_five_seconds_for_its_answer_by_default() {
+    assert_eq!(pinger::pong_limit(), Duration::from_secs(5));
+}
+
+mod timer {
+    //! The ping timer on its own, at its exact limits.
+    use super::super::super::pinger::Pinger;
+    use std::time::{Duration, Instant};
+
+    const EVERY: Duration = Duration::from_secs(10);
+    const LIMIT: Duration = Duration::from_secs(5);
+    const MS: Duration = Duration::from_millis(1);
+    const ID: [u8; 8] = *b"ping-one";
+
+    /// A timer made at `start`, and `start` itself.
+    fn timer() -> (Pinger, Instant) {
+        let before = Instant::now();
+        let pinger = Pinger::new(EVERY, LIMIT);
+        // The first ping is due one period after the timer was made.
+        let made = (0..=1_000)
+            .map(|ms| before + MS * ms)
+            .find(|at| pinger.due(*at + EVERY, *at + EVERY, false, false))
+            .unwrap();
+        (pinger, made)
+    }
+
+    #[test]
+    fn a_ping_is_due_at_the_period_on_a_probe_or_after_a_key_on_a_quiet_link() {
+        let (pinger, start) = timer();
+        let heard = start;
+        assert!(!pinger.due(start + EVERY - MS * 2, heard, false, false));
+        assert!(pinger.due(start + EVERY, heard, false, false));
+        // A probe pings now.
+        assert!(pinger.due(start, heard, true, false));
+        // A key on a link quiet for a second brings a ping; on a link that
+        // was just heard, or with no key, none.
+        let second = Duration::from_secs(1);
+        assert!(pinger.due(start + second, heard, false, true));
+        assert!(!pinger.due(start + second - MS, heard, false, true));
+        assert!(!pinger.due(start + second, heard, false, false));
+        assert!(!pinger.due(start + second * 3, start + second * 3, false, true));
+    }
+
+    #[test]
+    fn one_ping_waits_at_a_time_and_the_next_follows_a_period_later() {
+        let (mut pinger, start) = timer();
+        let at = start + EVERY;
+        pinger.sent(ID, at);
+        // Nothing asks for a second ping while the first waits.
+        assert!(!pinger.due(at + EVERY * 2, start, true, true));
+        // Another ping's answer is not ours.
+        assert!(pinger.pong(b"ping-two").is_none());
+        assert!(pinger.pong(b"ping").is_none());
+        assert!(!pinger.due(at + EVERY * 2, start, true, true));
+        assert!(pinger.pong(&ID).is_some());
+        // Answered: the next is a period after the last, not at once.
+        assert!(!pinger.due(at + EVERY - MS, at + EVERY - MS, false, false));
+        assert!(pinger.due(at + EVERY, at + EVERY, false, false));
+        assert!(pinger.pong(&ID).is_none(), "an answer counted twice");
+    }
+
+    #[test]
+    fn a_link_is_dead_only_when_the_ping_and_the_silence_both_reach_the_limit() {
+        let (mut pinger, start) = timer();
+        // No ping waits: never dead, however long the silence.
+        assert!(!pinger.dead(start, start + LIMIT * 10));
+        let at = start + EVERY;
+        pinger.sent(ID, at);
+        assert!(!pinger.dead(start, at + LIMIT - MS), "before the limit");
+        assert!(pinger.dead(start, at + LIMIT), "at the limit");
+        // Something arrived 1 ms after the ping: alive until that is old too.
+        let heard = at + MS;
+        assert!(!pinger.dead(heard, at + LIMIT));
+        assert!(pinger.dead(heard, heard + LIMIT));
+        // The silence alone is not enough: the ping must have waited.
+        let mut late = timer().0;
+        late.sent(ID, at + LIMIT);
+        assert!(!late.dead(start, at + LIMIT + MS));
+        // Answered: not dead.
+        assert!(pinger.pong(&ID).is_some());
+        assert!(!pinger.dead(start, at + LIMIT * 2));
+    }
+
+    #[test]
+    fn the_worker_wakes_for_the_next_ping_or_for_the_verdict() {
+        let (mut pinger, start) = timer();
+        let next = pinger.wake_at(start);
+        assert!(next >= start + EVERY && next <= start + EVERY + MS * 2);
+        let at = start + EVERY;
+        pinger.sent(ID, at);
+        // The verdict: the limit after the ping, or after what was heard
+        // since, whichever is later.
+        assert_eq!(pinger.wake_at(start), at + LIMIT);
+        assert_eq!(pinger.wake_at(at + MS * 30), at + MS * 30 + LIMIT);
+    }
+}

@@ -222,6 +222,9 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                 view.replace_text_in_range(None, "x", window, cx);
                 assert!(view.input_interrupted, "{case}");
                 assert!(view.not_sent_shown(), "{case}");
+                // Every held key and the one too many.
+                let held = if case == "keys" { 512 } else { 64 };
+                assert_eq!(view.connection.keys_not_sent, held + 1, "{case}");
                 let state = back(view);
                 view.apply_browser_state(Some(state), cx);
                 assert!(sent(&receiver).is_empty(), "{case}");

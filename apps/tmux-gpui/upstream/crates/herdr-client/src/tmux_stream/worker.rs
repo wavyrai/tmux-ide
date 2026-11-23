@@ -133,7 +133,11 @@ static STREAMS: Mutex<Vec<std::sync::Weak<Cancellation>>> = Mutex::new(Vec::new(
 /// The Mac woke or its network changed: probe every open stream
 /// ([`PaneStream::probe`]).
 pub fn probe_all() {
-    let Ok(mut streams) = STREAMS.lock() else {
+    probe_each(&STREAMS);
+}
+/// Probes each open stream in `streams` and forgets the ended ones.
+fn probe_each(streams: &Mutex<Vec<std::sync::Weak<Cancellation>>>) {
+    let Ok(mut streams) = streams.lock() else {
         return;
     };
     streams.retain(|stream| {
@@ -143,6 +147,27 @@ pub fn probe_all() {
         stream.probe();
         true
     });
+}
+
+#[cfg(test)]
+impl PaneStream {
+    /// [`probe_all`] over these streams only, so a test probes no other
+    /// test's stream. Returns how many it kept as open.
+    pub(super) fn probe_only(streams: &[&PaneStream]) -> usize {
+        let registry = Mutex::new(
+            (streams.iter())
+                .map(|stream| Arc::downgrade(&stream.cancellation))
+                .collect(),
+        );
+        probe_each(&registry);
+        registry.lock().map_or(0, |kept| kept.len())
+    }
+    /// [`probe_all`] would reach this stream.
+    pub(super) fn registered(&self) -> bool {
+        STREAMS.lock().is_ok_and(|streams| {
+            (streams.iter()).any(|s| std::ptr::eq(s.as_ptr(), Arc::as_ptr(&self.cancellation)))
+        })
+    }
 }
 
 /// Owns one physical connection. Dropping it cancels without joining or replaying.
