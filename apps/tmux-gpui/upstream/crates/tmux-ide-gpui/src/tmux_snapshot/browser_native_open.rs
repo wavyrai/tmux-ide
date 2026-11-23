@@ -21,7 +21,7 @@ pub(super) fn open(
     history: &Cache,
     presence: (bool, u64),
     now: u64,
-) -> Result<Active, Command> {
+) -> Result<Active, Box<Command>> {
     let lost = Command::NativeTerminalInterrupted {
         version: 1,
         id: issued.id.clone(),
@@ -37,7 +37,7 @@ pub(super) fn open(
             "tmux-preview: terminal stream not opened: {}",
             diagnostics::detail(&error)
         );
-        lost
+        Box::new(lost)
     })
 }
 

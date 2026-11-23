@@ -452,7 +452,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         match open::open(issued, &kitty, &history_cache, presence, now) {
                             Ok(route) => active = Some(route),
                             Err(lost) => {
-                                if output(lost).is_err() {
+                                if output(*lost).is_err() {
                                     break 'worker REFUSED;
                                 }
                             }

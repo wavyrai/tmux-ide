@@ -306,9 +306,10 @@ fn a_refused_focus_change_retires_the_stream_and_keeps_the_loop() {
         })
         .unwrap();
     worker.until("the refused stream is reported", interrupted);
-    peer.done
-        .recv_timeout(WAIT)
-        .expect("the refused stream stayed open");
+    assert!(
+        peer.done.recv_timeout(WAIT).is_ok(),
+        "the refused stream stayed open"
+    );
     worker.assert_alive();
 }
 
@@ -340,6 +341,7 @@ fn a_stream_that_cannot_be_opened_is_reported_and_keeps_the_loop() {
                 live_session_id,
                 generation,
                 presence_revision: 4,
+                cause: Cause::Lost,
                 ..
             }) if id == ID && pane == "left" && live_session_id == SESSION && generation == GEN
         ),
@@ -366,10 +368,10 @@ fn an_open_over_a_route_the_close_missed_replaces_it() {
         .events
         .send(open(ROUTE_B, capability(second.port, 30_000)))
         .unwrap();
-    first
-        .done
-        .recv_timeout(WAIT)
-        .expect("the replaced stream stayed open");
+    assert!(
+        first.done.recv_timeout(WAIT).is_ok(),
+        "the replaced stream stayed open"
+    );
     worker.until_input_ready();
     worker.assert_alive();
     // An open older than the catalog the loop holds is still refused.
