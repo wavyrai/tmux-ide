@@ -3632,6 +3632,10 @@ describe("native bootstrap capability fallback", () => {
       expect(rig.armedAtomicCollectors.length).toBeGreaterThan(0);
       completeSeed(rig, ["stock 3.8 content"], "0 0 100 50");
       expect(bytesOf(first.events)).toEqual(["stock 3.8 content"]);
+      // The viewer asked for a native seed; on this server it is not owed one.
+      expect(first.events.find((event) => event.type === "seed")).not.toHaveProperty(
+        "requiresNativeRecapture",
+      );
       expect(first.events.some((event) => event.type === "fault")).toBe(false);
       expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(1);
       expect(rig.sim.written.some((command) => /capture-pane -p -R\b/.test(command))).toBe(false);

@@ -242,8 +242,10 @@ describe("native bootstrap probe (#869)", () => {
     ["text", true, ["truncated native JSON"]],
     ["a JSON value that is not a header", true, ["[1,2]"]],
     ["a JSON null", true, ["null"]],
+    ["a JSON number", true, ["7"]],
+    ["a JSON string", true, ['"cols"']],
     [
-      "an object without a grid size",
+      "an object without a grid width",
       true,
       [JSON.stringify({ version: 2, currentAttributes: [] })],
     ],

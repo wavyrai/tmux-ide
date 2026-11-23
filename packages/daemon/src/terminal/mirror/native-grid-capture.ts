@@ -47,14 +47,8 @@ export function readNativeBootstrapProbe(
   } catch {
     return "unknown";
   }
-  if (
-    header === null ||
-    typeof header !== "object" ||
-    Array.isArray(header) ||
-    !("cols" in header) ||
-    !("rows" in header)
-  )
-    return "unknown";
+  // Every revision's header names the grid's width; a row record does not.
+  if (header === null || typeof header !== "object" || !("cols" in header)) return "unknown";
   // With -V a pane in a mode reports that mode's screen, whose current
   // rendition is null. A build that predates the field omits the key.
   return "version" in header && header.version === 2 && "currentAttributes" in header

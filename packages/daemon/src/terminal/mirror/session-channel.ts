@@ -1888,12 +1888,12 @@ export class SessionChannel {
       cancelAbsoluteDeadline: null,
     };
     this.recoveries.set(pane.runtimeId, recovery);
-    if (recovery.startedAtMs < pane.recoveryHoldUntilMs) {
+    if (recovery.startedAtMs < pane.recoveryHoldUntilMs)
       this.failRecovery(recovery, "held-after-failures");
-      return;
+    else {
+      this.snapshotQueue.set(pane.runtimeId, recovery);
+      this.drainSnapshots();
     }
-    this.snapshotQueue.set(pane.runtimeId, recovery);
-    this.drainSnapshots();
   }
 
   private beginLocalOverflowRecovery(pane: PaneRecord): void {
