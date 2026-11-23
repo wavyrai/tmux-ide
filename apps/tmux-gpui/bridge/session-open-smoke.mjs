@@ -132,6 +132,7 @@ try {
   assert.equal(latest.selectedPane, null);
   // Native topology is keyed by semantic window identity, not creation order.
   // Select the actual last catalog choice so this scenario is deterministic.
+  assert.equal(latest.panes.length, 2, "one pane per fixture window");
   const expected = latest.panes.at(-1).id;
   const nativeRow = run("list-panes", "-a", "-F", "#{pane_id}|#{@tmux_ide_pane_id}")
     .split("\n")
@@ -139,10 +140,20 @@ try {
   assert.ok(nativeRow);
   activeRuntime = nativeRow.split("|")[0];
   send({ type: "home", request: 2 });
-  await until(() => latest?.request === 2 && latest.surface === "home");
+  // Home publishes "Loading" before its refresh lists sessions again; a session
+  // request sent before the list is back names a session the browser lacks.
+  await until(
+    () =>
+      latest?.request === 2 &&
+      latest.surface === "home" &&
+      latest.home.phase === "live" &&
+      latest.sessions.some((entry) => entry.id === session),
+  );
   run("select-window", "-t", activeRuntime);
   send({ type: "session", request: 3, id: session });
-  await until(() => latest?.request === 3 && latest.sessionCatalogComplete);
+  await until(() => latest?.request === 3 && latest.status === "Choose a pane or window");
+  assert.equal(latest.sessionCatalogComplete, true);
+  assert.equal(latest.panes.length, 2, "one pane per fixture window");
   assert.ok(expected);
   assert.notEqual(latest.panes[0].id, expected, "active window must not be first inventory choice");
   assert.equal(

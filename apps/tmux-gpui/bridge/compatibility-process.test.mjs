@@ -57,7 +57,7 @@ for (const packaged of [false, true])
           if (predicate()) return;
           assert.ok(
             browser.exitCode === null && browser.signalCode === null,
-            "browser closed unexpectedly",
+            `browser closed unexpectedly (exit ${browser.exitCode}, signal ${browser.signalCode}): ${stderr.slice(-2000)}`,
           );
           assert.ok(Date.now() < end, "browser publication deadline");
           await new Promise((done) => setTimeout(done, 10));
