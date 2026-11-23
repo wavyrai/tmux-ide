@@ -890,14 +890,16 @@ fn a_pane_change_in_place_drops_the_removed_pane_and_seeds_the_added_one() {
     let session = NativeSession::spawn(options, "workspace".into()).unwrap();
     let mut controls = Vec::new();
     let last = until(|| {
+        // Revisions first, then the drain: the control precedes its seeds.
+        let seeded =
+            revision(&session, "pane.a") == Some(2) && revision(&session, "pane.c") == Some(1);
         let updates = session.drain().unwrap();
         assert!(
             !matches!(updates.status, Status::Failed(_)),
             "the stream failed"
         );
         controls.extend(updates.controls.iter().map(|raw| raw.get().to_owned()));
-        (revision(&session, "pane.a") == Some(2) && revision(&session, "pane.c") == Some(1))
-            .then_some(updates)
+        seeded.then_some(updates)
     });
     assert_eq!(
         revision(&session, "pane.b"),
@@ -926,14 +928,21 @@ fn a_pane_change_in_place_drops_the_removed_pane_and_seeds_the_added_one() {
 #[test]
 fn a_pane_id_that_returns_is_negotiated_again() {
     let (listener, options) = fixture_panes(&["pane.a", "pane.b"]);
+    // The peer takes each next step only after the session was seen in the
+    // state before it, so no state is judged from a poll that the next step
+    // has already overtaken.
+    let (seen_tx, seen_rx) = bounded::<&str>(1);
     let peer = thread::spawn(move || {
+        let seen = |step: &str| assert_eq!(seen_rx.recv_timeout(WAIT), Ok(step));
         let mut socket = accept_in_place(listener, &["pane.a", "pane.b"]);
         transaction_on(&mut socket, "pane.b", 0, false);
         ack(&mut socket, 0);
+        seen("seeded");
         send(
             &mut socket,
             json!({"type":"topology","topologyEpoch":1,"panes":["pane.a"],"removed":["pane.b"],"added":[]}),
         );
+        seen("removed");
         send(
             &mut socket,
             json!({"type":"topology","topologyEpoch":2,"panes":["pane.a","pane.b"],"removed":[],"added":["pane.b"]}),
@@ -941,20 +950,46 @@ fn a_pane_id_that_returns_is_negotiated_again() {
         delivery_ready(&mut socket, "pane.b");
         transaction_on(&mut socket, "pane.b", 0, false);
         ack(&mut socket, 0);
+        seen("seeded again");
         // A second negotiation for a pane that is in the stream is refused.
         delivery_ready(&mut socket, "pane.b");
         let _ = socket.read();
     });
     let session = NativeSession::spawn(options, "workspace".into()).unwrap();
-    let mut seeded_twice = false;
-    until(|| {
-        let updates = session.drain().unwrap();
-        seeded_twice |= revision(&session, "pane.b") == Some(1)
-            && !matches!(updates.status, Status::Failed(_))
-            && updates.controls.is_empty();
-        matches!(updates.status, Status::Failed(_)).then_some(())
-    });
-    assert!(seeded_twice, "the returned pane was never seeded");
+    let mut controls = Vec::new();
+    let mut reach = |step: &'static str, want: Option<u64>| {
+        until(|| {
+            // Read the revision before draining. The worker queues a topology
+            // control before it commits that topology's seed, so a control
+            // that belongs to this step is already in the mailbox this drain
+            // empties. Read after the drain, the step could end with its
+            // control still queued, and the control would be lost.
+            let at = revision(&session, "pane.b");
+            let updates = session.drain().unwrap();
+            assert!(
+                !matches!(updates.status, Status::Failed(_)),
+                "failed before {step}: {:?}",
+                updates.status
+            );
+            controls.extend(updates.controls);
+            (at == want).then_some(())
+        });
+        seen_tx.send(step).unwrap();
+    };
+    reach("seeded", Some(1));
+    reach("removed", None);
+    reach("seeded again", Some(1));
+    until(|| matches!(session.drain().unwrap().status, Status::Failed(_)).then_some(()));
+    let frames: Vec<Value> = (controls.iter())
+        .map(|raw| serde_json::from_str(raw.get()).unwrap())
+        .collect();
+    assert_eq!(
+        frames,
+        [
+            json!({"type":"topology","topologyEpoch":1,"panes":["pane.a"],"removed":["pane.b"],"added":[]}),
+            json!({"type":"topology","topologyEpoch":2,"panes":["pane.a","pane.b"],"removed":[],"added":["pane.b"]}),
+        ]
+    );
     peer.join().unwrap();
 }
 #[path = "tmux_native_session_updated_tests.rs"]

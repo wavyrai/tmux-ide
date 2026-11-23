@@ -24,7 +24,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// attach-rtt: the redeem frame in the upgrade request, and the daemon's yes.
 const REDEEM_HEADER: &str = "x-tmux-ide-redeem";
 /// How often the worker measures the round trip with a ping of its own.
-fn ping_every() -> Duration {
+pub(super) fn ping_every() -> Duration {
     #[cfg(test)]
     if let Some(ms) = PING_EVERY_MS.with(std::cell::Cell::get) {
         return Duration::from_millis(ms);
