@@ -39,6 +39,12 @@ fn an_idle_stream_leaves_its_thread_asleep() {
 /// A key typed into an idle stream does not wait for a timer.
 #[test]
 fn a_command_wakes_an_idle_stream_at_once() {
+    // With no heartbeat, the idle worker's only timer is its own round-trip
+    // ping, one period after connecting. A command that is not rung waits for
+    // it, so arriving well inside that period is the proof. A fixed few
+    // milliseconds would also time the scheduler of a loaded runner.
+    let timer = worker::ping_every();
+    assert!(timer >= Duration::from_secs(2), "{timer:?}");
     let (sent_tx, sent_rx) = bounded(1);
     let (client, peer) = peer(None, move |socket| {
         socket
@@ -55,10 +61,12 @@ fn a_command_wakes_an_idle_stream_at_once() {
         thread::sleep(Duration::from_millis(200));
         let queued = Instant::now();
         client.try_send(presence()).unwrap();
-        let (arrived, message) = sent_rx.recv_timeout(WAIT).unwrap();
+        let (arrived, message) = sent_rx
+            .recv_timeout(timer / 2)
+            .unwrap_or_else(|error| panic!("the command waited for the worker's timer: {error}"));
         assert_eq!(message, Message::Text(r#"{"type":"presence"}"#.into()));
         let after = arrived - queued;
-        assert!(after < Duration::from_millis(50), "sent after {after:?}");
+        assert!(after < timer / 2, "sent after {after:?}");
     }
     drop(client);
     peer.join().unwrap();
