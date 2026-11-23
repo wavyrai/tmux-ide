@@ -890,14 +890,16 @@ fn a_pane_change_in_place_drops_the_removed_pane_and_seeds_the_added_one() {
     let session = NativeSession::spawn(options, "workspace".into()).unwrap();
     let mut controls = Vec::new();
     let last = until(|| {
+        // Revisions first, then the drain: the control precedes its seeds.
+        let seeded =
+            revision(&session, "pane.a") == Some(2) && revision(&session, "pane.c") == Some(1);
         let updates = session.drain().unwrap();
         assert!(
             !matches!(updates.status, Status::Failed(_)),
             "the stream failed"
         );
         controls.extend(updates.controls.iter().map(|raw| raw.get().to_owned()));
-        (revision(&session, "pane.a") == Some(2) && revision(&session, "pane.c") == Some(1))
-            .then_some(updates)
+        seeded.then_some(updates)
     });
     assert_eq!(
         revision(&session, "pane.b"),
