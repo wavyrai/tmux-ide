@@ -42,6 +42,11 @@ impl SnapshotView {
     fn reconnect_hold(&self) -> bool {
         self.browser_state.reconnect_attempt.is_some()
     }
+    /// A refused key counts toward the pane's "not sent": the catalog is
+    /// reconnecting, or a reconnect hold was dropped and its notice shows.
+    fn counts_refused_keys(&self) -> bool {
+        self.reconnect_hold() || self.connection.keys_refused
+    }
     /// Lifts a latch that only a reconnect set, once the same session accepts
     /// input again. Nothing typed meanwhile is sent: those keys were refused.
     /// A latch from anything else (a gesture, a rejected target) still needs
@@ -54,7 +59,10 @@ impl SnapshotView {
         if state.surface != super::browser::Surface::Workspace || state.input_target_rejected {
             self.connection.keys_refused = false;
             self.connection.keys_not_sent = 0;
-        } else if state.reconnect_attempt.is_none() && state.input_ready && !state.retained_preview
+        } else if state.reconnect_attempt.is_none()
+            && !state.link_probe
+            && state.input_ready
+            && !state.retained_preview
         {
             self.connection.keys_refused = false;
             self.connection.keys_not_sent = 0;
@@ -62,12 +70,17 @@ impl SnapshotView {
         }
     }
     pub(super) fn interrupt_input(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_input.take() {
-            self.connection.keys_not_sent += pending.reconnect_keys();
-        }
+        // A dropped reconnect hold is a reconnect's refusal, also when its
+        // link was only probed and no reconnect shows yet: the pane says how
+        // many keys, and the latch lifts by itself (review of #863, round 2).
+        let held = (self.pending_input.take()).and_then(|pending| pending.reconnect_keys());
+        self.connection.keys_not_sent += held.unwrap_or(0);
         self.cancel_pointer();
         // Only a latch that every cause was a reconnect hold lifts by itself.
-        let hold = self.reconnect_hold();
+        // A key refused while a probe hold's notice shows is such a cause:
+        // a key on repeat goes on after the hold was dropped.
+        let probing = self.connection.keys_refused && self.browser_state.link_probe;
+        let hold = self.reconnect_hold() || held.is_some() || probing;
         self.connection.keys_refused =
             hold && (self.connection.keys_refused || !self.input_interrupted);
         self.input_interrupted = true;
@@ -78,7 +91,7 @@ impl SnapshotView {
     /// While reconnecting, a key meant for the pane (`typed`) counts toward
     /// the pane's "not sent", as one refused by [`Self::offer_terminal_input`].
     pub(super) fn refuse_key(&mut self, typed: bool, cx: &mut Context<Self>) {
-        if typed && self.reconnect_hold() {
+        if typed && self.counts_refused_keys() {
             self.connection.keys_not_sent += 1;
         }
         self.interrupt_input(cx);
@@ -87,7 +100,7 @@ impl SnapshotView {
     /// refused while reconnecting counts toward the pane's "not sent".
     pub(super) fn offer_terminal_input(&mut self, cx: &mut Context<Self>) -> bool {
         let offered = self.offer_terminal(cx);
-        if !offered && self.reconnect_hold() {
+        if !offered && self.counts_refused_keys() {
             self.connection.keys_not_sent += 1;
         }
         offered

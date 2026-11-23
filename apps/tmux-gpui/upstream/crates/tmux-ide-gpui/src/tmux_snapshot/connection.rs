@@ -419,9 +419,12 @@ impl SnapshotView {
         });
     }
 
-    /// A key typed while the stream is down was refused (#702: never queued).
+    /// A key typed while the stream is down was refused (#702: never queued),
+    /// or a hold was dropped while its link was still only probed.
     fn key_refused(&self) -> bool {
-        self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
+        self.input_interrupted
+            && (self.browser_state.reconnect_attempt.is_some()
+                || (self.connection.keys_refused && self.browser_state.link_probe))
     }
 
     /// How long the open session's stream has been reconnecting, by the

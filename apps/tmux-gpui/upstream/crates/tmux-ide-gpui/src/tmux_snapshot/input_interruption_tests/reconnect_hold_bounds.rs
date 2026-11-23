@@ -489,3 +489,151 @@ fn held_keys_that_do_not_join_all_reach_the_loop_or_none_is_sent(cx: &mut TestAp
         });
     }
 }
+
+/// A hold dropped while the link is only probed (a key on repeat fills it
+/// before the verdict) says so in the pane, counts what is refused after
+/// it, and lifts by itself: when the probe is answered, or when the probe
+/// fails and the stream comes back. Typing never needs a click to return.
+#[gpui::test]
+fn a_hold_dropped_while_only_probing_says_so_and_lifts_by_itself(cx: &mut TestAppContext) {
+    for then in [
+        "the probe is answered",
+        "the probe fails and the stream comes back",
+    ] {
+        let (view, receiver, cx) = view_with(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                live(view, cx);
+                let mut state = view.browser_state.clone();
+                state.link_probe = true;
+                view.apply_browser_state(Some(state), cx);
+                for _ in 0..33 {
+                    view.terminal_key(&key("backspace"), window, cx);
+                }
+                assert!(view.input_interrupted);
+                assert_eq!(
+                    view.pane_notice().as_deref(),
+                    Some("33 keys not sent. Type them again when the connection is back."),
+                    "{then}: nothing says the keys were dropped"
+                );
+                // Keys refused after it are counted too.
+                for _ in 0..7 {
+                    view.terminal_key(&key("backspace"), window, cx);
+                }
+                assert_eq!(view.connection.keys_not_sent, 40, "{then}");
+                // Still probing: nothing lifts yet.
+                let state = view.browser_state.clone();
+                view.apply_browser_state(Some(state), cx);
+                assert!(view.input_interrupted, "{then}: lifted while still probing");
+                if then == "the probe is answered" {
+                    let mut state = view.browser_state.clone();
+                    state.link_probe = false;
+                    view.apply_browser_state(Some(state), cx);
+                } else {
+                    let mut state = dropped(view, false);
+                    state.link_probe = false;
+                    view.apply_browser_state(Some(state), cx);
+                    view.browser_tick(cx);
+                    assert_eq!(
+                        view.pane_notice().as_deref(),
+                        Some("40 keys not sent. Type them again when the connection is back."),
+                        "{then}"
+                    );
+                    let state = back(view);
+                    view.apply_browser_state(Some(state), cx);
+                }
+                assert!(
+                    sent(&receiver).is_empty(),
+                    "{then}: a dropped key came back"
+                );
+                assert_eq!(view.pane_notice(), None, "{then}");
+                assert_eq!(view.connection.keys_not_sent, 0, "{then}");
+                type_keys(view, &["ls"], window, cx);
+                let got: Vec<String> = (sent(&receiver).into_iter())
+                    .map(|(_, text, _)| text)
+                    .collect();
+                assert_eq!(got, ["ls"], "{then}: typing is still refused");
+            })
+        });
+    }
+}
+
+/// A latch that something other than a hold set while the link is probed
+/// (a selection ends in a refused key) is not a reconnect's: it says
+/// nothing about keys and still needs the click.
+#[gpui::test]
+fn a_latch_from_another_cause_while_probing_still_needs_the_click(cx: &mut TestAppContext) {
+    let (view, _receiver, cx) = view_with(cx);
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let mut state = view.browser_state.clone();
+            state.link_probe = true;
+            view.apply_browser_state(Some(state), cx);
+            view.interrupt_input(cx);
+            assert_eq!(view.pane_notice(), None);
+            let mut state = view.browser_state.clone();
+            state.link_probe = false;
+            view.apply_browser_state(Some(state), cx);
+            assert!(view.input_interrupted, "lifted without its click");
+            assert_eq!(view.connection.keys_not_sent, 0);
+        })
+    });
+}
+
+/// The count of inputs follows how full the open text input is: 64 commits
+/// of 400 letters join two by two into 32 inputs, and the 65th is one more.
+#[gpui::test]
+fn text_commits_that_fill_inputs_are_counted_as_they_join(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, false);
+            view.apply_browser_state(Some(state), cx);
+            let commit = "a".repeat(400);
+            for _ in 0..64 {
+                view.replace_text_in_range(None, &commit, window, cx);
+            }
+            assert!(!view.input_interrupted, "32 inputs were refused");
+            view.replace_text_in_range(None, &commit, window, cx);
+            assert!(view.input_interrupted, "33 inputs were held");
+            assert_eq!(view.connection.keys_not_sent, 65);
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            assert!(sent(&receiver).is_empty());
+        })
+    });
+}
+
+/// A key at the keyboard after keys were lost just before the drop is
+/// refused and latched, so what follows cannot run alone. Outside a
+/// reconnect a refused key is not counted as "not sent".
+#[gpui::test]
+fn a_key_refused_at_the_keyboard_latches_and_counts_only_in_a_reconnect(cx: &mut TestAppContext) {
+    let (view, receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, true);
+            view.apply_browser_state(Some(state), cx);
+            view.terminal_key(&key("enter"), window, cx);
+            assert!(view.input_interrupted, "a refused key left no latch");
+            assert_eq!(view.connection.keys_not_sent, 1);
+            assert!(sent(&receiver).is_empty());
+        })
+    });
+    let (view, _receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            // A split's preview, no reconnect: the key is refused, not counted.
+            let mut state = view.browser_state.clone();
+            state.retained_preview = true;
+            view.apply_browser_state(Some(state), cx);
+            view.terminal_key(&key("enter"), window, cx);
+            assert!(view.input_interrupted);
+            assert_eq!(view.connection.keys_not_sent, 0);
+        })
+    });
+}

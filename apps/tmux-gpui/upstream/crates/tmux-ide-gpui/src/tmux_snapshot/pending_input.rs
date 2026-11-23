@@ -227,10 +227,13 @@ impl SnapshotView {
             .is_some_and(|p| p.compatible(self))
     }
     pub(super) fn cancel_pending_input(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_input.take()
-            && (!pending.inputs.is_empty() || !self.marked.is_empty())
+        // `interrupt_input` takes the hold itself, to count its keys and to
+        // know a reconnect hold was dropped.
+        if (self.pending_input.as_ref()).is_some_and(|p| p.inputs.is_empty())
+            && self.marked.is_empty()
         {
-            self.connection.keys_not_sent += pending.reconnect_keys();
+            self.pending_input = None;
+        } else if self.pending_input.is_some() {
             self.interrupt_input(cx);
         }
     }

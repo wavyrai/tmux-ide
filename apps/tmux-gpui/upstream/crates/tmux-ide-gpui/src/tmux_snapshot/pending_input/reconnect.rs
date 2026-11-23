@@ -17,7 +17,10 @@
 //! network changed and the stream's probe is unanswered (`link_probe`). Keys
 //! typed then wait for the answer, on the same stream, rather than going into
 //! a link that may be dead. If the probe fails, the drop that follows
-//! continues the hold, and its limit counts from that drop.
+//! continues the hold, and its limit counts from that drop. A hold dropped
+//! while still only probing says so in the pane like any other, and typing
+//! works again, without a click, when the probe is answered or the stream
+//! is back.
 //!
 //! All or nothing: once the first held key is sent the rest follow, whatever
 //! the clock says, so a hold never delivers only its beginning by its own
@@ -144,12 +147,10 @@ impl Pending {
             hold.delivering = true;
         }
     }
-    /// Held keys a reconnect drops, for the pane's notice.
-    pub(in crate::tmux_snapshot) fn reconnect_keys(&self) -> usize {
-        match &self.kind {
-            Kind::Reconnect(_) => self.inputs.len(),
-            _ => 0,
-        }
+    /// The keys a reconnect hold drops, for the pane's notice; `None` for
+    /// any other hold.
+    pub(in crate::tmux_snapshot) fn reconnect_keys(&self) -> Option<usize> {
+        matches!(&self.kind, Kind::Reconnect(_)).then_some(self.inputs.len())
     }
     fn reconnect_target(&self, view: &SnapshotView) -> Option<String> {
         (view.browser_state.input_targets.iter())
