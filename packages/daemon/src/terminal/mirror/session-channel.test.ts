@@ -431,7 +431,8 @@ function completeStockPause(rig: Rig, runtimePaneId: string, observed = true): v
 /** Complete one requested snapshot through the actual stock pause and
  * guarded capture transcript. Tests that interleave either boundary stay manual. */
 function completeSeed(rig: Rig, lines: readonly string[], cursor: string): void {
-  if (rig.sim.written.at(-1)?.includes("capture-pane -p -R -S -")) rig.sim.reply([...lines]);
+  // The capability probe reads the header and one row, never the whole grid.
+  if (rig.sim.written.at(-1)?.includes(NATIVE_PROBE)) rig.sim.reply(lines.slice(0, 2));
   const collector = rig.armedAtomicCollectors.at(-1);
   if (collector?.kind === "pause") completeStockPause(rig, collector.runtimePaneId);
   completeAtomicRecoveryPhase(rig, lines, cursor, {
@@ -1817,7 +1818,7 @@ describe("layout push", () => {
       void ready.catch(() => {});
       try {
         await Promise.resolve();
-        if (nativeBootstrap) rig.sim.reply(nativeBootstrapLines());
+        if (nativeBootstrap) rig.sim.reply(nativeProbeLines());
         rig.sim.feedLines("%subscription-changed tmux-ide-pane-borders $1 @2 0 - : off");
         completeStockPause(rig, "%1");
         const retiredNonce = rig.armedAtomicCollectors.at(-1)!.nonce;
@@ -2167,7 +2168,7 @@ describe("layout push", () => {
     onLayout?: () => void,
   ) {
     const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, onLayout, true);
-    rig.sim.reply(nativeBootstrapLines());
+    rig.sim.reply(nativeProbeLines());
     completeStockPause(rig, "%1");
     const old = rig.armedAtomicCollectors.at(-1)!;
     rig.sim.feedLines(`%layout-change @1 ${FIXTURE.layoutW1} ${FIXTURE.layoutW1} 0`);
@@ -2240,7 +2241,7 @@ describe("layout push", () => {
     const events = collect();
     try {
       rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(nativeProbeLines());
       for (let i = 0; i < 3; i++) {
         completeSeed(rig, nativeBootstrapLines(), "not-a-cursor");
       }
@@ -3413,7 +3414,7 @@ describe("native bootstrap capability fallback", () => {
     native.push(JSON.stringify({ row: 50, flags: 0, used: 0, cells: [] }));
     try {
       const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
-      expect(rig.sim.written.at(-1)).toContain("capture-pane -p -R -S -");
+      expect(rig.sim.written.at(-1)).toContain(`${NATIVE_PROBE} -t %1`);
       completeSeed(rig, native, "0 0 100 50");
       expect(events.events.find((event) => event.type === "seed")).toHaveProperty(
         "native.history",
@@ -3450,12 +3451,12 @@ describe("native bootstrap capability fallback", () => {
         rig.sim.reply(
           [
             capability === "unsupported"
-              ? "command capture-pane: unknown flag -R"
+              ? "command capture-pane: unknown flag -V"
               : "temporary failure",
           ],
           false,
         );
-        if (capability === "transient") rig.sim.reply(nativeBootstrapLines());
+        if (capability === "transient") rig.sim.reply(nativeProbeLines());
         completeStockPause(rig, "%1");
         const collector = rig.armedAtomicCollectors.at(-1)!;
         rig.channel.subscribePane("pane.beta", beta.onEvent);
@@ -3497,12 +3498,12 @@ describe("native bootstrap capability fallback", () => {
         rig.sim.reply(
           [
             capability === "unsupported"
-              ? "command capture-pane: unknown flag -R"
+              ? "command capture-pane: unknown flag -V"
               : "temporary failure",
           ],
           false,
         );
-        if (capability === "transient") rig.sim.reply(nativeBootstrapLines());
+        if (capability === "transient") rig.sim.reply(nativeProbeLines());
         completeStockPause(rig, "%1");
         const collector = rig.armedAtomicCollectors.at(-1)!;
         handle.reseed();
@@ -3589,14 +3590,12 @@ describe("native bootstrap capability fallback", () => {
       const handle = rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
       advanceRecoveryClock(rig, 400);
       rig.sim.reply(["temporary failure"], false);
-      expect(
-        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-      ).toHaveLength(2);
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(2);
       const deadlines = rig.pendingRecoveries.filter((task) => !task.cancelled);
       expect(deadlines.some((task) => task.dueAtMs === 5000)).toBe(true);
       expect(deadlines.some((task) => task.dueAtMs > 5000)).toBe(false);
       handle.close();
-      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(nativeProbeLines());
       advanceRecoveryClock(rig, 10000);
       expect(first.events.some((event) => event.type === "seed")).toBe(false);
     } finally {
@@ -3610,30 +3609,85 @@ describe("native bootstrap capability fallback", () => {
     try {
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
       rig.sim.reply(["temporary failure"], false);
-      rig.sim.reply(["parse error: command capture-pane: unknown flag -R"], false);
+      rig.sim.reply(["parse error: command capture-pane: unknown flag -V"], false);
       completeSeed(rig, ["portable recovered"], "0 0 100 50");
       expect(bytesOf(first.events)).toEqual(["portable recovered"]);
-      expect(
-        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-      ).toHaveLength(2);
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(2);
     } finally {
       await rig.channel.dispose();
     }
   });
 
-  it("seeds through stock capture when tmux 3.8 accepts -R with its text grid format", async () => {
+  it("asks tmux 3.8 for one row, never its whole-grid -R dump, and seeds through stock capture (#869)", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      // Upstream's -R ignores -S and prints every cell of the history. The
+      // probe leads with a flag upstream lacks, so the command is refused
+      // while it is parsed, whatever the pane holds.
+      expect(rig.sim.written.at(-1)).toContain(`${NATIVE_PROBE} -t %1`);
+      expect(rig.sim.written.some((command) => /capture-pane -p -R\b/.test(command))).toBe(false);
+      rig.sim.reply(["parse error: command capture-pane: unknown flag -V"], false);
+      expect(rig.armedAtomicCollectors.length).toBeGreaterThan(0);
+      completeSeed(rig, ["stock 3.8 content"], "0 0 100 50");
+      expect(bytesOf(first.events)).toEqual(["stock 3.8 content"]);
+      expect(first.events.some((event) => event.type === "fault")).toBe(false);
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(1);
+      expect(rig.sim.written.some((command) => /capture-pane -p -R\b/.test(command))).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("seeds through stock capture when a server answers the probe with upstream's text grid", async () => {
     const rig = await startedRig();
     const first = collect();
     try {
       rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
       rig.sim.reply(["G 100x50 (0/2000)", "\tL 0 (0) flags=NONE[0] 0/0"]);
       expect(rig.armedAtomicCollectors.length).toBeGreaterThan(0);
-      completeSeed(rig, ["stock 3.8 content"], "0 0 100 50");
-      expect(bytesOf(first.events)).toEqual(["stock 3.8 content"]);
+      completeSeed(rig, ["stock content"], "0 0 100 50");
+      expect(bytesOf(first.events)).toEqual(["stock content"]);
       expect(first.events.some((event) => event.type === "fault")).toBe(false);
-      expect(
-        rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-      ).toHaveLength(1);
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(1);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("confirms tmux-ide's tmux from the header when the pane is in a mode", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      // With -V a pane in copy mode answers for the mode's screen, which has
+      // no current rendition. The server is still tmux-ide's.
+      const [header, row] = nativeProbeLines();
+      rig.sim.reply([JSON.stringify({ ...JSON.parse(header!), currentAttributes: null }), row!]);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(first.events.find((event) => event.type === "seed")).toHaveProperty(
+        "native.version",
+        2,
+      );
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(1);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("does not take a probe reply longer than a header and a row as an answer", async () => {
+    const rig = await startedRig();
+    const first = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
+      // A whole grid in reply to the one-row question is not this protocol.
+      rig.sim.reply(nativeBootstrapLines());
+      rig.sim.reply(nativeBootstrapLines());
+      advanceRecoveryClock(rig, 10000);
+      expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(2);
+      expect(first.events.filter((event) => event.type === "fault")).toHaveLength(1);
+      expect(first.events.some((event) => event.type === "seed")).toBe(false);
     } finally {
       await rig.channel.dispose();
     }
@@ -3714,14 +3768,12 @@ describe("native bootstrap capability fallback", () => {
         expect(rig.sim.written.some((command) => command.includes("capture-pane -p -e -J"))).toBe(
           false,
         );
-        const before = rig.sim.written.filter((command) =>
-          command.includes("capture-pane -p -R"),
-        ).length;
+        const before = rig.sim.written.filter((command) => command.includes(NATIVE_PROBE)).length;
         const peer = collect();
         rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
-        expect(
-          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-        ).toHaveLength(before);
+        expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(
+          before,
+        );
         completeSeed(rig, native, "0 0 100 50");
         expect(peer.events.find((event) => event.type === "seed")).toHaveProperty(
           "native.version",
@@ -3740,17 +3792,15 @@ describe("native bootstrap capability fallback", () => {
       try {
         const first = collect();
         rig.channel.subscribePane("pane.alpha", first.onEvent, undefined, true);
-        expect(rig.sim.written.some((command) => command.includes("capture-pane -p -R"))).toBe(
-          true,
-        );
-        if (capability === "stock") rig.sim.reply(["command capture-pane: unknown flag -R"], false);
+        expect(rig.sim.written.some((command) => command.includes(NATIVE_PROBE))).toBe(true);
+        if (capability === "stock") rig.sim.reply(["command capture-pane: unknown flag -V"], false);
         else {
           const lines = nativeBootstrapLines();
           const header = JSON.parse(lines[0]!);
           delete header.currentAttributes;
           if (capability === "v1") header.version = 1;
           lines[0] = JSON.stringify(header);
-          rig.sim.reply(lines);
+          rig.sim.reply(lines.slice(0, 2));
         }
         rig.sim.feedLines("%output %1 discarded-before-fallback");
         completeStockPause(rig, "%1");
@@ -3758,14 +3808,12 @@ describe("native bootstrap capability fallback", () => {
         completeAtomicRecoveryPhase(rig, ["portable"], "0 0 100 50", { continueNotify: true });
         expect(bytesOf(first.events)).toEqual(["portable", "held-after-fallback"]);
         expect(first.events.filter((event) => event.type === "seed")).toHaveLength(1);
-        const count = rig.sim.written.filter((command) =>
-          command.includes("capture-pane -p -R"),
-        ).length;
+        const count = rig.sim.written.filter((command) => command.includes(NATIVE_PROBE)).length;
         const peer = collect();
         rig.channel.subscribePane("pane.alpha", peer.onEvent, undefined, true);
-        expect(
-          rig.sim.written.filter((command) => command.includes("capture-pane -p -R")),
-        ).toHaveLength(count);
+        expect(rig.sim.written.filter((command) => command.includes(NATIVE_PROBE))).toHaveLength(
+          count,
+        );
         completeSeed(rig, ["peer"], "0 0 100 50");
         expect(bytesOf(peer.events)).toEqual(["peer"]);
       } finally {
@@ -3773,6 +3821,114 @@ describe("native bootstrap capability fallback", () => {
       }
     },
   );
+});
+
+describe("hold after repeated failed recoveries (#869)", () => {
+  const probes = (rig: Rig) =>
+    rig.sim.written.filter((command) => command.includes(NATIVE_PROBE)).length;
+  /** One open that ends in a fault. Returns whether tmux was asked anything for it. */
+  function failOpen(rig: Rig, semanticPaneId = "pane.alpha"): boolean {
+    const viewer = collect();
+    const written = rig.sim.written.length;
+    const asked = probes(rig);
+    const handle = rig.channel.subscribePane(semanticPaneId, viewer.onEvent, undefined, true);
+    const probed = probes(rig) > asked;
+    if (probed) {
+      // The server's capability stays unknown, so every real recovery probes.
+      rig.sim.reply(["temporary failure"], false);
+      rig.sim.reply(["temporary failure"], false);
+    } else {
+      expect(
+        rig.sim.written.slice(written).filter((command) => /capture-pane|pause/.test(command)),
+      ).toEqual([]);
+    }
+    expect(viewer.events.filter((event) => event.type === "fault")).toHaveLength(1);
+    expect(viewer.events.some((event) => event.type === "seed")).toBe(false);
+    handle.close();
+    return probed;
+  }
+
+  it("asks tmux twice, then refuses without a command for 2 s doubling to 30 s", async () => {
+    const reasons: Array<string | null> = [];
+    const rig = await startedRig({
+      onFlowRecoveryObserved: (observation) => {
+        if (observation.phase === "nonconverged") reasons.push(observation.failureReason);
+      },
+    });
+    try {
+      expect(failOpen(rig)).toBe(true);
+      // One failure is not a pattern: the next open is tried at once.
+      expect(failOpen(rig)).toBe(true);
+      for (const holdMs of [2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+        expect(failOpen(rig)).toBe(false);
+        advanceRecoveryClock(rig, holdMs - 1);
+        expect(failOpen(rig)).toBe(false);
+        advanceRecoveryClock(rig, 1);
+        // The hold ended: one real recovery, whose failure starts the next hold.
+        expect(failOpen(rig)).toBe(true);
+      }
+      expect(reasons.filter((reason) => reason === "command-error")).toHaveLength(8);
+      expect(reasons.filter((reason) => reason === "held-after-failures")).toHaveLength(12);
+      expect(reasons).toHaveLength(20);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("starts over after a recovery that converged", async () => {
+    const rig = await startedRig();
+    const viewer = collect();
+    try {
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      advanceRecoveryClock(rig, 2_000);
+      const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent, undefined, true);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(viewer.events.some((event) => event.type === "seed")).toBe(true);
+      expect(viewer.events.some((event) => event.type === "fault")).toBe(false);
+      handle.close();
+      // The server answered the probe, so later recoveries start at the pause.
+      const failAfterSuccess = (): boolean => {
+        const next = collect();
+        const pauses = rig.armedAtomicCollectors.length;
+        const reopened = rig.channel.subscribePane("pane.alpha", next.onEvent, undefined, true);
+        const asked = rig.armedAtomicCollectors.length > pauses;
+        // Nothing answers the pause: step to the deadline that faults it, and
+        // no further, so the hold that follows is still running.
+        for (let step = 0; asked && step < 40 && next.events.length === 0; step += 1)
+          advanceRecoveryClock(rig, 250);
+        expect(next.events.filter((event) => event.type === "fault")).toHaveLength(1);
+        reopened.close();
+        // tmux answers the retired pause late; the snapshot lane is free again.
+        if (asked) drainRetiredAtomicCollector(rig, rig.armedAtomicCollectors.at(-1)!.nonce);
+        return asked;
+      };
+      // Two failures are needed again before anything is refused.
+      expect(failAfterSuccess()).toBe(true);
+      expect(failAfterSuccess()).toBe(true);
+      expect(failAfterSuccess()).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("holds only the pane that failed", async () => {
+    const rig = await startedRig();
+    const beta = collect();
+    try {
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      rig.channel.subscribePane("pane.beta", beta.onEvent);
+      completeSeed(rig, ["sibling"], "0 0 99 50");
+      expect(bytesOf(beta.events)).toEqual(["sibling"]);
+      expect(beta.events.some((event) => event.type === "fault")).toBe(false);
+      expect(failOpen(rig)).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
 });
 
 describe("native recovery formats", () => {
@@ -3815,6 +3971,14 @@ describe("native recovery formats", () => {
     },
   );
 });
+
+/** The capability probe as the channel writes it (#869). */
+const NATIVE_PROBE = "capture-pane -p -V -R -S 0 -E 0";
+
+/** What tmux-ide's tmux answers the probe with: the header and one row. */
+function nativeProbeLines(): string[] {
+  return nativeBootstrapLines().slice(0, 2);
+}
 
 function nativeBootstrapLines(): string[] {
   return [

@@ -13,6 +13,9 @@ import {
   decodeNativeGridCapture,
   isStockRawGridCapture,
   isNativeBootstrapCapture,
+  NATIVE_BOOTSTRAP_PROBE_FLAGS,
+  NATIVE_BOOTSTRAP_PROBE_LIMITS,
+  readNativeBootstrapProbe,
   type NativeGridCapture,
 } from "./native-grid-capture.ts";
 /**
@@ -149,6 +152,14 @@ const RECOVERY_COMMAND_DEADLINE_MS = 500;
 const RECOVERY_NO_PROGRESS_DEADLINE_MS = 3_000;
 const RECOVERY_ABSOLUTE_DEADLINE_MS = 5_000;
 const RECOVERY_MAX_ATTEMPTS = 4;
+// A pane whose recoveries keep failing is not asked again at once (#869). Each
+// recovery makes tmux build a whole capture, and a client that lost its stream
+// opens a new one every few seconds for as long as its window is open. From
+// the second failure in a row the pane refuses a new recovery, without a tmux
+// command, for 2 s doubling to 30 s. A recovery that converges ends it.
+const RECOVERY_HOLD_AFTER_FAILURES = 2;
+const RECOVERY_HOLD_BASE_MS = 2_000;
+const RECOVERY_HOLD_MAX_MS = 30_000;
 const MAX_QUEUED_SNAPSHOTS = 64;
 const RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
 // Budget row bookkeeping separately from wire bytes (64 bytes per retained
@@ -206,21 +217,21 @@ export type MirrorFlowRecoveryFailureReason =
   | "notification-queue-overflow"
   | "no-progress"
   | "absolute-deadline"
-  | "attempts-exhausted";
+  | "attempts-exhausted"
+  /** Refused without a tmux command: the pane's last recoveries all failed. */
+  | "held-after-failures";
 
-/** Cache only proven server capability; malformed or failed reads can recover. */
+/**
+ * A complete native capture that proves the server cannot bootstrap a replica.
+ * Cache only proven server capability; malformed reads can recover.
+ */
 function nativeBootstrapUnsupported(
-  ok: boolean,
   lines: readonly string[],
   native: NativeGridCapture | null,
 ): boolean {
-  if (ok)
-    return (
-      isStockRawGridCapture(lines) ||
-      (native !== null && (native.version !== 2 || native.currentAttributes === undefined))
-    );
-  return lines.some((line) =>
-    /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim()),
+  return (
+    isStockRawGridCapture(lines) ||
+    (native !== null && (native.version !== 2 || native.currentAttributes === undefined))
   );
 }
 
@@ -342,6 +353,10 @@ interface PaneRecord {
   readonly subs: Set<SubRecord>;
   incarnation: number;
   snapshotLayoutGeneration: number;
+  /** Recoveries that failed in a row since the last one that converged. */
+  failedRecoveries: number;
+  /** Until this monotonic time a new recovery fails without asking tmux. */
+  recoveryHoldUntilMs: number;
 }
 
 interface SnapshotLease {
@@ -1873,6 +1888,10 @@ export class SessionChannel {
       cancelAbsoluteDeadline: null,
     };
     this.recoveries.set(pane.runtimeId, recovery);
+    if (recovery.startedAtMs < pane.recoveryHoldUntilMs) {
+      this.failRecovery(recovery, "held-after-failures");
+      return;
+    }
     this.snapshotQueue.set(pane.runtimeId, recovery);
     this.drainSnapshots();
   }
@@ -2064,6 +2083,8 @@ export class SessionChannel {
     ) {
       // Negotiate the live server before placing -R in a NOHOOKS transaction:
       // an unsupported flag aborts that hook before its completion sentinel.
+      // The probe reads one row, never the history (#869): it has to answer
+      // inside a command deadline whatever the pane holds.
       recovery.nativeProbeAttempts = (recovery.nativeProbeAttempts ?? 0) + 1;
       let marker: string | null = null;
       let probeSettled = false;
@@ -2075,7 +2096,7 @@ export class SessionChannel {
       }, RECOVERY_COMMAND_DEADLINE_MS);
       this.captureWithViewer(
         pane.runtimeId,
-        ["-R", "-S", "-"],
+        NATIVE_BOOTSTRAP_PROBE_FLAGS,
         (value) => {
           marker = value;
         },
@@ -2085,9 +2106,9 @@ export class SessionChannel {
           probeSettled = true;
           recovery.cancelCommandDeadline?.();
           recovery.cancelCommandDeadline = null;
-          const native = reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
-          if (native && isNativeBootstrapCapture(native)) this.nativeBootstrapConfirmed = true;
-          else if (nativeBootstrapUnsupported(reply.ok, reply.lines, native)) {
+          const probe = readNativeBootstrapProbe(reply.ok, reply.lines);
+          if (probe === "native") this.nativeBootstrapConfirmed = true;
+          else if (probe === "unsupported") {
             this.nativeBootstrapUnavailable = true;
             for (const current of this.panesByRuntime.values())
               for (const sub of current.subs) sub.nativeBootstrap = false;
@@ -2098,7 +2119,7 @@ export class SessionChannel {
           }
           this.startStockSnapshot(pane, recovery, lease);
         },
-        { maxBytes: RECOVERY_CAPTURE_MAX_BYTES, maxLines: RECOVERY_CAPTURE_MAX_LINES },
+        NATIVE_BOOTSTRAP_PROBE_LIMITS,
       );
       return;
     }
@@ -2687,7 +2708,7 @@ export class SessionChannel {
             const captureLines = Object.freeze([...result.captureLines]);
             const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
             if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
-              if (nativeBootstrapUnsupported(true, captureLines, native)) {
+              if (nativeBootstrapUnsupported(captureLines, native)) {
                 this.nativeBootstrapUnavailable = true;
                 for (const { sub } of participants) sub.nativeBootstrap = false;
               }
@@ -2833,6 +2854,8 @@ export class SessionChannel {
     recovery.cancelAbsoluteDeadline = null;
     this.recoveries.delete(recovery.runtimeId);
     recovery.retired = true;
+    pane.failedRecoveries = 0;
+    pane.recoveryHoldUntilMs = 0;
     this.ledger.noteContinued(recovery.runtimeId);
     if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
     for (const sub of pane.subs) {
@@ -2861,6 +2884,15 @@ export class SessionChannel {
   ): void {
     const pane = this.recoveryPane(recovery);
     if (!pane) return;
+    // A refusal is not another failure: it must not lengthen its own hold.
+    if (failureReason !== "held-after-failures") {
+      pane.failedRecoveries += 1;
+      const repeats = pane.failedRecoveries - RECOVERY_HOLD_AFTER_FAILURES;
+      if (repeats >= 0)
+        pane.recoveryHoldUntilMs =
+          this.recoveryNowMs() +
+          Math.min(RECOVERY_HOLD_MAX_MS, RECOVERY_HOLD_BASE_MS * 2 ** Math.min(repeats, 16));
+    }
     recovery.cancelCommandDeadline?.();
     recovery.cancelCommandDeadline = null;
     recovery.cancelNoProgressDeadline?.();
@@ -4180,6 +4212,8 @@ export class SessionChannel {
         subs: new Set(),
         incarnation: ++this.paneIncarnation,
         snapshotLayoutGeneration: 0,
+        failedRecoveries: 0,
+        recoveryHoldUntilMs: 0,
       };
       this.panesByRuntime.set(record.runtimeId, record);
       this.panesBySemantic.set(record.semanticId, record);

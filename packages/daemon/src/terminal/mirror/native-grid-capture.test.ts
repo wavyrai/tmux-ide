@@ -3,6 +3,9 @@ import {
   decodeNativeGridCapture,
   encodeNativeGridCapture,
   isNativeBootstrapCapture,
+  NATIVE_BOOTSTRAP_PROBE_FLAGS,
+  NATIVE_BOOTSTRAP_PROBE_LIMITS,
+  readNativeBootstrapProbe,
 } from "./native-grid-capture.ts";
 
 function records() {
@@ -174,4 +177,78 @@ it("bounds sparse native bootstrap width and dense parser allocation", () => {
   expect(isNativeBootstrapCapture(source)).toBe(true);
   expect(isNativeBootstrapCapture({ ...source, cols: 16385 })).toBe(false);
   expect(isNativeBootstrapCapture({ ...source, cols: 16384, history: 100 })).toBe(false);
+});
+
+describe("native bootstrap probe (#869)", () => {
+  const header = {
+    version: 2,
+    cols: 120,
+    rows: 40,
+    history: 1962,
+    hscrolled: 1962,
+    limit: 2000,
+    cursor: [8, 39],
+    currentAttributes: [0, 8, 8, 8],
+  };
+  const row = JSON.stringify({
+    row: 1962,
+    flags: 0,
+    used: 1,
+    cells: [[0, 1, "32", 0, 8, 8, 8, 0, 0]],
+  });
+  const reply = (value: object) => [JSON.stringify(value), row];
+
+  it("asks for one row behind a flag only tmux-ide's tmux has", () => {
+    // -V first: an upstream tmux refuses the command before it reads -R. -S 0
+    // -E 0 bounds the answer of tmux-ide's tmux to the header and one row.
+    expect(NATIVE_BOOTSTRAP_PROBE_FLAGS).toEqual(["-V", "-R", "-S", "0", "-E", "0"]);
+    expect(NATIVE_BOOTSTRAP_PROBE_LIMITS.maxLines).toBeLessThanOrEqual(4);
+    expect(NATIVE_BOOTSTRAP_PROBE_LIMITS.maxBytes).toBeLessThanOrEqual(1024 * 1024);
+  });
+
+  it.each([
+    ["tmux 3.8 and older, from the command line", "command capture-pane: unknown flag -V"],
+    ["tmux 3.8 and older, in control mode", "parse error: command capture-pane: unknown flag -V"],
+  ])("reads %s as unsupported", (_name, line) => {
+    expect(readNativeBootstrapProbe(false, [line])).toBe("unsupported");
+  });
+
+  it("reads upstream's text grid as unsupported", () => {
+    expect(
+      readNativeBootstrapProbe(true, ["G 120x40 (1962/2000)", "\tL 0 (-) flags=NONE[0] 4/30"]),
+    ).toBe("unsupported");
+  });
+
+  it("reads a version 2 header as native, also for a mode's screen", () => {
+    expect(readNativeBootstrapProbe(true, reply(header))).toBe("native");
+    expect(readNativeBootstrapProbe(true, reply({ ...header, currentAttributes: null }))).toBe(
+      "native",
+    );
+  });
+
+  it("reads an older native format as unsupported", () => {
+    const without = (key: string) =>
+      Object.fromEntries(Object.entries(header).filter(([name]) => name !== key));
+    expect(readNativeBootstrapProbe(true, reply(without("currentAttributes")))).toBe("unsupported");
+    expect(readNativeBootstrapProbe(true, reply({ ...header, version: 1 }))).toBe("unsupported");
+    expect(readNativeBootstrapProbe(true, reply(without("version")))).toBe("unsupported");
+  });
+
+  it.each([
+    ["another failure", false, ["can't find pane: %9"]],
+    ["a failure that only mentions the flag", false, ["no such thing as unknown flag -V here"]],
+    ["a refused -R, which this probe never reaches", false, ["unknown flag -R"]],
+    ["an empty reply", true, []],
+    ["text", true, ["truncated native JSON"]],
+    ["a JSON value that is not a header", true, ["[1,2]"]],
+    ["a JSON null", true, ["null"]],
+    [
+      "an object without a grid size",
+      true,
+      [JSON.stringify({ version: 2, currentAttributes: [] })],
+    ],
+    ["a row without its header", true, [row]],
+  ])("leaves %s unknown", (_name, ok, lines) => {
+    expect(readNativeBootstrapProbe(ok, lines)).toBe("unknown");
+  });
 });
