@@ -957,6 +957,12 @@ fn a_pane_id_that_returns_is_negotiated_again() {
     let mut controls = Vec::new();
     let mut reach = |step: &'static str, want: Option<u64>| {
         until(|| {
+            // Read the revision before draining. The worker queues a topology
+            // control before it commits that topology's seed, so a control
+            // that belongs to this step is already in the mailbox this drain
+            // empties. Read after the drain, the step could end with its
+            // control still queued, and the control would be lost.
+            let at = revision(&session, "pane.b");
             let updates = session.drain().unwrap();
             assert!(
                 !matches!(updates.status, Status::Failed(_)),
@@ -964,7 +970,7 @@ fn a_pane_id_that_returns_is_negotiated_again() {
                 updates.status
             );
             controls.extend(updates.controls);
-            (revision(&session, "pane.b") == want).then_some(())
+            (at == want).then_some(())
         });
         seen_tx.send(step).unwrap();
     };
