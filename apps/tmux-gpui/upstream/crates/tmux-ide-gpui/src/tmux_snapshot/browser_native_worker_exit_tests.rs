@@ -166,11 +166,11 @@ impl Worker {
         let next = self.bridge.mailbox.lock().unwrap().take();
         next.map(|state| state.unwrap_or_else(|| panic!("the terminal loop ended")))
     }
-    fn until_input_ready(&self) {
+    fn until_input_ready(&self) -> State {
         let deadline = Instant::now() + WAIT;
         loop {
-            if self.published().is_some_and(|state| state.input_ready) {
-                return;
+            if let Some(state) = self.published().filter(|state| state.input_ready) {
+                return state;
             }
             assert!(Instant::now() < deadline, "the stream never took input");
             thread::sleep(Duration::from_millis(2));
@@ -358,20 +358,56 @@ fn a_stream_that_cannot_be_opened_is_reported_and_keeps_the_loop() {
 fn an_open_over_a_route_the_close_missed_replaces_it() {
     let first = peer();
     let second = peer();
+    // A daemon that accepts the connection and never answers.
+    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
     let worker = worker();
     worker
         .events
         .send(open(ID, capability(first.port, 30_000)))
         .unwrap();
-    worker.until_input_ready();
+    // An editor read is in flight on the route that is about to be replaced.
+    let token = worker.until_input_ready().pane_actions.unwrap().token;
+    worker
+        .bridge
+        .commands
+        .send(Command::OpenEditor {
+            request: 3,
+            id: "left".into(),
+            token,
+        })
+        .unwrap();
+    worker.until("the editor read is asked for", |command| {
+        matches!(command, Command::NativeEditorOpen { .. })
+    });
     worker
         .events
-        .send(open(ROUTE_B, capability(second.port, 30_000)))
+        .send(open(
+            ROUTE_B,
+            capability(silent.local_addr().unwrap().port(), 30_000),
+        ))
         .unwrap();
     assert!(
         first.done.recv_timeout(WAIT).is_ok(),
         "the replaced stream stayed open"
     );
+    // Nothing of the replaced route is left on screen or open to input.
+    let deadline = Instant::now() + WAIT;
+    let replaced = loop {
+        if let Some(state) = worker.published().filter(|state| !state.input_ready) {
+            break state;
+        }
+        assert!(Instant::now() < deadline, "the old route still takes input");
+        thread::sleep(Duration::from_millis(2));
+    };
+    assert!(replaced.frame.is_none(), "the old route's frame is shown");
+    assert!(replaced.pane_actions.is_none());
+    worker.until("the replaced route's editor read is cancelled", |command| {
+        matches!(command, Command::NativeEditorCancel { .. })
+    });
+    worker
+        .events
+        .send(open(ID, capability(second.port, 30_000)))
+        .unwrap();
     worker.until_input_ready();
     worker.assert_alive();
     // An open older than the catalog the loop holds is still refused.
