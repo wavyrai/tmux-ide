@@ -201,7 +201,7 @@ fn nothing_is_held_when_keys_typed_before_the_drop_were_lost(cx: &mut TestAppCon
 /// One key too many refuses them all; a part of what was typed is never sent.
 #[gpui::test]
 fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
-    for case in ["keys", "bytes", "inputs"] {
+    for case in ["keys", "bytes", "inputs", "full-inputs"] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -217,6 +217,11 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                     // (1023 UTF-16 units), so 22 inputs and 65,472 bytes.
                     for _ in 0..64 {
                         view.replace_text_in_range(None, &"€".repeat(341), window, cx);
+                    }
+                } else if case == "full-inputs" {
+                    // 32 commits that each fill one input: none joins the next.
+                    for _ in 0..32 {
+                        view.replace_text_in_range(None, &"b".repeat(1024), window, cx);
                     }
                 } else {
                     // 16 commands and their Enter: 32 inputs that do not join.
