@@ -30,12 +30,12 @@ fn reconnecting(request: u64, attempt: u32) -> State {
 #[test]
 fn a_dropped_stream_keeps_its_last_frame_read_only_with_the_attempt() {
     let mut hold = Hold::default();
-    hold.begin(&live(7), false);
-    assert!(hold.active());
     // The held frame was probed when its stream ended: nothing is now.
-    let mut state = reconnecting(7, 3);
-    state.link_probe = true;
-    let shown = hold.publication(&state);
+    let mut frame = live(7);
+    frame.link_probe = true;
+    hold.begin(&frame, false);
+    assert!(hold.active());
+    let shown = hold.publication(&reconnecting(7, 3));
     assert!(!shown.link_probe);
     assert!(shown.frame.is_some());
     assert!(shown.retained_preview);
