@@ -637,3 +637,28 @@ fn a_key_refused_at_the_keyboard_latches_and_counts_only_in_a_reconnect(cx: &mut
         })
     });
 }
+
+/// The reconnect is over but the stream does not take input yet, and
+/// something else interrupts input then: that latch is no longer only a
+/// reconnect's, with or without a probe, and needs its click.
+#[gpui::test]
+fn a_latch_joined_by_another_cause_after_the_reconnect_needs_the_click(cx: &mut TestAppContext) {
+    let (view, _receiver, cx) = view_with(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            live(view, cx);
+            let state = dropped(view, true);
+            view.apply_browser_state(Some(state), cx);
+            view.terminal_key(&key("enter"), window, cx);
+            assert!(view.connection.keys_refused);
+            // Back, warming up: no reconnect, no probe, no input yet.
+            let mut state = back(view);
+            state.input_ready = false;
+            view.apply_browser_state(Some(state), cx);
+            view.interrupt_input(cx);
+            let state = back(view);
+            view.apply_browser_state(Some(state), cx);
+            assert!(view.input_interrupted, "lifted without its click");
+        })
+    });
+}
