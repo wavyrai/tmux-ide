@@ -2854,8 +2854,8 @@ export class SessionChannel {
     recovery.cancelAbsoluteDeadline = null;
     this.recoveries.delete(recovery.runtimeId);
     recovery.retired = true;
+    // Its hold, if it had one, ended before this recovery could start.
     pane.failedRecoveries = 0;
-    pane.recoveryHoldUntilMs = 0;
     this.ledger.noteContinued(recovery.runtimeId);
     if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
     for (const sub of pane.subs) {
@@ -2891,7 +2891,7 @@ export class SessionChannel {
       if (repeats >= 0)
         pane.recoveryHoldUntilMs =
           this.recoveryNowMs() +
-          Math.min(RECOVERY_HOLD_MAX_MS, RECOVERY_HOLD_BASE_MS * 2 ** Math.min(repeats, 16));
+          Math.min(RECOVERY_HOLD_MAX_MS, RECOVERY_HOLD_BASE_MS * 2 ** repeats);
     }
     recovery.cancelCommandDeadline?.();
     recovery.cancelCommandDeadline = null;

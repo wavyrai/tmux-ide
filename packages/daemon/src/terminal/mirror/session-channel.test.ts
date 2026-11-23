@@ -3824,8 +3824,10 @@ describe("native bootstrap capability fallback", () => {
 });
 
 describe("hold after repeated failed recoveries (#869)", () => {
+  // Any capability probe, whatever its other flags: these tests are about how
+  // often tmux is asked, not about what the probe reads.
   const probes = (rig: Rig) =>
-    rig.sim.written.filter((command) => command.includes(NATIVE_PROBE)).length;
+    rig.sim.written.filter((command) => /capture-pane -p (?:-\w )*-R\b/.test(command)).length;
   /** One open that ends in a fault. Returns whether tmux was asked anything for it. */
   function failOpen(rig: Rig, semanticPaneId = "pane.alpha"): boolean {
     const viewer = collect();
