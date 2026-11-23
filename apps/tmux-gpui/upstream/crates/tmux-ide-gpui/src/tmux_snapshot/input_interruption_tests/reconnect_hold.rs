@@ -215,9 +215,11 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                 } else if case == "bytes" {
                     // 64 commits of 1023 bytes: three join into one input
                     // (1023 UTF-16 units), so 22 inputs and 65,472 bytes.
+                    // 64 bytes more are 64 KiB exactly.
                     for _ in 0..64 {
                         view.replace_text_in_range(None, &"€".repeat(341), window, cx);
                     }
+                    view.replace_text_in_range(None, &"x".repeat(64), window, cx);
                 } else if case == "full-inputs" {
                     // 32 commits that each fill one input: none joins the next.
                     for _ in 0..32 {
@@ -231,18 +233,13 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                     }
                 }
                 assert!(!view.input_interrupted, "{case}: the bound is smaller");
-                let one_more = if case == "bytes" {
-                    "€".repeat(22)
-                } else {
-                    "x".to_owned()
-                };
-                view.replace_text_in_range(None, &one_more, window, cx);
+                view.replace_text_in_range(None, "x", window, cx);
                 assert!(view.input_interrupted, "{case}");
                 assert!(view.not_sent_shown(), "{case}");
                 // Every held key and the one too many.
                 let held = match case {
                     "keys" => 512,
-                    "bytes" => 64,
+                    "bytes" => 65,
                     _ => 32,
                 };
                 assert_eq!(view.connection.keys_not_sent, held + 1, "{case}");

@@ -84,6 +84,9 @@ fn the_pane_counts_the_keys_a_reconnect_could_not_deliver(cx: &mut TestAppContex
             assert_eq!(view.connection.keys_not_sent, 3);
             type_keys(view, &["x"], window, cx);
             assert_eq!(view.connection.keys_not_sent, 4);
+            // A command-key chord is the app's, not a key for the pane.
+            view.terminal_key(&key("cmd-u"), window, cx);
+            assert_eq!(view.connection.keys_not_sent, 4);
             assert_eq!(
                 view.pane_notice().as_deref(),
                 Some("4 keys not sent. Type them again when the connection is back.")
