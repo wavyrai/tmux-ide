@@ -22,7 +22,10 @@ import { SessionRuntimeTerminalReplicaOwner } from "../session-runtime/terminal-
 import { createSessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
 import type { MirrorSubscribeRequest } from "./mirror-service.ts";
 import { SessionChannel } from "./session-channel.ts";
-import type { MirrorFlowRecoveryObservation } from "./session-channel.ts";
+import type {
+  MirrorFlowRecoveryFailureReason,
+  MirrorFlowRecoveryObservation,
+} from "./session-channel.ts";
 import type { SessionChannelOptions } from "./session-channel.ts";
 import type { MirrorOutputTiming } from "./control-channel.ts";
 import type { AtomicPaneSnapshotCollector } from "./control-channel.ts";
@@ -3914,6 +3917,187 @@ describe("hold after repeated failed recoveries (#869)", () => {
       expect(failAfterSuccess()).toBe(true);
       expect(failAfterSuccess()).toBe(true);
       expect(failAfterSuccess()).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  /** Collects the reason of every recovery that did not converge. */
+  async function rigWithReasons(): Promise<{ rig: Rig; reasons: Array<string | null> }> {
+    const reasons: Array<string | null> = [];
+    const rig = await startedRig({
+      onFlowRecoveryObserved: (observation) => {
+        if (observation.phase === "nonconverged") reasons.push(observation.failureReason);
+      },
+    });
+    return { rig, reasons };
+  }
+
+  it("counts the failures of a viewer that never asked for the native format", async () => {
+    const { rig, reasons } = await rigWithReasons();
+    try {
+      // No probe on this path: the pause is never answered and the recovery
+      // ends at its no-progress deadline.
+      const open = (): boolean => {
+        const viewer = collect();
+        const pauses = rig.armedAtomicCollectors.length;
+        const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent);
+        const asked = rig.armedAtomicCollectors.length > pauses;
+        for (let step = 0; asked && step < 40 && viewer.events.length === 0; step += 1)
+          advanceRecoveryClock(rig, 250);
+        expect(viewer.events.filter((event) => event.type === "fault")).toHaveLength(1);
+        handle.close();
+        if (asked) drainRetiredAtomicCollector(rig, rig.armedAtomicCollectors.at(-1)!.nonce);
+        return asked;
+      };
+      expect(open()).toBe(true);
+      expect(open()).toBe(true);
+      expect(open()).toBe(false);
+      expect(reasons).toEqual(["no-progress", "no-progress", "held-after-failures"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("counts a recovery that ran out of attempts, as a pane tmux cannot capture does", async () => {
+    const { rig, reasons } = await rigWithReasons();
+    try {
+      // What a pane over the capture's budget does: every attempt fails and
+      // the recovery ends as attempts-exhausted. Each reseed here spends one.
+      const open = (): boolean => {
+        const viewer = collect();
+        const pauses = rig.armedAtomicCollectors.length;
+        const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent);
+        const asked = rig.armedAtomicCollectors.length > pauses;
+        for (let step = 0; asked && step < 8 && viewer.events.length === 0; step += 1) {
+          const nonce = rig.armedAtomicCollectors.at(-1)!.nonce;
+          handle.reseed();
+          drainRetiredAtomicCollector(rig, nonce);
+        }
+        expect(viewer.events.filter((event) => event.type === "fault")).toHaveLength(1);
+        handle.close();
+        return asked;
+      };
+      expect(open()).toBe(true);
+      expect(open()).toBe(true);
+      expect(open()).toBe(false);
+      expect(reasons).toEqual(["attempts-exhausted", "attempts-exhausted", "held-after-failures"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("refuses a recovery tmux starts by pausing a held pane", async () => {
+    const { rig, reasons } = await rigWithReasons();
+    const watcher = collect();
+    try {
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      rig.channel.subscribePane("pane.alpha", watcher.onEvent, undefined, true);
+      expect(watcher.events.filter((event) => event.type === "fault")).toHaveLength(1);
+      const written = rig.sim.written.length;
+      rig.sim.feedLines("%pause %1");
+      expect(
+        rig.sim.written
+          .slice(written)
+          .filter((command) => /capture-pane|@tmux_ide_pause_|@tmux_ide_atomic_/.test(command)),
+      ).toEqual([]);
+      expect(watcher.events.filter((event) => event.type === "fault")).toHaveLength(2);
+      expect(reasons).toEqual([
+        "command-error",
+        "command-error",
+        "held-after-failures",
+        "held-after-failures",
+      ]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  /** The channel's own recovery table and failure path, for the cases below. */
+  const internalsOf = (rig: Rig) =>
+    rig.channel as unknown as {
+      recoveries: Map<string, object>;
+      failRecovery(recovery: object, reason: MirrorFlowRecoveryFailureReason): void;
+    };
+
+  // The rig cannot bring a recovery to every reason: a probe that never
+  // answers ends as no-progress here, because the retry's fence queues behind
+  // it. So these fail a live recovery through the channel's own failRecovery.
+  // It couples the test to that method; what it pins is that no reason but
+  // the refusal itself is left out of the count.
+  it.each([
+    "command-error",
+    "command-timeout",
+    "notification-queue-overflow",
+    "no-progress",
+    "absolute-deadline",
+    "attempts-exhausted",
+  ] as const)("counts a recovery that failed with %s", async (reason) => {
+    const { rig, reasons } = await rigWithReasons();
+    try {
+      const open = (): boolean => {
+        const viewer = collect();
+        const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent, undefined, true);
+        const recovery = internalsOf(rig).recoveries.get("%1");
+        if (recovery) internalsOf(rig).failRecovery(recovery, reason);
+        expect(viewer.events.filter((event) => event.type === "fault")).toHaveLength(1);
+        handle.close();
+        return recovery !== undefined;
+      };
+      expect(open()).toBe(true);
+      expect(open()).toBe(true);
+      expect(open()).toBe(false);
+      expect(reasons).toEqual([reason, reason, "held-after-failures"]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("does not count the refusal itself, however often a held pane is asked", async () => {
+    const { rig, reasons } = await rigWithReasons();
+    try {
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      for (let asks = 0; asks < 10; asks += 1) expect(failOpen(rig)).toBe(false);
+      // Ten refusals later the hold is still the first one: 2 s.
+      advanceRecoveryClock(rig, 2_000);
+      expect(failOpen(rig)).toBe(true);
+      expect(reasons.filter((reason) => reason === "held-after-failures")).toHaveLength(10);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("starts over after a recovery tmux started converged, not only after an open", async () => {
+    const { rig, reasons } = await rigWithReasons();
+    const viewer = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", viewer.onEvent, undefined, true);
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(viewer.events.filter((event) => event.type === "seed")).toHaveLength(1);
+      /** tmux pauses the pane; the recovery that follows fails. */
+      const failPausedRecovery = (): boolean => {
+        const pauses = rig.armedAtomicCollectors.length;
+        rig.sim.feedLines("%pause %1");
+        const recovery = internalsOf(rig).recoveries.get("%1");
+        if (recovery) internalsOf(rig).failRecovery(recovery, "no-progress");
+        if (rig.armedAtomicCollectors.length > pauses)
+          drainRetiredAtomicCollector(rig, rig.armedAtomicCollectors.at(-1)!.nonce);
+        return recovery !== undefined;
+      };
+      expect(failPausedRecovery()).toBe(true);
+      // One failure, then tmux pauses the pane again and this recovery converges.
+      rig.sim.feedLines("%pause %1");
+      completeSeed(rig, nativeBootstrapLines(), "0 0 100 50");
+      expect(viewer.events.filter((event) => event.type === "seed")).toHaveLength(2);
+      // The count started over: the next failure is the first again, so the
+      // recovery after it is tried, not refused.
+      expect(failPausedRecovery()).toBe(true);
+      expect(failPausedRecovery()).toBe(true);
+      expect(reasons).toEqual(["no-progress", "no-progress", "no-progress"]);
+      expect(failPausedRecovery()).toBe(false);
+      expect(reasons.at(-1)).toBe("held-after-failures");
     } finally {
       await rig.channel.dispose();
     }
