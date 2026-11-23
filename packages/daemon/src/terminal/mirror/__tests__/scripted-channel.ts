@@ -80,10 +80,11 @@ export class ScriptedChannelDriver {
     this.#handledWrites = this.channel.written.length;
     while (this.deferredCommands.length > 0) {
       const command = this.deferredCommands.shift()!;
-      if (command.includes("capture-pane -p -R"))
+      if (command.includes("capture-pane -p -V -R"))
         // The default scripted driver models stock tmux, not malformed native
         // data. Only explicit unsupported evidence may select portable capture.
-        this.channel.reply(["command capture-pane: unknown flag -R"], false);
+        // Stock tmux refuses the capability probe at its first flag.
+        this.channel.reply(["command capture-pane: unknown flag -V"], false);
       else if (command.includes("capture-pane")) this.channel.reply([...this.#seedLines]);
       else {
         const pane = /-t (%\d+)/u.exec(command)?.[1];

@@ -128,7 +128,7 @@ function rig(
           const reply = fixtureAutoReply(fixtureState())(command);
           if (reply) return reply;
           if (stock && command.includes("capture-pane") && command.includes("-R -S"))
-            return ["command capture-pane: unknown flag -R"];
+            return ["command capture-pane: unknown flag -V"];
           if (command.includes("capture-pane")) return ["seed"];
           if (command.startsWith("display-message")) return ["0 0 100 50"];
           return [];
@@ -139,7 +139,7 @@ function rig(
       if (stock) {
         const reply = sim.reply.bind(sim);
         sim.reply = (lines, ok = true) =>
-          reply(lines, lines[0] === "command capture-pane: unknown flag -R" ? false : ok);
+          reply(lines, lines[0] === "command capture-pane: unknown flag -V" ? false : ok);
       }
       sims.push(sim);
       return sim;
@@ -1499,7 +1499,7 @@ describe("parking through the real owner and channel (perf F2)", () => {
               if (reply) return reply;
               // Stock capture path, as `rig(…, true)` does.
               if (command.includes("capture-pane") && command.includes("-R -S"))
-                return ["command capture-pane: unknown flag -R"];
+                return ["command capture-pane: unknown flag -V"];
               if (command.includes("capture-pane")) return ["seed"];
               if (command.startsWith("display-message")) return ["0 0 100 50"];
               return [];
@@ -1509,7 +1509,7 @@ describe("parking through the real owner and channel (perf F2)", () => {
           );
           const reply = sim.reply.bind(sim);
           sim.reply = (lines, ok = true) =>
-            reply(lines, lines[0] === "command capture-pane: unknown flag -R" ? false : ok);
+            reply(lines, lines[0] === "command capture-pane: unknown flag -V" ? false : ok);
           sims.push(sim);
           return sim;
         },

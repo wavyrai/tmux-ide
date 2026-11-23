@@ -9,6 +9,53 @@ export function isStockRawGridCapture(lines: readonly string[]): boolean {
   );
 }
 
+/**
+ * The capability question, asked without reading the pane's history (#869).
+ * `-V` exists only in tmux-ide's build, in every revision of the patch that
+ * adds its `-R`, and tmux rejects an unknown flag while it parses the command.
+ * `-V` comes first, so an upstream server refuses the command at once whatever
+ * the pane holds: 3.7 and older lack both flags, and 3.8 has an `-R` of its own
+ * that dumps the whole grid as text and ignores `-S` (28 MB for 2,000 lines at
+ * 120 columns). tmux-ide's build honours `-S 0 -E 0` and answers with the
+ * header and one row.
+ */
+export const NATIVE_BOOTSTRAP_PROBE_FLAGS: readonly string[] = ["-V", "-R", "-S", "0", "-E", "0"];
+/** A header and one row; the row has at most one cell per column. */
+export const NATIVE_BOOTSTRAP_PROBE_LIMITS = { maxBytes: 1024 * 1024, maxLines: 4 } as const;
+
+export type NativeBootstrapProbeResult = "native" | "unsupported" | "unknown";
+
+/**
+ * Read the probe's reply. Only a proven answer is "native" or "unsupported";
+ * a failed or malformed reply stays "unknown" so the caller can ask again
+ * instead of settling the server's capability on a bad read.
+ */
+export function readNativeBootstrapProbe(
+  ok: boolean,
+  lines: readonly string[],
+): NativeBootstrapProbeResult {
+  if (!ok)
+    return lines.some((line) =>
+      /^(?:parse error: )?(?:command capture-pane: )?unknown flag -V$/.test(line.trim()),
+    )
+      ? "unsupported"
+      : "unknown";
+  if (isStockRawGridCapture(lines)) return "unsupported";
+  let header: unknown;
+  try {
+    header = JSON.parse(lines[0] ?? "");
+  } catch {
+    return "unknown";
+  }
+  // Every revision's header names the grid's width; a row record does not.
+  if (header === null || typeof header !== "object" || !("cols" in header)) return "unknown";
+  // With -V a pane in a mode reports that mode's screen, whose current
+  // rendition is null. A build that predates the field omits the key.
+  return "version" in header && header.version === 2 && "currentAttributes" in header
+    ? "native"
+    : "unsupported";
+}
+
 /** Private native capture experiment; this is not the canonical renderer schema. */
 export interface NativeGridCaptureCell {
   readonly flags: number;
