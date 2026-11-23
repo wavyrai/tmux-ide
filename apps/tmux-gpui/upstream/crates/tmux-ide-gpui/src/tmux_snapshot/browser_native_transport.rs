@@ -90,7 +90,7 @@ struct Active {
     metadata_sent: Option<(u64, u64, String)>,
 }
 #[path = "browser_native_active.rs"]
-mod active;
+pub(super) mod active;
 #[path = "browser_native_catalog.rs"]
 mod catalog_notice;
 fn revoke(active: &mut Option<Active>, state: &mut State) {

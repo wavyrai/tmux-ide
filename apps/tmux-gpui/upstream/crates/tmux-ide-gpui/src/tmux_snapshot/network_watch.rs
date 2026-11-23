@@ -31,7 +31,6 @@ pub(in crate::tmux_snapshot) fn epoch() -> u64 {
 
 /// The Mac woke, or the network is usable again: probe every stream and let
 /// a waiting recovery try now.
-#[cfg_attr(test, allow(dead_code))]
 pub(super) fn usable_again() {
     EPOCH.fetch_add(1, Ordering::AcqRel);
     herdr_client::tmux_stream::probe_all();
@@ -39,7 +38,6 @@ pub(super) fn usable_again() {
 
 /// The network changed, but is not usable: probe the streams, which then end
 /// within the pong limit if their link went with it.
-#[cfg_attr(test, allow(dead_code))]
 fn changed() {
     herdr_client::tmux_stream::probe_all();
 }
@@ -151,4 +149,71 @@ mod macos {
 #[cfg(test)]
 pub(in crate::tmux_snapshot) fn simulate_wake() {
     TEST_EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use herdr_client::tmux_stream::{
+        ConnectOptions, IssuedDescriptor, PaneStream, SUBPROTOCOL, ViewerMode,
+    };
+    use std::{
+        net::TcpListener,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
+
+    /// A stream whose peer accepts and says nothing for 2 s: open, not ready.
+    fn open_stream() -> PaneStream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let peer = listener.accept();
+            std::thread::sleep(Duration::from_secs(2));
+            drop(peer);
+        });
+        let expires_at =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap() + Duration::from_secs(30);
+        PaneStream::spawn(ConnectOptions {
+            remote_peer: None,
+            descriptor: IssuedDescriptor {
+                protocol_version: 2,
+                web_socket_url: format!("ws://127.0.0.1:{port}/v2/terminal/pane-streams/redeem"),
+                subprotocol: SUBPROTOCOL.into(),
+                redemption_ticket: format!("ps2_{}", "a".repeat(43)),
+                daemon_instance_id: "e01ce8ee-74d8-40d0-9a59-a096050a6ade".into(),
+                request_id: "b987f903-e864-43dd-8591-8d0a464ca6e8".into(),
+                expires_at: u64::try_from(expires_at.as_millis()).unwrap(),
+                panes: vec!["pane.test".into()],
+                effective_viewer_mode: ViewerMode::ReadOnly,
+            },
+            origin: "http://127.0.0.1:4000".into(),
+            host_client_id: "native.test".into(),
+            upgrade: Default::default(),
+        })
+        .unwrap()
+    }
+
+    /// The two entries the macOS observers call, run for real: a changed
+    /// network probes every open stream; a usable one (or a wake) also moves
+    /// the epoch a waiting recovery reads. Other tests' streams are probed
+    /// too, which costs each one ping.
+    #[test]
+    fn a_changed_network_probes_and_a_usable_one_also_moves_the_epoch() {
+        let first = open_stream();
+        let before = EPOCH.load(Ordering::Acquire);
+        assert!(!first.probing());
+        changed();
+        assert!(first.probing(), "a changed network probed nothing");
+        assert_eq!(EPOCH.load(Ordering::Acquire), before, "not usable yet");
+        let second = open_stream();
+        assert!(!second.probing());
+        usable_again();
+        assert!(second.probing(), "a usable network probed nothing");
+        assert_eq!(
+            EPOCH.load(Ordering::Acquire),
+            before + 1,
+            "the epoch did not move"
+        );
+    }
 }

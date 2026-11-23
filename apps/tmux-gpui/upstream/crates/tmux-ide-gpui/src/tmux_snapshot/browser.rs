@@ -741,6 +741,10 @@ fn rejection_reason(error: &Error) -> &'static str {
 
 #[path = "browser_native_transport.rs"]
 mod native_transport;
+/// The terminal loop's admission of one command into its queue, for tests
+/// of what the view sends it.
+#[cfg(test)]
+pub(super) use native_transport::active::admit as loop_admits;
 #[path = "browser_transport.rs"]
 mod transport;
 pub(super) use native_transport::{NativeOwner, start_io, start_local};

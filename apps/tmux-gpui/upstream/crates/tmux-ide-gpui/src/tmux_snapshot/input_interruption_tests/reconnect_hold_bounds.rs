@@ -390,3 +390,99 @@ fn the_limit_is_reported_when_it_passes_without_another_event(cx: &mut TestAppCo
         assert_eq!(view.connection.keys_not_sent, 2);
     });
 }
+
+/// A probe hold is only for a live stream that takes input. A probed stream
+/// that does not, shows a split's preview or is already reconnecting holds
+/// nothing on the probe's account: the key is refused.
+#[gpui::test]
+fn a_probed_stream_that_takes_no_input_holds_no_key(cx: &mut TestAppContext) {
+    for case in ["input-not-ready", "preview", "reconnecting-live"] {
+        let (view, receiver, cx) = view_with(cx);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                live(view, cx);
+                let mut state = view.browser_state.clone();
+                state.link_probe = true;
+                match case {
+                    "input-not-ready" => state.input_ready = false,
+                    "preview" => state.retained_preview = true,
+                    _ => state.reconnect_attempt = Some(1),
+                }
+                view.apply_browser_state(Some(state), cx);
+                type_keys(view, &["x"], window, cx);
+                assert!(view.pending_input.is_none(), "{case}: the key was held");
+                assert!(view.input_interrupted, "{case}: the key was not refused");
+                assert!(sent(&receiver).is_empty(), "{case}");
+            })
+        });
+    }
+}
+
+/// Keys that do not join (a letter, Enter, a letter, Enter) go out one
+/// command each, through a channel of 32 into the terminal loop's queue,
+/// which refuses the newest command when it is full. A hold never has more
+/// of them than fit: every held key reaches the loop's queue in order, even
+/// when nothing leaves that queue meanwhile, or none is sent and the pane
+/// says how many (review of #863, item 2).
+#[gpui::test]
+fn held_keys_that_do_not_join_all_reach_the_loop_or_none_is_sent(cx: &mut TestAppContext) {
+    use crate::tmux_snapshot::browser::loop_admits;
+    // The bound itself (33) comes last, so the harm shows first without it.
+    for keys in [32usize, 100, 512, 33] {
+        // The size of the real channel to the terminal loop.
+        let (sender, receiver) = mpsc::sync_channel(32);
+        let (view, cx) = cx.add_window_view(|w, cx| make_view(w, cx, sender));
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                live(view, cx);
+                receiver.try_iter().for_each(drop);
+                let state = dropped(view, false);
+                view.apply_browser_state(Some(state), cx);
+                let typed: Vec<&str> = (0..keys)
+                    .map(|i| if i % 2 == 0 { "k" } else { "enter" })
+                    .collect();
+                type_keys(view, &typed, window, cx);
+                // Refused together: the pane says how many.
+                let refused = view.input_interrupted;
+                let not_sent = if refused { keys } else { 0 };
+                assert_eq!(view.connection.keys_not_sent, not_sent, "{keys} keys");
+                let state = back(view);
+                view.apply_browser_state(Some(state), cx);
+                // The loop's queue, with nothing leaving it: the worst case.
+                let mut queue = std::collections::VecDeque::new();
+                for _ in 0..keys {
+                    for command in receiver.try_iter() {
+                        assert!(
+                            loop_admits(&mut queue, command),
+                            "{keys} keys: the loop refused a held key after {}",
+                            queue.len()
+                        );
+                    }
+                    if view.pending_input.is_none() {
+                        break;
+                    }
+                    view.browser_tick(cx);
+                }
+                let got: Vec<String> = queue
+                    .into_iter()
+                    .filter_map(|command| match command {
+                        browser::Command::Input {
+                            input: Input::Text(text) | Input::Key(text),
+                            ..
+                        } => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                if refused {
+                    assert!(got.is_empty(), "{keys} keys: a part was sent");
+                } else {
+                    let expected: Vec<&str> = (0..keys)
+                        .map(|i| if i % 2 == 0 { "k" } else { "Enter" })
+                        .collect();
+                    assert_eq!(got, expected, "{keys} keys");
+                }
+                assert_eq!(refused, keys > 32, "{keys} keys: the bound is 32 inputs");
+            })
+        });
+    }
+}

@@ -155,7 +155,7 @@ impl SnapshotView {
             && !self.reconnect_hold_takes_keys())
             || (self.resize_gesture.busy() && self.divider.is_none())
         {
-            self.interrupt_input(cx);
+            self.refuse_key(!event.keystroke.modifiers.platform, cx);
             cx.stop_propagation();
             return;
         }

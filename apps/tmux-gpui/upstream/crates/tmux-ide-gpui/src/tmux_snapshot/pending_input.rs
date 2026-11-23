@@ -203,6 +203,12 @@ impl Pending {
         if self.inputs.len() >= keys || bytes > limit.saturating_sub(self.bytes) {
             return false;
         }
+        // No more than the queues behind the view take in one go.
+        if matches!(self.kind, Kind::Reconnect(_))
+            && reconnect::joined_len(self.inputs.iter().chain([&input])) > reconnect::MAX_INPUTS
+        {
+            return false;
+        }
         self.bytes += bytes;
         self.inputs.push(input);
         true

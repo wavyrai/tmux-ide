@@ -80,6 +80,15 @@ pub(super) fn push(
     true
 }
 
+/// [`push`] with the terminal loop's own limit.
+#[cfg(test)]
+pub(in crate::tmux_snapshot) fn admit(
+    pending: &mut std::collections::VecDeque<Command>,
+    command: Command,
+) -> bool {
+    push(pending, command, MAX_PENDING)
+}
+
 /// Text typed while earlier text waits in the queue joins it: one input,
 /// one ACK, one echo. The first key of a burst is never held for this; it is
 /// queued alone and goes on the next turn. Bounded like one input (1024

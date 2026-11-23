@@ -1145,8 +1145,11 @@ A ready frame that is not the lease's gets one fresh lease, then the catalog.
 A daemon that advertises its heartbeat (`x-tmux-ide-heartbeat` on the upgrade
 response) is also judged by its silence: nothing received for
 interval x (missed-limit + 1), 40 s at the defaults, ends the stream or the
-events socket, and it is connected again. Without the header there is no such
-deadline. Recovery ends only when the stream is ready; when the session ended,
+events socket, and it is connected again. A pane stream is also judged by
+the app's own ping: unanswered for 5 s while nothing else arrives, the stream
+ends and is connected again, with or without the header. When the Mac wakes
+or its network changes, every open stream is pinged at once, and a recovery
+that is waiting tries at once and starts its backoff over. Recovery ends only when the stream is ready; when the session ended,
 which loads Home again with a notice naming the session; when the daemon
 speaks a protocol the app does not; or over SSH when another machine answers.
 The session counts as ended when its server is online without it in two
@@ -1156,9 +1159,11 @@ closed, or when its server stayed offline or unlisted for 30 s. A session that
 is listed but has no pane to attach yet is tried again.
 A too-old daemon stops at once. A stream that shows frames but is given no
 input for 10 s is replaced, six times in a row at most; a stream that is
-given input ends the row. Up to 32 keys or 256 bytes typed
-within 3 s of a drop wait and go, in order, to the same pane when its stream
-takes input again. They are all refused, and the pane says "Not sent…", when
+given input ends the row. Up to 512 keys or 64 KiB typed
+within 5 s of a drop wait and go, in order, to the same pane when its stream
+takes input again; typed text is joined, and what is left may be 32 inputs at
+most. From 2 s the pane shows "Reconnecting…", how many keys wait, and
+"Retry now". They are all refused, and the pane says how many were not sent, when
 the reconnect takes longer, the queue fills, keys typed just before the drop
 were lost, or the stream comes back elsewhere; typing works again without a
 click once the stream is back. Keys already submitted are never replayed.

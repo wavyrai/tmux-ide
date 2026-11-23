@@ -74,6 +74,15 @@ impl SnapshotView {
         self.discard_composition(cx);
         cx.notify();
     }
+    /// Refuses a key at the keyboard, before it is offered to the terminal.
+    /// While reconnecting, a key meant for the pane (`typed`) counts toward
+    /// the pane's "not sent", as one refused by [`Self::offer_terminal_input`].
+    pub(super) fn refuse_key(&mut self, typed: bool, cx: &mut Context<Self>) {
+        if typed && self.reconnect_hold() {
+            self.connection.keys_not_sent += 1;
+        }
+        self.interrupt_input(cx);
+    }
     /// Whether a key may go to the terminal now (or wait in a hold). A key
     /// refused while reconnecting counts toward the pane's "not sent".
     pub(super) fn offer_terminal_input(&mut self, cx: &mut Context<Self>) -> bool {

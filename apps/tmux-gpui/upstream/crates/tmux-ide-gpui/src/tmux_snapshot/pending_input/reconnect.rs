@@ -4,9 +4,9 @@
 //! second, and the user, who sees the same frame, keeps typing. Those keys
 //! are held, never sent to the dead stream, and go to the same pane of the
 //! same session once the new stream takes input (PM, 12 Nov 2026), in order
-//! and exactly once. The queue is bounded ([`MAX_KEYS`], [`MAX_BYTES`]) and
-//! short ([`RECONNECT_LIMIT`] from the drop; reconnect, 19 Nov: 512 keys and
-//! 5 s). Anything else drops every held key and sets the latch, which shows
+//! and exactly once. The queue is bounded ([`MAX_KEYS`], [`MAX_BYTES`], and
+//! [`MAX_INPUTS`] once text is joined) and short ([`RECONNECT_LIMIT`] from
+//! the drop; reconnect, 19 Nov: 512 keys and 5 s). Anything else drops every held key and sets the latch, which shows
 //! how many keys were not sent in the pane: the reconnect took longer, the
 //! queue filled, keys typed just before the drop were lost (what follows them
 //! must not run alone), or the stream came back on another pane, session
@@ -28,6 +28,44 @@ use super::*;
 pub(super) const RECONNECT_LIMIT: Duration = Duration::from_secs(5);
 pub(super) const MAX_KEYS: usize = 512;
 pub(super) const MAX_BYTES: usize = 64 * 1024;
+/// How many inputs a hold may send once its text is joined: what the command
+/// channel to the terminal loop takes at once (32), as before 19 Nov. The
+/// loop's queue behind it takes 64 and refuses the newest when full, and it
+/// empties only 8 inputs per round trip, so a longer hold of keys that do
+/// not join (Enter or Backspace on repeat) would lose keys from its middle
+/// and say nothing (review of #863, item 2). One key more refuses them all.
+pub(super) const MAX_INPUTS: usize = 32;
+
+/// Whether `next` joins a held text input of `bytes` and `units` (UTF-16):
+/// together they stay within what one input carries.
+fn joins(bytes: usize, units: usize, next: &str) -> bool {
+    bytes + next.len() <= 4096 && units + next.encode_utf16().count() <= 1024
+}
+/// How many inputs `inputs` are once [`Pending::join_reconnect_text`] has
+/// joined their text.
+pub(super) fn joined_len<'a>(inputs: impl Iterator<Item = &'a Input>) -> usize {
+    let mut count = 0;
+    // The bytes and UTF-16 units of the text input still open for joining.
+    let mut open: Option<(usize, usize)> = None;
+    for input in inputs {
+        let Input::Text(next) = input else {
+            open = None;
+            count += 1;
+            continue;
+        };
+        match &mut open {
+            Some((bytes, units)) if joins(*bytes, *units, next) => {
+                *bytes += next.len();
+                *units += next.encode_utf16().count();
+            }
+            _ => {
+                open = Some((next.len(), next.encode_utf16().count()));
+                count += 1;
+            }
+        }
+    }
+    count
+}
 
 pub(in crate::tmux_snapshot) struct Hold {
     /// The new stream takes input for the pane: `Pending::token` is its token.
@@ -91,8 +129,7 @@ impl Pending {
         let mut joined: Vec<Input> = Vec::with_capacity(self.inputs.len());
         for input in self.inputs.drain(..) {
             if let (Some(Input::Text(last)), Input::Text(next)) = (joined.last_mut(), &input)
-                && last.len() + next.len() <= 4096
-                && last.encode_utf16().count() + next.encode_utf16().count() <= 1024
+                && joins(last.len(), last.encode_utf16().count(), next)
             {
                 last.push_str(next);
                 continue;

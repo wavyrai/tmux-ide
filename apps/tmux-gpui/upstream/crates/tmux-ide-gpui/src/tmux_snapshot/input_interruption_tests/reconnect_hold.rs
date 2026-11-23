@@ -197,11 +197,11 @@ fn nothing_is_held_when_keys_typed_before_the_drop_were_lost(cx: &mut TestAppCon
     });
 }
 
-/// The queue is bounded: 512 keys or 64 KiB. One key too many refuses them
-/// all; a part of what was typed is never sent.
+/// The queue is bounded: 512 keys, 64 KiB, or 32 inputs once text is joined.
+/// One key too many refuses them all; a part of what was typed is never sent.
 #[gpui::test]
 fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
-    for case in ["keys", "bytes"] {
+    for case in ["keys", "bytes", "inputs"] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -212,18 +212,34 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                     for _ in 0..512 {
                         view.replace_text_in_range(None, "k", window, cx);
                     }
-                } else {
-                    // 64 commits of 1 KiB, the most one commit carries.
+                } else if case == "bytes" {
+                    // 64 commits of 1023 bytes: three join into one input
+                    // (1023 UTF-16 units), so 22 inputs and 65,472 bytes.
                     for _ in 0..64 {
-                        view.replace_text_in_range(None, &"b".repeat(1024), window, cx);
+                        view.replace_text_in_range(None, &"€".repeat(341), window, cx);
+                    }
+                } else {
+                    // 16 commands and their Enter: 32 inputs that do not join.
+                    for _ in 0..16 {
+                        view.replace_text_in_range(None, "ls", window, cx);
+                        view.terminal_key(&key("enter"), window, cx);
                     }
                 }
                 assert!(!view.input_interrupted, "{case}: the bound is smaller");
-                view.replace_text_in_range(None, "x", window, cx);
+                let one_more = if case == "bytes" {
+                    "€".repeat(22)
+                } else {
+                    "x".to_owned()
+                };
+                view.replace_text_in_range(None, &one_more, window, cx);
                 assert!(view.input_interrupted, "{case}");
                 assert!(view.not_sent_shown(), "{case}");
                 // Every held key and the one too many.
-                let held = if case == "keys" { 512 } else { 64 };
+                let held = match case {
+                    "keys" => 512,
+                    "bytes" => 64,
+                    _ => 32,
+                };
                 assert_eq!(view.connection.keys_not_sent, held + 1, "{case}");
                 let state = back(view);
                 view.apply_browser_state(Some(state), cx);

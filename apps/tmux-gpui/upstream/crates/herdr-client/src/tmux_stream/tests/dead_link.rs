@@ -307,3 +307,33 @@ mod timer {
         assert_eq!(pinger.wake_at(at + MS * 30), at + MS * 30 + LIMIT);
     }
 }
+
+/// One probe is one ping: the request is taken down when it is served, so
+/// the worker does not go on pinging as fast as the answers come.
+#[test]
+fn one_probe_sends_one_ping_and_leaves_the_worker_asleep() {
+    let (count_tx, count_rx) = crossbeam_channel::unbounded();
+    let (client, peer) = with_limits(60_000, 5_000, || {
+        peer(None, move |socket| {
+            socket
+                .get_mut()
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            while let Ok(message) = socket.read() {
+                if let Message::Ping(_) = message {
+                    let _ = count_tx.send(());
+                }
+            }
+        })
+    });
+    thread::sleep(Duration::from_millis(100));
+    client.probe();
+    thread::sleep(Duration::from_millis(400));
+    let wakes = client.wakes();
+    thread::sleep(Duration::from_millis(400));
+    assert_eq!(count_rx.try_iter().count(), 1, "one probe, one ping");
+    let woke = client.wakes() - wakes;
+    assert!(woke <= 2, "the worker woke {woke} times after its probe");
+    drop(client);
+    peer.join().unwrap();
+}

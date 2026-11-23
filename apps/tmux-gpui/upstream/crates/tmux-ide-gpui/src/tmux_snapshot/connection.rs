@@ -7,7 +7,7 @@
 //! - to 8 s: a spinner in the slot, no words;
 //! - past 8 s: "Reconnecting…", and pane titles step down to the muted ink;
 //! - past 60 s on a session stream: "Offline since 10:42", a button that
-//!   retries now, the only manual retry.
+//!   retries now.
 //!
 //! In the pane itself (reconnect, 19 Nov): nothing for the first 2 s of a
 //! session stream's drop, while keys typed meanwhile wait

@@ -440,10 +440,6 @@ impl NativeSession {
     pub fn rtt(&self) -> Option<std::time::Duration> {
         self.stream.rtt()
     }
-    /// Asks whether the link is still there; see [`PaneStream::probe`].
-    pub fn probe(&self) {
-        self.stream.probe();
-    }
     /// A probe waits for its answer: input sent now may be lost.
     pub fn probing(&self) -> bool {
         self.stream.probing()
