@@ -194,14 +194,19 @@ fn carry(current: &Active, hold: &mut Hold) {
         hold.carry_keys_not_sent();
     }
 }
-/// The outcome a stream being opened starts with: the notice a lost stream
-/// carried, or none.
-pub(super) fn carried(hold: &mut Hold) -> super::active::Outcome {
-    let mut outcome = super::active::Outcome::default();
+/// Polls the stream, after handing it the notice a lost stream carried: the
+/// first stream polled after the loss says it once the window is back.
+pub(super) fn poll(
+    current: &mut Active,
+    hold: &mut Hold,
+    state: &mut State,
+    foreground: bool,
+    now: u64,
+) -> Result<bool, NativeError> {
     if hold.take_keys_not_sent() {
-        outcome.set(Some(KEYS_NOT_SENT));
+        current.action_status.set(Some(KEYS_NOT_SENT));
     }
-    outcome
+    current.poll(state, foreground, now)
 }
 
 #[cfg(test)]

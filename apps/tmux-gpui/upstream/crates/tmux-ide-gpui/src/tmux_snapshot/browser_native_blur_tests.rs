@@ -659,9 +659,8 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
         } else {
             super::stream_lost(&active, &mut pending, &mut hold, &state, 1, &lost());
         }
-        let next = super::carried(&mut hold);
         assert_eq!(
-            next.is(super::KEYS_NOT_SENT),
+            hold.take_keys_not_sent(),
             notice,
             "notice {notice}, command failed {failed}"
         );

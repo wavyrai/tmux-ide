@@ -502,7 +502,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             owner,
                             stream_interrupted: false,
                             owner_notice: None,
-                            action_status: loss::carried(&mut hold),
+                            action_status: Default::default(),
                             catalog_only,
                             daemon_version,
                             generation,
@@ -577,7 +577,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 }
             }
             if let Some(current) = active.as_mut().filter(|a| !a.reissue) {
-                let polled = current.poll(&mut state, presence.0, now);
+                let polled = loss::poll(current, &mut hold, &mut state, presence.0, now);
                 match releases.stalled(polled, current, presence.0, now) {
                     Ok(dirty) => changed |= dirty,
                     Err(error) => {

@@ -94,11 +94,11 @@ impl Hold {
         self.keys_not_sent = false;
     }
     /// The lost stream had not yet said that keys were not sent: the next one
-    /// opened says it.
+    /// polled says it.
     pub fn carry_keys_not_sent(&mut self) {
         self.keys_not_sent = true;
     }
-    /// Whether the stream being opened must say that keys were not sent.
+    /// Whether the next stream polled must say that keys were not sent.
     /// True once per carry.
     pub fn take_keys_not_sent(&mut self) -> bool {
         std::mem::take(&mut self.keys_not_sent)
