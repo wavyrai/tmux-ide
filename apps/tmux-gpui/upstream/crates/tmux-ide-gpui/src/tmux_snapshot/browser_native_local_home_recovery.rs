@@ -6,6 +6,7 @@
 //! new daemon is accepted only through that proof, never from the old link.
 //! Only a failure that cannot recover by itself stops with a reason.
 use super::*;
+use crate::tmux_snapshot::connection::network_watch;
 use herdr_client::tmux_daemon::{CatalogEventError, CatalogWatchError, Error as DaemonError};
 
 /// Backoff doubles from 250 ms to this cap, for as long as Home is in front.
@@ -117,6 +118,10 @@ struct Attempt {
     attempts: u32,
     due: Option<Instant>,
     protocol: u8,
+    /// The wake and network epoch when it failed: when it moves on, the retry
+    /// is due at once and the backoff starts over, as a session stream's
+    /// recovery does (card #876, from #863).
+    network: u64,
 }
 impl Recovery {
     pub(super) fn active(&self) -> bool {
@@ -155,6 +160,7 @@ impl Recovery {
             attempts: 0,
             due: None,
             protocol: 0,
+            network: network_watch::epoch(),
         });
         match failure {
             HomeFailure::Fatal(message) => return Err(message),
@@ -180,6 +186,13 @@ impl Recovery {
         let Some(attempt) = self.active.as_mut() else {
             return false;
         };
+        let network = network_watch::epoch();
+        if attempt.due.is_some() && network != attempt.network {
+            // The Mac woke or the network is back: try now, from the start.
+            attempt.network = network;
+            attempt.attempts = 0;
+            attempt.due = Some(now);
+        }
         if attempt.due.is_none_or(|due| now < due) {
             return false;
         }
@@ -225,19 +238,33 @@ impl Local {
         }
         self.publish()
     }
-    /// How long the idle actor may park before Home's next retry.
-    /// None off Home: nothing runs there, so a due retry must not keep the
-    /// actor awake.
+    /// How long the idle actor may park before Home's or an open session's
+    /// next retry. None elsewhere: nothing runs there, so a due retry must not
+    /// keep the actor awake.
     pub(super) fn home_recovery_wait(&self) -> Option<Duration> {
         let quiet = self.home.quiet.wait(Instant::now());
-        (self.home_visible().then(|| self.home.wait(Instant::now())))
+        ((self.home_visible() || self.workspace_catalog_observing())
+            .then(|| self.home.wait(Instant::now())))
             .flatten()
             .into_iter()
             .chain(quiet)
             .min()
     }
     pub(super) fn home_recovery_tick(&mut self) -> Result<(), Error> {
-        if self.stage.is_some() || !self.home_visible() || !self.home.due(Instant::now()) {
+        let session = self.workspace_catalog_observing();
+        if self.stage.is_some()
+            || !(self.home_visible() || session)
+            || !self.home.due(Instant::now())
+        {
+            return Ok(());
+        }
+        if session {
+            // A session's sidebar resumes its lane; its status line is the
+            // terminal's, so nothing is said here.
+            if !self.sources.release_catalog()? {
+                self.home = Recovery::default();
+                return self.workspace_catalog_failed();
+            }
             return Ok(());
         }
         if self.sources.release_catalog()? {
@@ -259,6 +286,30 @@ impl Local {
         self.home_recovered();
         self.state.status = "Sessions ready".into();
         self.publish()
+    }
+    /// The open session's catalog lane dropped (card #876). A dropped link to
+    /// the same daemon is retried with Home's backoff, and at once on wake or
+    /// a network change; the agent rows stay as last known meanwhile
+    /// (`agent_tick` pauses them while `self.home` is active). Anything else
+    /// stops observing until the session is opened again, as before.
+    pub(super) fn workspace_catalog_lost(&mut self, error: DaemonError) -> Result<(), Error> {
+        if !same_daemon(&error) || classify(&error) != HomeFailure::Retry {
+            return self.workspace_catalog_failed();
+        }
+        eprintln!("tmux-ide: session catalog link lost: {error}");
+        if self.home.failed(HomeFailure::Retry, Instant::now()).is_err() {
+            return self.workspace_catalog_failed();
+        }
+        self.sources.drop_catalog_link()?;
+        self.agent_tick()
+    }
+    /// The session's lane is back on the same daemon: the rows are read once
+    /// again in place.
+    pub(super) fn workspace_catalog_resumed(&mut self) -> Result<(), Error> {
+        if self.home.active.is_some() {
+            self.home = Recovery::default();
+        }
+        self.agent_tick()
     }
     /// A fresh catalog arrived. The kept list stays: the catalog replaces it
     /// row by row, and keeps row ids only for the same daemon identity

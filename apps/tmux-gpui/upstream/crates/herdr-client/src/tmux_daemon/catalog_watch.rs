@@ -44,6 +44,28 @@ struct Cancellation {
     sequence: AtomicU64,
     /// The lane passed its barrier.
     live: AtomicBool,
+    /// [`probe_all`] asked for a ping now: the Mac woke or its network changed.
+    probe: AtomicBool,
+}
+/// Every catalog lane of this process, for [`probe_all`]. Ended ones are
+/// pruned as lanes are added and probed.
+static LANES: Mutex<Vec<std::sync::Weak<Cancellation>>> = Mutex::new(Vec::new());
+/// The Mac woke or its network changed: every open catalog lane pings at once
+/// and ends as [`CatalogWatchError::Timeout`] if nothing at all comes back
+/// within the pane streams' pong limit, so a link that died without closing
+/// is found in seconds, not after [`UNANSWERED`] (card #876). The app calls
+/// this with `tmux_stream::probe_all`, from the same wake and network watch.
+pub fn probe_all() {
+    let Ok(mut lanes) = LANES.lock() else {
+        return;
+    };
+    lanes.retain(|lane| {
+        let Some(lane) = lane.upgrade().filter(|lane| lane.check().is_ok()) else {
+            return false;
+        };
+        lane.probe.store(true, Ordering::Release);
+        true
+    });
 }
 impl Cancellation {
     fn check(&self) -> Result<(), CatalogWatchError> {
@@ -101,6 +123,10 @@ impl CatalogWatchWorker {
         wake: impl Fn() + Send + 'static,
     ) -> Result<Self, WorkerError> {
         let cancel = Arc::new(Cancellation::default());
+        if let Ok(mut lanes) = LANES.lock() {
+            lanes.retain(|lane| lane.strong_count() > 0);
+            lanes.push(Arc::downgrade(&cancel));
+        }
         let stop = cancel.clone();
         let mailbox: Mailbox = Arc::default();
         let output = mailbox.clone();
@@ -203,6 +229,25 @@ impl CatalogWatchWorker {
     pub fn advance_detached(&self, sequence: u64) {
         self.cancel.sequence.store(sequence, Ordering::Release);
     }
+    /// Ping now and end the lane if nothing at all comes back within
+    /// [`PROBE_LIMIT`]: what [`probe_all`] does for every lane.
+    pub fn probe(&self) {
+        self.cancel.probe.store(true, Ordering::Release);
+    }
+    /// [`probe_all`] would reach this lane.
+    #[cfg(test)]
+    pub(super) fn registered(&self) -> bool {
+        LANES.lock().is_ok_and(|lanes| {
+            lanes
+                .iter()
+                .any(|lane| std::ptr::eq(lane.as_ptr(), Arc::as_ptr(&self.cancel)))
+        })
+    }
+    /// Sets a detached lane's push state, as a daemon's acknowledgement would.
+    #[cfg(test)]
+    pub(super) fn push_detached(&self, push: bool) {
+        self.cancel.fleet_push.store(push, Ordering::Release);
+    }
     pub fn cancel(&self) {
         self.cancel.cancel();
         if let Ok(mut slot) = self.mailbox.lock() {
@@ -281,11 +326,24 @@ fn run(
     let mut received = Instant::now();
     let mut ping = received;
     let mut refresh = received;
+    // When a probe's ping went out, until anything at all comes back.
+    let mut probed: Option<Instant> = None;
     loop {
         cancel.check()?;
         let now = Instant::now();
-        if (!lane.ready() && now >= ready_deadline) || now.duration_since(received) >= silence {
+        let probe_failed = probed.is_some_and(|at| {
+            now.duration_since(at) >= PROBE_LIMIT && now.duration_since(received) >= PROBE_LIMIT
+        });
+        if (!lane.ready() && now >= ready_deadline)
+            || now.duration_since(received) >= silence
+            || probe_failed
+        {
             return Err(CatalogWatchError::Timeout);
+        }
+        if cancel.probe.swap(false, Ordering::AcqRel) && probed.is_none() {
+            socket.send(Message::Ping(Vec::new().into()))?;
+            probed = Some(now);
+            ping = now;
         }
         // Fleet push covers separately registered tmux owners. Only a daemon
         // without it keeps Home's bounded fallback; this never reconnects a
@@ -314,6 +372,7 @@ fn run(
             Err(error) => return Err(error.into()),
         };
         received = Instant::now();
+        probed = None;
         cancel.check()?;
         match message {
             Message::Text(text) => match lane.receive(text.as_bytes()).inspect(|_| {
@@ -347,6 +406,9 @@ fn run(
 }
 /// Three of this lane's own pings (one every 15 s) without any frame back.
 const UNANSWERED: Duration = Duration::from_secs(45);
+/// A probe's ping with nothing back: the same limit as a pane stream's probe
+/// (`tmux_stream::pinger`).
+const PROBE_LIMIT: Duration = Duration::from_secs(5);
 #[cfg(all(test, unix))]
 #[path = "catalog_watch_tests.rs"]
 mod tests;

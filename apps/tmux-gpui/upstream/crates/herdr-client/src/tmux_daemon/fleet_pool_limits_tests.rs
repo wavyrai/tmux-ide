@@ -80,3 +80,24 @@ fn observation_borrows_the_same_remote_owner_and_retirement_stops_it() {
         Err(Error::Retired)
     ));
 }
+
+/// Card #876: a saved machine's agent rows refresh on its own lane's notices.
+/// The pool says whether a route's lane is pushed fleet changes, and hands
+/// each change notice over once.
+#[test]
+fn a_route_reports_its_lane_push_and_hands_each_notice_over_once() {
+    let mut pool = FleetCatalogPool::default();
+    pool.insert("saved".into(), source()).unwrap();
+    assert_eq!(pool.push("saved"), (false, false), "no lane yet");
+    let watch = crate::tmux_daemon::CatalogWatchWorker::detached(1);
+    watch.push_detached(true);
+    watch.report_detached(false);
+    pool.entries.get_mut("saved").unwrap().watch = Some(watch);
+    pool.poll().unwrap();
+    assert_eq!(pool.push("saved"), (true, true));
+    assert_eq!(pool.push("saved"), (true, false), "a notice is taken once");
+    pool.entries.get_mut("saved").unwrap().watch_failed = true;
+    assert_eq!(pool.push("saved"), (false, false), "a failed lane pushes nothing");
+    assert_eq!(pool.push("absent"), (false, false));
+    pool.shutdown().unwrap();
+}

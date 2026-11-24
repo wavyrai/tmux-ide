@@ -347,20 +347,25 @@ impl Owner {
 impl Local {
     pub(in crate::tmux_snapshot) fn selected_catalog_tick(&mut self) -> Result<(), Error> {
         let home = self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live;
-        let visible = self.foreground
-            && (home || self.workspace_catalog_observing() || self.picker_observing());
+        // Card #876: the lane follows what the window shows, not whether it
+        // is in front. One idle socket costs nothing; closing it each time the
+        // window went to the background cost a reconnect and a full re-read
+        // each time it came back.
+        let visible = home || self.workspace_catalog_observing() || self.picker_observing();
         let notice = self
             .sources
             .poll_catalog(visible, visible && self.stage.is_none())?;
-        // With fleet push, agent rows refresh on the daemon's notice, not a timer.
+        // With fleet push, agent rows refresh on the daemons' notices, not a
+        // timer: this lane's, and each saved machine's (card #876).
         let (push, notified) = self.sources.catalog_push()?;
-        self.agents.pushed(push, notified, &self.machine_id);
+        let (pushing, fleet_notified) = self.background_fleet.agent_push(&self.machine_id, push)?;
+        self.agents.pushed(&pushing, notified || fleet_notified);
         match notice {
             Some(Notice::Changed(snapshot)) if home => self.receive_catalog(snapshot, false),
             Some(Notice::Changed(snapshot)) => self.picker_catalog(&snapshot),
-            Some(Notice::Failed(_)) if !home => self.workspace_catalog_failed(),
+            Some(Notice::Failed(error)) if !home => self.workspace_catalog_lost(error),
             Some(Notice::Resumed) if home => self.home_resumed(),
-            Some(Notice::Resumed) => Ok(()),
+            Some(Notice::Resumed) => self.workspace_catalog_resumed(),
             Some(Notice::Failed(error)) => self.home_catalog_failed(error),
             None => Ok(()),
         }
@@ -370,3 +375,9 @@ impl Local {
 #[cfg(test)]
 #[path = "browser_native_local_selected_catalog_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "browser_native_local_quiet_link_tests.rs"]
+mod quiet_link_tests;
+#[cfg(test)]
+#[path = "browser_native_local_churn_live_tests.rs"]
+mod churn_live_tests;

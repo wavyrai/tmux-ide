@@ -183,6 +183,15 @@ impl FleetRegistry {
         }
         self.pool.observation_source(id, incarnation, identity)
     }
+    /// Whether this captured route's daemon pushes agent changes now, and
+    /// whether it sent a notice since the last call. A replaced, disconnected
+    /// or retired route pushes nothing.
+    pub fn agent_push(&mut self, id: &str, incarnation: uuid::Uuid) -> (bool, bool) {
+        if self.cleanup_pending || !self.current(id, incarnation) || self.disconnected(id) {
+            return (false, false);
+        }
+        self.pool.push(id)
+    }
     pub fn poll(&mut self) -> Result<Vec<FleetCatalogEvent>, FleetRegistryError> {
         let events = self.pool.poll()?;
         Ok(events

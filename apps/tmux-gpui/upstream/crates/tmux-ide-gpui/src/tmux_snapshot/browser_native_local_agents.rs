@@ -177,10 +177,11 @@ impl Gate {
     pub(super) fn busy(&self) -> bool {
         self.pool.busy()
     }
-    /// The selected catalog's push state. Push replaces the 5 s re-read only
-    /// when every observed session is on that daemon; a notice re-reads now.
-    pub(super) fn pushed(&mut self, push: bool, notified: bool, machine: &str) {
-        self.pushed = push && self.contexts.iter().all(|c| c.machine == machine);
+    /// The machines whose daemons push agent changes now, and whether one
+    /// sent a notice. Push replaces the 5 s re-read only when every observed
+    /// session's machine pushes; a notice re-reads now.
+    pub(super) fn pushed(&mut self, pushing: &std::collections::BTreeSet<String>, notified: bool) {
+        self.pushed = self.contexts.iter().all(|c| pushing.contains(&c.machine));
         if notified && self.enabled && !self.cycle && self.due.is_none() {
             self.due = Some(Instant::now());
         }
@@ -519,8 +520,10 @@ impl Local {
             self.agents.pause();
             return self.publish_last_known();
         }
-        let visible = self.foreground
-            && self.background_fleet.allows_current()
+        // Card #876: the rows stay while the window is in the background.
+        // Wiping them there made Home and the sidebar load them again from
+        // nothing ("Discovering agents…") each time the window came back.
+        let visible = self.background_fleet.allows_current()
             && ((self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live)
                 || (self.state.surface == Surface::Workspace && self.active.is_some()));
         if !visible {
@@ -709,7 +712,10 @@ impl Local {
         let mut changed = self
             .agents
             .configure(view_contexts, total, workspace, incomplete, now);
-        changed |= self.agents.poll(self.stage.is_none(), now);
+        // In the background only a daemon's notice reads; the periodic
+        // re-read waits until the window is in front again.
+        let reading = self.stage.is_none() && (self.foreground || self.agents.pushed);
+        changed |= self.agents.poll(reading, now);
         self.state.agents_last_known = self.agents.last_known();
         changed |= self.agents.picker.dirty;
         if changed && picking {
@@ -840,3 +846,9 @@ pub(super) const AGENT_UNCONFIRMED: &str =
 #[cfg(test)]
 #[path = "browser_native_local_agents_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "browser_native_local_agents_background_tests.rs"]
+mod background_tests;
+#[cfg(test)]
+#[path = "browser_native_local_quiet_link_fixture.rs"]
+pub(super) mod quiet_link_fixture;
