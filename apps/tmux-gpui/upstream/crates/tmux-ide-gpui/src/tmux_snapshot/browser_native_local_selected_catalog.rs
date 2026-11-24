@@ -350,8 +350,12 @@ impl Local {
         // Card #876: the lane follows what the window shows, not whether it
         // is in front. One idle socket costs nothing; closing it each time the
         // window went to the background cost a reconnect and a full re-read
-        // each time it came back.
-        let visible = home || self.workspace_catalog_observing() || self.picker_observing();
+        // each time it came back. A step in flight (opening a session from
+        // Home) keeps it too: reads wait for the step, the socket stays.
+        let visible = home
+            || self.workspace_catalog_observing()
+            || self.picker_observing()
+            || self.stage.is_some();
         let notice = self
             .sources
             .poll_catalog(visible, visible && self.stage.is_none())?;

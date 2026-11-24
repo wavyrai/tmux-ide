@@ -8,7 +8,8 @@
 //! for `TMUX_IDE_CHURN_SESSION_S`. `TMUX_IDE_CHURN_SSH_TARGET` runs it as
 //! `--tmux-native-ssh TARGET` starts the app. `TMUX_IDE_CHURN_BLUR_EVERY_S`
 //! sends the window to the background for 3 s that often, as switching to
-//! another app does.
+//! another app does. With `TMUX_IDE_CHURN_ASSERT=1` it fails when a reconnect
+//! shows, or when anything but the first rows' load (two changes) does.
 use super::*;
 
 fn seconds(name: &str, default: u64) -> Duration {
@@ -169,7 +170,13 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
             publications += 1;
             let now = shown(&s);
             if now != last {
-                changes += 1;
+                // "Window inactive — activate Tmux IDE to type" and back is
+                // the input notice, not a reconnect.
+                let mut a = now.clone();
+                let mut b = last.clone();
+                a["status"] = serde_json::Value::Null;
+                b["status"] = serde_json::Value::Null;
+                changes += u64::from(a != b);
                 let reconnecting = s.reconnect_attempt.is_some()
                     || s.status.contains("econnect")
                     || s.agents_last_known
@@ -187,6 +194,11 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
             serde_json::json!({"phase": phase, "seconds": length.as_secs(),
                 "publications": publications, "changes": changes, "reconnecting": reconnects})
         );
+        // After the first rows, a quiet link changes nothing on screen.
+        if std::env::var("TMUX_IDE_CHURN_ASSERT").is_ok_and(|v| v == "1") {
+            assert_eq!(reconnects, 0, "{phase}: a reconnect showed");
+            assert!(changes <= 2, "{phase}: {changes} changes on a quiet link");
+        }
     }
     owner.shutdown().unwrap();
 }
