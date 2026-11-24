@@ -293,6 +293,10 @@ fn a_held_back_admission_is_typing_only_for_text_keys_bytes_and_paste() {
         (Work::Barrier(Control::Paste("paste".into())), true),
         (wheel(), false),
         (Work::Barrier(Control::Scroll(-1)), false),
+        (
+            Work::Barrier(Control::Mouse(PointerEvent::Cancel { gesture: 1 })),
+            false,
+        ),
     ];
     for (work, typing) in cases {
         let scope = scope();

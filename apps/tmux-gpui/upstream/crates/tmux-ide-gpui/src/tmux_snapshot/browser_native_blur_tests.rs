@@ -15,7 +15,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,13 +30,24 @@ const NOTICE: &str = "Keys typed as the window lost focus were not sent. Type th
 // Base64 of the shared native compact seed vector (4 columns, 2 rows).
 const SEED: &str = "eyJmIjoicyIsImsiOiJ0ZXJtaW5hbC1zZW1hbnRpYy1jb21wYWN0IiwiciI6MSwicyI6WzQsMixbWzAsW1sxLCJBIiwxLDAsMCwwXSxbMSwiw6kiLDEsMCwwLDBdLFsxLCLnlYwiLDIsMCwwLDBdLFsxLCIiLDAsMCwwLDBdXV0sWzEsW1s0LCIgIiwxLDAsMCwwXV1dXSxbWzAsW1s0LCJoIiwxLDAsMCwwXV1dXSxbMiwxLDAsImJhciIsMV0sWzAsMSwwLDEsMCwwLDEsMSwiZHJhZyIsInNnciIsMF0sW1siaW1hZ2U6MSIsImtpdHR5IiwwLDAsMiwxLCJhYmMiXV0sWyJhdXRob3JpdGF0aXZlLXN0cmVhbSIsIm9ic2VydmVkLWZyb20tc3RhcnQiXV0sInYiOjF9";
 
+/// How the scripted daemon departs from the plain one.
+#[derive(Clone, Default)]
+struct Script {
+    /// The stream closes when the app gives input up (the window left): a
+    /// link that drops while the user is in another app.
+    close_on_release: bool,
+    /// While set, inputs are not answered: a link's round trip, so the input
+    /// scheduler holds a ninth key back. Answered once cleared.
+    hold_acks: Arc<AtomicBool>,
+}
+
 /// A daemon's pane stream: two panes, input granted on every request and
 /// released on every release, every input answered. Each message the app
 /// sends is passed on to `seen`.
-fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>) {
+fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: Script) {
     let (stream, _) = listener.accept().unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(Duration::from_millis(20)))
         .unwrap();
     #[allow(clippy::result_large_err)]
     let mut socket = tungstenite::accept_hdr(
@@ -85,7 +96,32 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>) {
         json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":4,"height":2,"active":false}]}),
     );
     let mut revision = 1;
-    while let Ok(message) = socket.read() {
+    let mut unanswered: Vec<Value> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if !script.hold_acks.load(Ordering::SeqCst) {
+            for (pane, seq) in unanswered
+                .drain(..)
+                .map(|v| (v["pane"].clone(), v["seq"].clone()))
+            {
+                send(
+                    &mut socket,
+                    json!({"type":"input-ack","pane":pane,"seq":seq}),
+                );
+            }
+        }
+        let message = match socket.read() {
+            Ok(message) => message,
+            Err(tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => break,
+        };
         let tungstenite::Message::Text(text) = message else {
             if message.is_close() {
                 break;
@@ -109,12 +145,15 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>) {
                 json!({"type":"authority-receipt","requestId":value["requestId"],"authority":value["authority"],"status":"released","snapshot":snapshot})
             };
             send(&mut socket, receipt);
+            if script.close_on_release && !granted && value["authority"] == "input" {
+                let _ = seen.send(value);
+                let _ = socket.close(None);
+                let _ = socket.flush();
+                return;
+            }
         }
         if kind == "input" {
-            send(
-                &mut socket,
-                json!({"type":"input-ack","pane":value["pane"],"seq":value["seq"]}),
-            );
+            unanswered.push(value.clone());
         }
         let _ = seen.send(value);
     }
@@ -140,50 +179,72 @@ struct Loop {
     seen: mpsc::Receiver<Value>,
     gate: Arc<AtomicBool>,
     open: mpsc::Sender<()>,
-    _events: mpsc::SyncSender<Incoming>,
+    events: mpsc::SyncSender<Incoming>,
+    seen_tx: mpsc::Sender<Value>,
+    /// The revision of the last focus change the loop passed on.
+    passed_on: Arc<AtomicU64>,
+}
+/// A scripted daemon on a fresh loopback port.
+fn listen(seen: &mpsc::Sender<Value>, script: Script) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = seen.clone();
+    thread::spawn(move || daemon(listener, seen, script));
+    port
+}
+/// The catalog's open of request `request` on `port`.
+fn open(events: &mpsc::SyncSender<Incoming>, request: u64, port: u16) {
+    events
+        .send(Incoming::Catalog(Box::new(State {
+            request,
+            surface: Surface::Workspace,
+            selected_session: Some(SESSION.into()),
+            ..State::default()
+        })))
+        .unwrap();
+    events
+        .send(Incoming::Handoff(Event::Open {
+            version: 1,
+            id: ID.into(),
+            request,
+            live_session_id: SESSION.into(),
+            capability: Box::new(handoff(port)),
+        }))
+        .unwrap();
 }
 impl Loop {
     fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
+        Self::start_with(Script::default())
+    }
+    fn start_with(script: Script) -> Self {
         let (seen_tx, seen) = mpsc::channel();
-        thread::spawn(move || daemon(listener, seen_tx));
+        let port = listen(&seen_tx, script);
         let (events, receiver) = mpsc::sync_channel(8);
         let gate = Arc::new(AtomicBool::new(false));
-        let (open, opened) = mpsc::channel::<()>();
+        let (opened_tx, opened) = mpsc::channel::<()>();
         let held = gate.clone();
+        let passed_on = Arc::new(AtomicU64::new(0));
+        let presence = passed_on.clone();
         let bridge = start_events(Default::default(), receiver, true, move || {
             move |command| {
-                if matches!(command, Command::Presence { .. }) && held.swap(false, Ordering::SeqCst)
-                {
-                    let _ = opened.recv_timeout(Duration::from_secs(5));
+                if let Command::Presence { revision, .. } = command {
+                    presence.store(revision, Ordering::SeqCst);
+                    if held.swap(false, Ordering::SeqCst) {
+                        let _ = opened.recv_timeout(Duration::from_secs(5));
+                    }
                 }
                 Ok(())
             }
         });
-        events
-            .send(Incoming::Catalog(Box::new(State {
-                request: 3,
-                surface: Surface::Workspace,
-                selected_session: Some(SESSION.into()),
-                ..State::default()
-            })))
-            .unwrap();
-        events
-            .send(Incoming::Handoff(Event::Open {
-                version: 1,
-                id: ID.into(),
-                request: 3,
-                live_session_id: SESSION.into(),
-                capability: Box::new(handoff(port)),
-            }))
-            .unwrap();
+        open(&events, 3, port);
         let mut running = Self {
             bridge,
             seen,
             gate,
-            open,
-            _events: events,
+            open: opened_tx,
+            events,
+            seen_tx,
+            passed_on,
         };
         running.until("input ready", |state| state.input_ready);
         running
@@ -213,6 +274,14 @@ impl Loop {
                 }
             }
         }
+    }
+    /// The catalog re-issues the route as `request`, on a new stream.
+    fn reopen(&self, request: u64) {
+        open(
+            &self.events,
+            request,
+            listen(&self.seen_tx, Script::default()),
+        );
     }
     fn send(&self, command: Command) {
         self.bridge.commands.send(command).unwrap();
@@ -387,8 +456,8 @@ fn wheel() -> Input {
     }
 }
 
-/// Typing is text, a key, bytes or a paste; a fit, a pointer, a wheel step or
-/// a history scroll is not.
+/// Typing is text, a key, bytes or a paste; a fit, a pointer event, a wheel
+/// step or a history scroll is not.
 #[test]
 fn only_typing_counts_as_keys_not_sent() {
     let cases = [
@@ -398,6 +467,10 @@ fn only_typing_counts_as_keys_not_sent() {
         (Input::Paste("a".into()), true),
         (wheel(), false),
         (Input::Scroll(-1), false),
+        (
+            Input::Mouse(crate::tmux_snapshot::pointer::Command::Cancel { gesture: 1 }),
+            false,
+        ),
     ];
     for (input, typing) in cases {
         let label = format!("{input:?}");
@@ -410,4 +483,156 @@ fn only_typing_counts_as_keys_not_sent() {
         assert_eq!(super::typed(&command), typing, "{label}");
     }
     assert!(!super::typed(&focus(false, 1)));
+}
+
+fn text(typed: &str) -> Command {
+    Command::Input {
+        request: 3,
+        id: "left".into(),
+        input_target: None,
+        input: Input::Text(typed.into()),
+    }
+}
+fn fit() -> Command {
+    Command::Input {
+        request: 3,
+        id: "left".into(),
+        input_target: None,
+        input: Input::Resize {
+            cols: 9,
+            rows: 2,
+            cell_width: None,
+            cell_height: None,
+            cell_width_milli: None,
+            cell_height_milli: None,
+        },
+    }
+}
+/// Waits for the window back with input and the notice, for up to 5 s: once
+/// the stream is new, the notice reaches it one turn after the window is back.
+fn noticed(app: &mut Loop, request: u64, revision: u64, what: &str) -> State {
+    app.until(what, |state| {
+        state.request == request
+            && state.presence_revision == revision
+            && state.input_ready
+            && state.status == NOTICE
+    })
+}
+
+/// Review round 1, item 1: the link drops while the window is away, after
+/// the focus loss dropped a line. The catalog re-issues the stream, and the
+/// window, back on the new stream, still says the line was not sent. The line
+/// is never sent, on either stream.
+#[test]
+fn a_line_dropped_at_the_focus_loss_is_announced_after_a_reconnect_in_the_background() {
+    let mut app = Loop::start_with(Script {
+        close_on_release: true,
+        ..Script::default()
+    });
+    let mut commands = line(4402);
+    commands.push(focus(false, 1));
+    app.one_turn(0, commands);
+    app.until("the stream lost in the background", |state| {
+        state.reconnect_attempt.is_some()
+    });
+    app.reopen(4);
+    app.until("the new stream in the background", |state| {
+        state.request == 4 && state.frame.is_some() && !state.retained_preview
+    });
+    app.send(focus(true, 2));
+    noticed(
+        &mut app,
+        4,
+        2,
+        "line 4402, dropped at the focus loss, announced after the reconnect",
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        app.typed().is_empty(),
+        "a key was sent after the window left"
+    );
+}
+
+/// Review round 1, item 2: in the loop, a key the input scheduler holds back
+/// (eight earlier keys unanswered, a link's round trip) when the window
+/// leaves. The focus loss cancels it; once back, the window says so, and the
+/// key is never sent.
+#[test]
+fn a_key_held_back_by_the_scheduler_when_the_window_leaves_is_announced_in_the_loop() {
+    let script = Script::default();
+    script.hold_acks.store(true, Ordering::SeqCst);
+    let mut app = Loop::start_with(script.clone());
+    for n in 0..4 {
+        for command in line(n) {
+            app.send(command);
+        }
+    }
+    app.send(text("held-back"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut sent = Vec::new();
+    while sent.len() < 8 {
+        sent.extend(app.typed());
+        assert!(Instant::now() < deadline, "8 keys did not go out: {sent:?}");
+        thread::sleep(Duration::from_millis(2));
+    }
+    // Give the loop time to admit the ninth key: the scheduler holds it back.
+    thread::sleep(Duration::from_millis(100));
+    app.send(focus(false, 1));
+    // The loop has taken the focus loss; the stream gives input up only once
+    // the eight keys are answered, so answer them now.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.passed_on.load(Ordering::SeqCst) != 1 {
+        assert!(Instant::now() < deadline, "the focus loss was not taken");
+        thread::sleep(Duration::from_millis(2));
+    }
+    script.hold_acks.store(false, Ordering::SeqCst);
+    app.until("the window in the background", |state| {
+        state.presence_revision == 1
+    });
+    app.send(focus(true, 2));
+    noticed(&mut app, 3, 2, "the held-back key announced as not sent");
+    thread::sleep(Duration::from_millis(100));
+    sent.extend(app.typed());
+    assert_eq!(sent.len(), 8, "{sent:?}");
+    assert!(
+        sent.iter().all(|input| !input.contains("held-back")),
+        "the held-back key was sent after the window left"
+    );
+}
+
+/// Review round 1, item 3: the soak's own drain, a fit queued with the line.
+/// With the fit first or last, the line is still announced.
+#[test]
+fn a_line_queued_with_a_fit_before_or_after_it_is_announced() {
+    let orders: [fn() -> Vec<Command>; 2] = [
+        || {
+            let mut commands = vec![fit()];
+            commands.extend(line(4402));
+            commands.push(focus(false, 1));
+            commands
+        },
+        || {
+            let mut commands = line(4402);
+            commands.push(fit());
+            commands.push(focus(false, 1));
+            commands
+        },
+    ];
+    for (index, order) in orders.into_iter().enumerate() {
+        let mut app = Loop::start();
+        app.one_turn(0, order());
+        app.until("the window in the background", |state| {
+            state.presence_revision == 1
+        });
+        app.send(focus(true, 2));
+        let back = app.until("the window back with input", |state| {
+            state.presence_revision == 2 && state.input_ready
+        });
+        assert_eq!(
+            back.status, NOTICE,
+            "order {index} (0: fit first, 1: fit last)"
+        );
+        thread::sleep(Duration::from_millis(100));
+        assert!(app.typed().is_empty(), "order {index}: a key was sent");
+    }
 }
