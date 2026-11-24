@@ -16,6 +16,8 @@ struct Peer {
     port: u16,
     stop: mpsc::Sender<()>,
     done: mpsc::Receiver<()>,
+    /// Every text frame the app sent, in order.
+    seen: mpsc::Receiver<Value>,
 }
 /// A daemon that serves one stream with two panes, grants input, and drops
 /// the socket with no close frame when told to stop.
@@ -23,6 +25,7 @@ fn peer() -> Peer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (stop, stopped) = mpsc::channel::<()>();
+    let (record, seen) = mpsc::channel();
     let (finished, done) = mpsc::channel();
     thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -87,11 +90,17 @@ fn peer() -> Peer {
                 let authority = json!({"generation":GEN,"session":"workspace","revision":1,"owners":{"input":"native.test","focus":null,"geometry":null},"nativeGeometryYieldUntilMs":0,"clients":[]});
                 let _ = socket.send(text(json!({"type":"authority-receipt","requestId":value["requestId"],"authority":"input","status":"granted","lease":{"generation":GEN,"session":"workspace","clientId":"native.test","authority":"input","token":NONCE,"revision":1},"snapshot":authority})));
             }
+            let _ = record.send(value);
         }
         drop(socket);
         let _ = finished.send(());
     });
-    Peer { port, stop, done }
+    Peer {
+        port,
+        stop,
+        done,
+        seen,
+    }
 }
 impl Peer {
     /// Ends the stream as a dead daemon does, and waits until it is gone.
@@ -242,15 +251,15 @@ fn interrupted(command: &Command) -> bool {
 #[test]
 fn a_focus_change_on_a_dead_stream_reconnects_and_keeps_the_loop() {
     for foreground in [false, true] {
-        let peer = peer();
+        let first = peer();
         let worker = worker();
         worker
             .events
-            .send(open(ID, capability(peer.port, 30_000)))
+            .send(open(ID, capability(first.port, 30_000)))
             .unwrap();
         worker.until_input_ready();
         worker.pause();
-        peer.die();
+        first.die();
         worker
             .bridge
             .commands
@@ -279,6 +288,47 @@ fn a_focus_change_on_a_dead_stream_reconnects_and_keeps_the_loop() {
                 } if id == ID
             )),
             "the notice does not name the route and the focus revision"
+        );
+        // The re-issued stream is told where the window is now: one that
+        // left gets no input, one that returned asks for it.
+        let second = peer();
+        worker
+            .events
+            .send(open(ROUTE_B, capability(second.port, 30_000)))
+            .unwrap();
+        let seen = worker.until("the re-issued stream is ready", |command| {
+            matches!(command, Command::NativeTerminalReady { .. })
+        });
+        assert!(
+            matches!(
+                seen.last(),
+                Some(Command::NativeTerminalReady {
+                    id,
+                    presence_revision: 1,
+                    input_ready,
+                    ..
+                }) if id == ROUTE_B && *input_ready == foreground
+            ),
+            "the ready notice has the wrong focus (foreground: {foreground})"
+        );
+        thread::sleep(Duration::from_millis(100));
+        let frames: Vec<Value> = second.seen.try_iter().collect();
+        let told = frames.iter().find(|frame| frame["type"] == "presence");
+        assert_eq!(
+            told.map(|frame| frame["state"].as_str()),
+            Some(Some(if foreground {
+                "foreground"
+            } else {
+                "background"
+            })),
+            "the re-issued stream was told the wrong focus"
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .any(|frame| frame["type"] == "authority-request" && frame["authority"] == "input"),
+            foreground,
+            "input is asked for in the foreground only"
         );
         worker.assert_alive();
     }
@@ -419,13 +469,43 @@ fn an_open_over_a_route_the_close_missed_replaces_it() {
         })))
         .unwrap();
     worker.events.send(open(ID, capability(9, 30_000))).unwrap();
+    assert!(ended(&worker.bridge), "a stale open was accepted");
+}
+
+/// Whether the loop ends within the wait: it closes its mailbox, which is
+/// what makes the window say "Connection lost".
+fn ended(bridge: &Bridge) -> bool {
     let deadline = Instant::now() + WAIT;
-    loop {
-        let next = worker.bridge.mailbox.lock().unwrap().take();
+    while Instant::now() < deadline {
+        let next = bridge.mailbox.lock().unwrap().take();
         if matches!(next, Some(None)) {
-            break;
+            return true;
         }
-        assert!(Instant::now() < deadline, "a stale open was accepted");
         thread::sleep(Duration::from_millis(2));
     }
+    false
+}
+
+/// The exits that stay: the loop ends when its window is gone, and when its
+/// catalog will not take the notice of a stream that could not be opened.
+#[test]
+fn the_loop_still_ends_with_its_window_or_its_catalog() {
+    let Worker { bridge, events, .. } = worker();
+    let Bridge {
+        mailbox, commands, ..
+    } = bridge;
+    drop(commands);
+    let closed = Bridge::new(mailbox, mpsc::sync_channel(1).0, true);
+    assert!(ended(&closed), "the loop outlived its window");
+    drop(events);
+
+    let (events, receiver) = mpsc::sync_channel(8);
+    let bridge = start_events(Default::default(), receiver, true, || {
+        |command| match interrupted(&command) {
+            true => Err(Error::Invalid("the catalog is gone")),
+            false => Ok(()),
+        }
+    });
+    events.send(open(ID, capability(9, -1))).unwrap();
+    assert!(ended(&bridge), "the loop outlived its catalog");
 }
