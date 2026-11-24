@@ -158,6 +158,7 @@ impl RemoteSource {
                 Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(5)),
             }
         };
+        drop_exited(&mut cached)?;
         let created = cached.is_none();
         if created {
             {
@@ -194,6 +195,22 @@ impl RemoteSource {
     }
 }
 
+/// A shared route whose forward has ended (the network went away, ssh
+/// exited) can never answer again. Only a worker that holds an owner of it
+/// may reset it, and a discovery that fails on it never gets one, so without
+/// this every later discovery of the machine forked the dead route and failed
+/// at once, also after the network was back and after a refresh (#853).
+/// Discovery replaces it instead. A forward that still runs is kept: whether
+/// its daemon still answers is the reset's proof to make.
+#[cfg(unix)]
+fn drop_exited(cached: &mut Option<crate::tmux_ssh::RemoteTransport>) -> Result<(), Error> {
+    if cached.as_ref().is_some_and(|route| !route.forwarding())
+        && let Some(route) = cached.take()
+    {
+        route.shutdown_owned().map_err(super::owner::remote_error)?;
+    }
+    Ok(())
+}
 #[cfg(all(test, unix))]
 #[path = "source_tests.rs"]
 mod tests;

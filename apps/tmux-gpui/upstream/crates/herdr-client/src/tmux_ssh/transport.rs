@@ -161,6 +161,11 @@ impl RemoteTransport {
     pub fn generation(&self) -> uuid::Uuid {
         self.generation
     }
+    /// Whether the forward still runs. A false answer is final for this
+    /// route; a true one proves nothing about the daemon behind it.
+    pub(crate) fn forwarding(&self) -> bool {
+        self.tunnel.check().is_ok()
+    }
     pub(crate) fn shutdown_owned(&self) -> Result<(), TransportError> {
         self.tunnel.retire();
         self.tunnel.wait_closed(Duration::from_secs(3))?;
