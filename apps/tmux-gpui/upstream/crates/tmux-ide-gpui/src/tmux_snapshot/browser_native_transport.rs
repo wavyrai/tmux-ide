@@ -525,7 +525,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     }) => {
                         presence = (foreground, revision);
                         if !foreground {
-                            pending.retain(|command| !matches!(command, Command::Input { .. }));
+                            loss::blur(&mut pending, active.as_mut());
                             if let Some(current) = active.as_mut() {
                                 if let Some(value) = current.editor.cancel()
                                     && output(Command::NativeEditorCancel { value }).is_err()
@@ -563,6 +563,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         // input at admission so a later refocus in this same batch
                         // cannot revive stale text or geometry.
                         if !presence.0 && matches!(command, Command::Input { .. }) {
+                            loss::refused(&command, active.as_mut());
                             continue;
                         }
                         if !active::push(&mut pending, command, MAX_PENDING) {

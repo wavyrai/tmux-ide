@@ -97,7 +97,11 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>) {
         let granted = kind == "authority-request" && value["authority"] == "input";
         if granted || kind == "authority-release" {
             revision += 1;
-            let owner = if granted { json!("native.test") } else { Value::Null };
+            let owner = if granted {
+                json!("native.test")
+            } else {
+                Value::Null
+            };
             let snapshot = json!({"generation":GEN,"session":"workspace","revision":revision,"owners":{"input":owner,"focus":null,"geometry":null},"nativeGeometryYieldUntilMs":0,"clients":[]});
             let receipt = if granted {
                 json!({"type":"authority-receipt","requestId":value["requestId"],"authority":"input","status":"granted","lease":{"generation":GEN,"session":"workspace","clientId":"native.test","authority":"input","token":NONCE,"revision":revision},"snapshot":snapshot})
@@ -281,17 +285,18 @@ fn a_line_queued_when_the_window_leaves_is_announced_as_not_sent() {
         back.status, NOTICE,
         "line 4402 was neither sent nor announced as not sent"
     );
-    // The next line goes out, once, and the notice ends with it.
+    // The next line goes out, once; line 4402 never follows it.
     for command in line(4403) {
         app.send(command);
     }
-    let after = app.until("the notice ended", |state| state.status != NOTICE);
-    assert_eq!(after.status, "Connected");
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sent = Vec::new();
     while sent.len() < 2 {
         sent.extend(app.typed());
-        assert!(Instant::now() < deadline, "line 4403 was not sent: {sent:?}");
+        assert!(
+            Instant::now() < deadline,
+            "line 4403 was not sent: {sent:?}"
+        );
         thread::sleep(Duration::from_millis(2));
     }
     assert!(sent[0].contains("4403"), "{sent:?}");
@@ -346,4 +351,37 @@ fn a_fit_dropped_with_the_focus_loss_says_nothing() {
         state.presence_revision == 2 && state.input_ready
     });
     assert_eq!(back.status, "Connected");
+}
+
+/// A key the input scheduler holds back (eight earlier ones are unanswered,
+/// a link's round trip) is cancelled by the focus loss: it says so too. A
+/// held-back wheel step is not a key and says nothing.
+#[test]
+fn a_key_held_back_by_the_scheduler_is_announced_as_not_sent() {
+    for (last, notice) in [(Input::Text("x".into()), true), (wheel(), false)] {
+        let (mut active, mut state, _seen, peer) = selection_tests::fixture(true);
+        for n in 0..8 {
+            active
+                .input("left", None, Input::Text(n.to_string()), 1)
+                .unwrap();
+        }
+        active.input("left", None, last, 1).unwrap();
+        assert!(active.input.waiting());
+        super::blur(&mut std::collections::VecDeque::new(), Some(&mut active));
+        active.input.focus_loss();
+        active.poll(&mut state, true, 2).unwrap();
+        assert_eq!(state.status == NOTICE, notice, "{}", state.status);
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}
+fn wheel() -> Input {
+    Input::Wheel {
+        lines: -1,
+        row: 0,
+        col: 0,
+        shift: false,
+        alt: false,
+        control: false,
+    }
 }

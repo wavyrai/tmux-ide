@@ -146,6 +146,46 @@ fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     pending.len() != before
 }
 
+/// What the status line says once the window is back, when keys typed just
+/// before it left were not sent (#875). It stays until the next command.
+pub(super) const KEYS_NOT_SENT: &str =
+    "Keys typed as the window lost focus were not sent. Type them again.";
+/// Whether `command` is typing: text, a key, bytes or a paste. A fit, a
+/// pointer or a wheel step is not.
+fn typed(command: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input;
+    matches!(
+        command,
+        Command::Input {
+            input: Input::Text(_) | Input::Key(_) | Input::Bytes(_) | Input::Paste(_),
+            ..
+        }
+    )
+}
+/// The window left. Queued input is dropped: keys are never sent once the
+/// window has left, because input belongs to the window in front. So is a
+/// key the input scheduler admitted but has not sent (`focus_loss` cancels
+/// it next). When any of them was typing, the window says so once it is back
+/// (#875: a line typed 5 ms before the window left was lost with no notice).
+pub(super) fn blur(pending: &mut VecDeque<Command>, active: Option<&mut Active>) {
+    let queued = pending.iter().any(typed);
+    pending.retain(|command| !matches!(command, Command::Input { .. }));
+    if let Some(current) = active
+        && (queued || current.input.waiting_keys())
+    {
+        current.action_status.set(Some(KEYS_NOT_SENT));
+    }
+}
+/// Typing that reached the loop after the window left is refused there, and
+/// says so as [`blur`] does.
+pub(super) fn refused(command: &Command, active: Option<&mut Active>) {
+    if let Some(current) = active
+        && typed(command)
+    {
+        current.action_status.set(Some(KEYS_NOT_SENT));
+    }
+}
+
 #[cfg(test)]
 #[path = "browser_native_blur_tests.rs"]
 mod blur_tests;
