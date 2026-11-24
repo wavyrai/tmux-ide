@@ -515,6 +515,34 @@ fn a_quiet_try_whose_registry_read_failed_reads_no_catalog_and_tries_again() {
     assert_eq!(local.machine_id, "local");
 }
 
+/// The same through the actor's own turn: the fixture's registry record does
+/// not exist, so the quiet try's registry read fails for real.
+#[cfg(unix)]
+#[test]
+fn the_actor_keeps_a_saved_machine_whose_quiet_verification_failed() {
+    let (mut local, _events) = stopped_saved_machine();
+    assert!(local.home.quiet.due_now());
+    let (_commands, input) = mpsc::sync_channel(1);
+    local.turn(&input).unwrap();
+    assert!(local.home.quiet.probing());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while local.home.quiet.probing() && Instant::now() < deadline {
+        local.turn(&input).unwrap();
+    }
+    assert!(!local.home.quiet.probing(), "the registry read never ended");
+    // No catalog read of the unverified machine (other owners' reads, such
+    // as preferences, may follow).
+    assert!(!matches!(
+        local.stage,
+        Some(Stage::Servers | Stage::VerifyProfile)
+    ));
+    assert!(
+        local.selected_profile.is_some(),
+        "the window left the machine"
+    );
+    assert!(local.home.quiet.wait(Instant::now()).is_some());
+}
+
 /// The profile is read before every try, not once: a machine disabled or
 /// removed meanwhile is never read, and the window goes back to Local, as
 /// after a refresh.
