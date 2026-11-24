@@ -466,7 +466,10 @@ fn a_silent_daemon_without_the_header_keeps_the_events_lane() {
 /// the daemon then answers pings (`answer`) or neither sends nor reads.
 /// Returns how the lane ended within `watch`, and whether `probe_all` could
 /// reach it.
-fn probed_after_ready(answer: bool, watch: Duration) -> (Option<(Duration, CatalogWatchError)>, bool) {
+fn probed_after_ready(
+    answer: bool,
+    watch: Duration,
+) -> (Option<(Duration, CatalogWatchError)>, bool) {
     let (_sandbox, listener, source, identity, expected) = fixture();
     let server = thread::spawn(move || {
         let mut socket = proofs(&listener, &identity);
@@ -518,7 +521,8 @@ fn a_probe_finds_a_dead_link_in_seconds() {
     let (after, error) = ended.expect("the probe found nothing");
     assert!(matches!(error, CatalogWatchError::Timeout), "{error:?}");
     assert!(
-        after >= PROBE_LIMIT - Duration::from_millis(100) && after < PROBE_LIMIT + Duration::from_secs(2),
+        after >= PROBE_LIMIT - Duration::from_millis(100)
+            && after < PROBE_LIMIT + Duration::from_secs(2),
         "ended after {after:?}"
     );
 }

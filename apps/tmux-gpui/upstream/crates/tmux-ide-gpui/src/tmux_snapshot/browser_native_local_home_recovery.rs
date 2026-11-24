@@ -245,10 +245,10 @@ impl Local {
         let quiet = self.home.quiet.wait(Instant::now());
         ((self.home_visible() || self.workspace_catalog_observing())
             .then(|| self.home.wait(Instant::now())))
-            .flatten()
-            .into_iter()
-            .chain(quiet)
-            .min()
+        .flatten()
+        .into_iter()
+        .chain(quiet)
+        .min()
     }
     pub(super) fn home_recovery_tick(&mut self) -> Result<(), Error> {
         let session = self.workspace_catalog_observing();
@@ -297,7 +297,11 @@ impl Local {
             return self.workspace_catalog_failed();
         }
         eprintln!("tmux-ide: session catalog link lost: {error}");
-        if self.home.failed(HomeFailure::Retry, Instant::now()).is_err() {
+        if self
+            .home
+            .failed(HomeFailure::Retry, Instant::now())
+            .is_err()
+        {
             return self.workspace_catalog_failed();
         }
         self.sources.drop_catalog_link()?;

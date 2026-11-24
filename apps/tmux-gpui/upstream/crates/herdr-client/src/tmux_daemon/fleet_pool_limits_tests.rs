@@ -97,7 +97,11 @@ fn a_route_reports_its_lane_push_and_hands_each_notice_over_once() {
     assert_eq!(pool.push("saved"), (true, true));
     assert_eq!(pool.push("saved"), (true, false), "a notice is taken once");
     pool.entries.get_mut("saved").unwrap().watch_failed = true;
-    assert_eq!(pool.push("saved"), (false, false), "a failed lane pushes nothing");
+    assert_eq!(
+        pool.push("saved"),
+        (false, false),
+        "a failed lane pushes nothing"
+    );
     assert_eq!(pool.push("absent"), (false, false));
     pool.shutdown().unwrap();
 }

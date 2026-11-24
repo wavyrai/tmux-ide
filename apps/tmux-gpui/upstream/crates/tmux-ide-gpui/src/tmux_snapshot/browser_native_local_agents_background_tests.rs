@@ -59,11 +59,17 @@ fn in_the_background_only_a_daemon_notice_reads_the_agent_rows() {
     local.agents.cycle = false;
     local.agents.due = Some(Instant::now());
     local.agent_tick().unwrap();
-    assert!(!local.agents.pool.busy(), "a timer read ran in the background");
+    assert!(
+        !local.agents.pool.busy(),
+        "a timer read ran in the background"
+    );
     assert!(local.agents.due.is_some(), "the due read was dropped");
     local.agents.pushed = true;
     local.agent_tick().unwrap();
-    assert!(local.agents.cycle, "a pushed notice did not read in the background");
+    assert!(
+        local.agents.cycle,
+        "a pushed notice did not read in the background"
+    );
 }
 
 /// A saved machine whose daemon pushes needs no 5 s re-read: the rows wait
@@ -82,15 +88,26 @@ fn every_pushing_machine_replaces_the_agent_timer() {
     let both: std::collections::BTreeSet<String> = ["local".into(), "saved".into()].into();
     let mut gate = Default::default();
     let gate: &mut Gate = &mut gate;
-    gate.configure(vec![local.clone(), remote.clone()], 2, false, 0, Instant::now());
+    gate.configure(
+        vec![local.clone(), remote.clone()],
+        2,
+        false,
+        0,
+        Instant::now(),
+    );
     gate.pushed(&both, false);
     finish(gate);
     assert!(gate.due.is_none(), "a pushing saved machine kept the timer");
     gate.pushed(&both, true);
-    assert!(gate.due.is_some_and(|due| due <= Instant::now()), "a notice did not read");
+    assert!(
+        gate.due.is_some_and(|due| due <= Instant::now()),
+        "a notice did not read"
+    );
     let only_local: std::collections::BTreeSet<String> = ["local".into()].into();
     gate.pushed(&only_local, false);
     finish(gate);
-    assert!(gate.due.is_some(), "a saved machine without push lost its re-read");
+    assert!(
+        gate.due.is_some(),
+        "a saved machine without push lost its re-read"
+    );
 }
-

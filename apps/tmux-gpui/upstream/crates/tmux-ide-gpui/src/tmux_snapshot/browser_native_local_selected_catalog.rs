@@ -377,11 +377,11 @@ impl Local {
 }
 
 #[cfg(test)]
-#[path = "browser_native_local_selected_catalog_tests.rs"]
-mod tests;
+#[path = "browser_native_local_churn_live_tests.rs"]
+mod churn_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_quiet_link_tests.rs"]
 mod quiet_link_tests;
 #[cfg(test)]
-#[path = "browser_native_local_churn_live_tests.rs"]
-mod churn_live_tests;
+#[path = "browser_native_local_selected_catalog_tests.rs"]
+mod tests;

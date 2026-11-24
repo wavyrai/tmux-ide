@@ -64,7 +64,9 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
         )
         .unwrap(),
         _ => start(
-            std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD").unwrap().into(),
+            std::env::var_os("TMUX_IDE_TEST_DAEMON_RECORD")
+                .unwrap()
+                .into(),
             Default::default(),
         )
         .unwrap(),
@@ -86,7 +88,10 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
     };
     let started = Instant::now();
     let home = loop {
-        assert!(started.elapsed() < Duration::from_secs(60), "Home never loaded");
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "Home never loaded"
+        );
         if let Some(s) = take()
             && s.home_phase == HomePhase::Live
             && s.session_catalog_complete
@@ -121,7 +126,10 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
                 .unwrap();
             let opened = Instant::now();
             loop {
-                assert!(opened.elapsed() < Duration::from_secs(60), "the session never opened");
+                assert!(
+                    opened.elapsed() < Duration::from_secs(60),
+                    "the session never opened"
+                );
                 if let Some(s) = take()
                     && s.request == request
                     && s.surface == Surface::Workspace
@@ -133,7 +141,10 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
                 std::thread::sleep(Duration::from_millis(5));
             }
         }
-        eprintln!("CHURN_PHASE {{\"phase\":\"{phase}\",\"at\":{}}}", epoch_ms());
+        eprintln!(
+            "CHURN_PHASE {{\"phase\":\"{phase}\",\"at\":{}}}",
+            epoch_ms()
+        );
         let (mut publications, mut changes, mut reconnects) = (0u64, 0u64, 0u64);
         let end = Instant::now() + length;
         while Instant::now() < end {

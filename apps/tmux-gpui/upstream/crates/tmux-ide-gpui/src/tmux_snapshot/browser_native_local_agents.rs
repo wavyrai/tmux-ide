@@ -844,11 +844,11 @@ pub(super) const AGENT_UNCONFIRMED: &str =
     "That agent's pane could not be confirmed. Select it again.";
 
 #[cfg(test)]
-#[path = "browser_native_local_agents_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "browser_native_local_agents_background_tests.rs"]
 mod background_tests;
 #[cfg(test)]
 #[path = "browser_native_local_quiet_link_fixture.rs"]
 pub(super) mod quiet_link_fixture;
+#[cfg(test)]
+#[path = "browser_native_local_agents_tests.rs"]
+mod tests;

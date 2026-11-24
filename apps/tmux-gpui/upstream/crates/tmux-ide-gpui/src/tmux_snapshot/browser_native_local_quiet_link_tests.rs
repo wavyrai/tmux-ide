@@ -4,11 +4,9 @@
 //! back (switching apps) must not reconnect, re-read or wipe anything. When
 //! the link really fails, the lane is retried like a session stream's: at once
 //! on wake or a network change, with the rows kept as last known meanwhile.
+use super::super::super::agents::quiet_link_fixture::{self, presence, snapshot};
 use super::*;
 use crate::tmux_snapshot::connection::network_watch;
-use super::super::super::agents::quiet_link_fixture::{
-    self, presence, snapshot,
-};
 use herdr_client::tmux_daemon::{CatalogWatchError, Error as DaemonError};
 
 fn install_lane(local: &Local) {
@@ -25,7 +23,11 @@ fn window(session: bool) -> (Local, mpsc::Receiver<Incoming>) {
 /// The lane's sequence: the same lane while it stays the same number.
 fn lane(local: &Local) -> Option<u64> {
     let owned = local.sources.0.lock().unwrap();
-    owned.catalog.watch.as_ref().map(CatalogWatchWorker::sequence)
+    owned
+        .catalog
+        .watch
+        .as_ref()
+        .map(CatalogWatchWorker::sequence)
 }
 fn reading(local: &Local) -> bool {
     local.sources.catalog_busy().unwrap()
@@ -109,14 +111,15 @@ fn a_wake_retries_home_at_once() {
         local.home_catalog_failed(lost()).unwrap();
     }
     assert!(held(&local));
-    assert!(
-        (local.home.wait(Instant::now()))
-            .is_some_and(|wait| wait > Duration::from_secs(1))
-    );
+    assert!((local.home.wait(Instant::now())).is_some_and(|wait| wait > Duration::from_secs(1)));
     local.home_recovery_tick().unwrap();
     assert!(held(&local), "retried before its backoff");
     network_watch::simulate_wake();
     local.home_recovery_tick().unwrap();
     assert!(!held(&local), "a wake did not retry at once");
-    assert_eq!(local.home.attempt(), Some(1), "the backoff did not start over");
+    assert_eq!(
+        local.home.attempt(),
+        Some(1),
+        "the backoff did not start over"
+    );
 }
