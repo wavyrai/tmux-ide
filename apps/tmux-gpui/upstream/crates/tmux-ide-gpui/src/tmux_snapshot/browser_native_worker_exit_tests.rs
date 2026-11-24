@@ -472,6 +472,73 @@ fn an_open_over_a_route_the_close_missed_replaces_it() {
     assert!(ended(&worker.bridge), "a stale open was accepted");
 }
 
+/// The case that reaches the branch above (review round 1, item 2): a pane
+/// selection moves the route to request 4, the catalog's close for request 3
+/// misses it, and the catalog, which adopted the selection, reopens at 4.
+#[test]
+fn a_reopen_after_a_selection_the_close_missed_replaces_the_route() {
+    let first = peer();
+    let second = peer();
+    let worker = worker();
+    worker
+        .events
+        .send(open(ID, capability(first.port, 30_000)))
+        .unwrap();
+    worker.until_input_ready();
+    let commands = &worker.bridge.commands;
+    commands
+        .send(Command::Presence {
+            active: false,
+            revision: 1,
+        })
+        .unwrap();
+    commands
+        .send(Command::Pane {
+            request: 4,
+            id: "right".into(),
+        })
+        .unwrap();
+    worker.until("the selection is reported", |command| {
+        matches!(
+            command,
+            Command::NativePaneSelected {
+                from_request: 3,
+                request: 4,
+                ..
+            }
+        )
+    });
+    worker
+        .events
+        .send(Incoming::Handoff(Event::Close {
+            version: 1,
+            id: ID.into(),
+            request: 3,
+        }))
+        .unwrap();
+    worker
+        .events
+        .send(Incoming::Handoff(Event::Open {
+            version: 1,
+            id: ROUTE_B.into(),
+            request: 4,
+            live_session_id: SESSION.into(),
+            capability: capability(second.port, 30_000),
+        }))
+        .unwrap();
+    assert!(
+        first.done.recv_timeout(WAIT).is_ok(),
+        "the replaced stream stayed open"
+    );
+    worker.until("the reopened stream is ready", |command| {
+        matches!(
+            command,
+            Command::NativeTerminalReady { id, request: 4, .. } if id == ROUTE_B
+        )
+    });
+    worker.assert_alive();
+}
+
 /// Whether the loop ends within the wait: it closes its mailbox, which is
 /// what makes the window say "Connection lost".
 fn ended(bridge: &Bridge) -> bool {
