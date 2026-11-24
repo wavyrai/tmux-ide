@@ -325,11 +325,12 @@ fn a_key_after_the_focus_loss_in_the_same_turn_is_announced_as_not_sent() {
     assert_eq!(back.status, NOTICE, "the refused line was not announced");
 }
 
-/// A focus change with only a window fit queued is not a lost key: no notice.
+/// A window fit queued before the focus loss, or refused after it, is not a
+/// lost key: no notice.
 #[test]
 fn a_fit_dropped_with_the_focus_loss_says_nothing() {
     let mut app = Loop::start();
-    let fit = Command::Input {
+    let fit = || Command::Input {
         request: 3,
         id: "left".into(),
         input_target: None,
@@ -342,7 +343,7 @@ fn a_fit_dropped_with_the_focus_loss_says_nothing() {
             cell_height_milli: None,
         },
     };
-    app.one_turn(0, vec![fit, focus(false, 1)]);
+    app.one_turn(0, vec![fit(), focus(false, 1), fit()]);
     app.until("the window in the background", |state| {
         state.presence_revision == 1
     });
@@ -384,4 +385,29 @@ fn wheel() -> Input {
         alt: false,
         control: false,
     }
+}
+
+/// Typing is text, a key, bytes or a paste; a fit, a pointer, a wheel step or
+/// a history scroll is not.
+#[test]
+fn only_typing_counts_as_keys_not_sent() {
+    let cases = [
+        (Input::Text("a".into()), true),
+        (Input::Key("Enter".into()), true),
+        (Input::Bytes("1b".into()), true),
+        (Input::Paste("a".into()), true),
+        (wheel(), false),
+        (Input::Scroll(-1), false),
+    ];
+    for (input, typing) in cases {
+        let label = format!("{input:?}");
+        let command = Command::Input {
+            request: 3,
+            id: "left".into(),
+            input_target: None,
+            input,
+        };
+        assert_eq!(super::typed(&command), typing, "{label}");
+    }
+    assert!(!super::typed(&focus(false, 1)));
 }
