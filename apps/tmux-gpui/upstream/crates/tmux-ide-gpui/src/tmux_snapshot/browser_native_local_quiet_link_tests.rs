@@ -68,6 +68,22 @@ fn a_session_keeps_its_catalog_lane_while_the_window_is_in_the_background() {
     assert!(!reading(&local));
 }
 
+/// Opening a session from Home is a step in flight: the lane stays through
+/// it, and the session's sidebar uses the same socket.
+#[test]
+fn a_step_in_flight_keeps_the_lane() {
+    let (mut local, _events) = window(false);
+    local.selected_catalog_tick().unwrap();
+    local.state.surface = Surface::Workspace;
+    local.stage = Some(Stage::Servers);
+    local.selected_catalog_tick().unwrap();
+    assert_eq!(
+        lane(&local),
+        Some(5),
+        "the lane closed while a session opened"
+    );
+}
+
 /// The open session's lane drops: the sidebar keeps its agent rows as last
 /// known and retries the lane with Home's backoff. On main the rows were
 /// wiped and the session stopped observing until it was opened again.

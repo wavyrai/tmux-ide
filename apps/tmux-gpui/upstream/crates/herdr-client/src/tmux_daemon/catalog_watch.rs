@@ -203,10 +203,20 @@ impl CatalogWatchWorker {
     pub fn read_start(&self) -> Option<u64> {
         self.live().then(|| self.sequence())
     }
+    /// A probe is waiting to be sent: [`Self::probe`] or [`probe_all`] asked.
+    #[doc(hidden)]
+    pub fn probing(&self) -> bool {
+        self.cancel.probe.load(Ordering::Acquire)
+    }
     /// A worker with no lane, at `sequence` and live, for callers' tests.
+    /// [`probe_all`] reaches it, as it reaches a real lane.
     #[doc(hidden)]
     pub fn detached(sequence: u64) -> Self {
         let cancel = Arc::new(Cancellation::default());
+        if let Ok(mut lanes) = LANES.lock() {
+            lanes.retain(|lane| lane.strong_count() > 0);
+            lanes.push(Arc::downgrade(&cancel));
+        }
         cancel.sequence.store(sequence, Ordering::Release);
         cancel.live.store(true, Ordering::Release);
         let (_, finished) = mpsc::sync_channel(1);

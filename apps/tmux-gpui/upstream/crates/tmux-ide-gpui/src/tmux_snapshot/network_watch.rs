@@ -226,4 +226,17 @@ mod tests {
             "the epoch did not move"
         );
     }
+
+    /// Card #876: the same two entries probe every catalog lane (Home, the
+    /// sidebar, saved machines), with the pane streams.
+    #[test]
+    fn a_changed_or_usable_network_probes_the_catalog_lanes_too() {
+        let lane = herdr_client::tmux_daemon::CatalogWatchWorker::detached(1);
+        assert!(!lane.probing());
+        changed();
+        assert!(lane.probing(), "a changed network probed no catalog lane");
+        let lane = herdr_client::tmux_daemon::CatalogWatchWorker::detached(1);
+        usable_again();
+        assert!(lane.probing(), "a usable network probed no catalog lane");
+    }
 }
