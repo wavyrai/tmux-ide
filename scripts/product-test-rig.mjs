@@ -235,6 +235,7 @@ const ANSI_MIRROR_FLOW_FAILURE_REASONS = new Set([
   "no-progress",
   "absolute-deadline",
   "attempts-exhausted",
+  "held-after-failures",
 ]);
 const ANSI_ATOMIC_COLLECTOR_FAILURE_REASONS = new Set([
   "busy",

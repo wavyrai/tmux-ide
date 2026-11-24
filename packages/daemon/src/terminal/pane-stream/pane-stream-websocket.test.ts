@@ -748,7 +748,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
               const reply = fixtureAutoReply(state)(command);
               if (reply) return reply;
               if (command.startsWith("set-option -po") || command.startsWith("if-shell")) return [];
-              if (command.includes("capture-pane -p -R")) {
+              if (command.includes("capture-pane -p -V -R")) {
                 // This portable fixture has backing-only v1 capability. Returning
                 // ANSI text as native JSON would instead model a corrupt capture.
                 return [

@@ -175,7 +175,8 @@ export interface SessionRuntimeStageSpan {
       | "notification-queue-overflow"
       | "no-progress"
       | "absolute-deadline"
-      | "attempts-exhausted";
+      | "attempts-exhausted"
+      | "held-after-failures";
   }>;
 }
 
