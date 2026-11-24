@@ -551,18 +551,7 @@ impl Local {
                     Err(_) if matches!(stage, Stage::Preferences { .. }) => {
                         self.preference_failed()?
                     }
-                    Err(error) if stage.registry() => {
-                        let selecting = matches!(
-                            stage,
-                            Stage::MachineSelection { .. } | Stage::AddMachine { .. }
-                        );
-                        self.registry_failed(error)?;
-                        if selecting {
-                            self.unavailable(
-                                "Saved machine verification failed — refresh and select it again",
-                            )?;
-                        }
-                    }
+                    Err(error) if stage.registry() => self.registry_stage_failed(&stage, error)?,
                     Err(_) if matches!(stage, Stage::Owner { .. }) => {
                         if let Stage::Owner { request, .. } = stage {
                             self.owner_completed(request, None)?;

@@ -373,24 +373,10 @@ fn a_home_that_failed_to_load_keeps_looking_for_the_daemon_without_repainting() 
 }
 
 #[test]
-fn only_a_failed_load_of_a_local_daemon_arms_the_quiet_search() {
+fn only_a_stop_the_user_must_clear_or_navigation_ends_the_quiet_search() {
     // A stop only the user can clear.
     let (mut local, _events) = stopped_home();
     local.unavailable(UPDATE_APP).unwrap();
-    assert!(local.home.quiet.wait(Instant::now()).is_none());
-    // A saved SSH machine.
-    let (mut local, _events) = fixture();
-    local.active = None;
-    local.selected_profile = Some(herdr_client::tmux_daemon::SavedMachine {
-        id: uuid::Uuid::new_v4().to_string(),
-        label: "Build".into(),
-        ssh_target: "fixture.invalid".into(),
-        expected_environment_id: None,
-        enabled: true,
-    });
-    local
-        .unavailable_retrying("No online tmux servers")
-        .unwrap();
     assert!(local.home.quiet.wait(Instant::now()).is_none());
     // Navigation ends the search.
     let (mut local, _events) = stopped_home();
@@ -403,6 +389,176 @@ fn only_a_failed_load_of_a_local_daemon_arms_the_quiet_search() {
     local.quiet_tick().unwrap();
     assert!(local.stage.is_none());
     assert!(local.home.quiet.wait(Instant::now()).is_none());
+}
+
+fn build_machine() -> herdr_client::tmux_daemon::SavedMachine {
+    herdr_client::tmux_daemon::SavedMachine {
+        id: "11111111-1111-4111-8111-111111111111".into(),
+        label: "Build".into(),
+        ssh_target: "fixture.invalid".into(),
+        expected_environment_id: None,
+        enabled: true,
+    }
+}
+
+/// A Home stopped on a failed load with a saved SSH machine selected, as
+/// `stage_failed` leaves it. Its source is that machine.
+#[cfg(unix)]
+fn stopped_saved_machine() -> (Local, mpsc::Receiver<Incoming>) {
+    let (mut local, events) = fixture();
+    local.active = None;
+    local.state.selected_session = None;
+    local.state.selected_pane = None;
+    let target = herdr_client::tmux_ssh::SshTarget::parse("fixture.invalid").unwrap();
+    local.sources = NativeOwner::new(CatalogSource::remote(target, None));
+    local.machine_id = build_machine().id;
+    local.selected_profile = Some(build_machine());
+    local
+        .stage_failed(
+            Stage::Servers,
+            &herdr_client::tmux_daemon::Error::OwnerExited,
+        )
+        .unwrap();
+    (local, events)
+}
+
+/// The quiet try for a saved machine reads the registry; `machines` is what
+/// it answers. Returns whether a catalog read follows.
+#[cfg(unix)]
+fn verified(local: &mut Local, machines: Vec<herdr_client::tmux_daemon::SavedMachine>) -> bool {
+    assert!(local.home.quiet.due_now());
+    local.quiet_tick().unwrap();
+    assert!(
+        matches!(local.stage, Some(Stage::VerifyProfile)),
+        "a quiet try read the catalog before verifying the saved machine"
+    );
+    assert!(local.home.quiet.probing());
+    assert!(local.registry.publication().pending);
+    let stage = local.stage.take().unwrap();
+    let registry = herdr_client::tmux_daemon::SavedMachineRegistry {
+        version: 1,
+        machines,
+    };
+    local
+        .completed(stage, CatalogResult::SavedMachines(registry))
+        .unwrap();
+    matches!(local.stage, Some(Stage::Servers))
+}
+
+/// #853: with a saved SSH machine selected, a Home whose load failed stayed
+/// on "refresh to retry" until someone refreshed (soak, 23 Nov: 180 s after
+/// the link was back). It now reloads by itself, and each try verifies the
+/// profile against the local registry before it reads the catalog.
+#[cfg(unix)]
+#[test]
+fn a_saved_machine_home_that_failed_to_load_reloads_by_itself_after_verifying_its_profile() {
+    let (mut local, events) = stopped_saved_machine();
+    assert_eq!(
+        last_catalog(&events).status,
+        "Session changed or is unavailable — refresh to retry"
+    );
+    assert!(
+        local.home.quiet.wait(Instant::now()).is_some(),
+        "nothing reloads the saved machine's Home"
+    );
+    let mut waits = Vec::new();
+    for _ in 0..6 {
+        let wait = local.home.quiet.wait(Instant::now()).unwrap().as_millis();
+        waits.push((wait + 250) / 500 * 500);
+        assert!(verified(&mut local, vec![build_machine()]));
+        // The catalog read failed again: the window stays, the next try waits.
+        local.stage = None;
+        local
+            .quiet_failed(&herdr_client::tmux_daemon::Error::OwnerExited)
+            .unwrap();
+        assert_eq!(local.state.home_phase, HomePhase::Unavailable);
+        assert!(local.selected_profile.is_some());
+    }
+    // An SSH try may start a connection: the cap is thirty seconds.
+    assert_eq!(waits, [1000, 2000, 4000, 8000, 16000, 30000]);
+    // The machine answered: Home starts over, as after Refresh.
+    assert!(verified(&mut local, vec![build_machine()]));
+    local.home_recovered();
+    assert_eq!(local.state.home_phase, HomePhase::Loading);
+    assert!(local.home.quiet.wait(Instant::now()).is_none());
+}
+
+/// The local registry did not answer the quiet try: no catalog is read, the
+/// window stays on the machine, and the next try is scheduled.
+#[cfg(unix)]
+#[test]
+fn a_quiet_try_whose_registry_read_failed_reads_no_catalog_and_tries_again() {
+    let (mut local, _events) = stopped_saved_machine();
+    assert!(local.home.quiet.due_now());
+    local.quiet_tick().unwrap();
+    let stage = local.stage.take().unwrap();
+    assert!(matches!(stage, Stage::VerifyProfile));
+    local
+        .registry_stage_failed(&stage, herdr_client::tmux_daemon::Error::OwnerExited)
+        .unwrap();
+    assert!(local.stage.is_none());
+    assert!(!local.home.quiet.probing());
+    assert!(local.home.quiet.wait(Instant::now()).is_some());
+    assert!(local.selected_profile.is_some());
+    assert_eq!(local.state.home_phase, HomePhase::Unavailable);
+    assert!(!local.registry.publication().pending);
+    assert!(verified(&mut local, vec![build_machine()]));
+    // A refresh's verification that fails retires the saved route, as before.
+    let (mut local, _events) = stopped_saved_machine();
+    local.home(9).unwrap();
+    let stage = local.stage.take().unwrap();
+    assert!(matches!(stage, Stage::VerifyProfile));
+    local
+        .registry_stage_failed(&stage, herdr_client::tmux_daemon::Error::OwnerExited)
+        .unwrap();
+    assert!(local.selected_profile.is_none());
+    assert_eq!(local.machine_id, "local");
+}
+
+/// The profile is read before every try, not once: a machine disabled or
+/// removed meanwhile is never read, and the window goes back to Local, as
+/// after a refresh.
+#[cfg(unix)]
+#[test]
+fn a_saved_machine_disabled_or_removed_meanwhile_is_never_read_quietly() {
+    let disabled = herdr_client::tmux_daemon::SavedMachine {
+        enabled: false,
+        ..build_machine()
+    };
+    for machines in [vec![disabled], Vec::new()] {
+        let (mut local, _events) = stopped_saved_machine();
+        assert!(verified(&mut local, vec![build_machine()]));
+        local.stage = None;
+        local
+            .quiet_failed(&herdr_client::tmux_daemon::Error::OwnerExited)
+            .unwrap();
+        // What is read next is the local catalog, never the machine's.
+        verified(&mut local, machines);
+        assert!(local.selected_profile.is_none());
+        assert_eq!(local.machine_id, "local");
+        assert!(matches!(
+            local.sources.observation_source(),
+            Ok(CatalogSource::Local(_))
+        ));
+    }
+}
+
+/// A window started for one SSH destination, with no local registry, also
+/// keeps looking: only a saved machine has a profile to verify.
+#[cfg(unix)]
+#[test]
+fn a_window_without_a_saved_machine_or_local_registry_also_reloads_quietly() {
+    let (mut local, _events) = stopped_home();
+    let target = herdr_client::tmux_ssh::SshTarget::parse("fixture.invalid").unwrap();
+    local.sources = NativeOwner::new(CatalogSource::remote(target, None));
+    local.local_record = None;
+    local.registry_worker = None;
+    local
+        .unavailable_retrying("No online tmux servers")
+        .unwrap();
+    assert!(local.home.quiet.due_now());
+    local.quiet_tick().unwrap();
+    assert!(matches!(local.stage, Some(Stage::Servers)));
 }
 
 /// A restarted daemon writes a new record (a new port and token). The next

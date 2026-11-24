@@ -240,8 +240,9 @@ fn a_daemon_whose_tmux_server_does_not_answer_is_named_and_retried() {
     );
 }
 
-/// Review of b7341466, B1: with a saved SSH machine selected nothing reloads
-/// Home by itself, so Home must not say it keeps trying.
+/// Review of b7341466, B1: Home says it keeps trying only where it does.
+/// Since #853 a saved SSH machine's Home reloads by itself too, so there a
+/// tmux server that does not answer is named as it is locally.
 #[test]
 fn home_says_it_keeps_trying_only_where_it_does() {
     let (mut local, events, _target) = opening();
@@ -262,7 +263,7 @@ fn home_says_it_keeps_trying_only_where_it_does() {
     );
     assert_eq!(
         status,
-        "Session changed or is unavailable — refresh to retry"
+        "The tmux server is not answering. Tmux IDE keeps trying."
     );
 }
 
