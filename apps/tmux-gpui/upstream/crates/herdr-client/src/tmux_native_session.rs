@@ -440,6 +440,10 @@ impl NativeSession {
     pub fn rtt(&self) -> Option<std::time::Duration> {
         self.stream.rtt()
     }
+    /// A probe waits for its answer: input sent now may be lost.
+    pub fn probing(&self) -> bool {
+        self.stream.probing()
+    }
     /// Ready after the worker changed the mailbox: a commit, a control, a
     /// status. Wait on it instead of polling `drain` on a timer; it may also
     /// be ready when nothing changed.

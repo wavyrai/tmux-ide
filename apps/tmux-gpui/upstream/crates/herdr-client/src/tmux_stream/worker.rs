@@ -89,6 +89,12 @@ struct Cancellation {
     rtt_us: std::sync::atomic::AtomicU64,
     /// How often the worker pings (read on the spawning thread).
     ping_every: Duration,
+    /// How long a ping may go unanswered on a silent link (spawning thread).
+    pong_limit: Duration,
+    /// [`PaneStream::probe`] asked for a ping now.
+    probe: AtomicBool,
+    /// A probe's ping is unanswered: the link may be dead.
+    probing: AtomicBool,
     /// How often the worker went round its loop: an idle stream must not.
     #[cfg(test)]
     wakes: std::sync::atomic::AtomicU64,
@@ -111,6 +117,56 @@ impl Cancellation {
         } else {
             Ok(())
         }
+    }
+
+    fn probe(&self) {
+        self.probing.store(true, Ordering::Release);
+        self.probe.store(true, Ordering::Release);
+        self.bell.ring();
+    }
+}
+
+/// Every stream of this process, for [`probe_all`]. Ended ones are pruned as
+/// streams are added and probed.
+static STREAMS: Mutex<Vec<std::sync::Weak<Cancellation>>> = Mutex::new(Vec::new());
+
+/// The Mac woke or its network changed: probe every open stream
+/// ([`PaneStream::probe`]).
+pub fn probe_all() {
+    probe_each(&STREAMS);
+}
+/// Probes each open stream in `streams` and forgets the ended ones.
+fn probe_each(streams: &Mutex<Vec<std::sync::Weak<Cancellation>>>) {
+    let Ok(mut streams) = streams.lock() else {
+        return;
+    };
+    streams.retain(|stream| {
+        let Some(stream) = stream.upgrade().filter(|s| s.check().is_ok()) else {
+            return false;
+        };
+        stream.probe();
+        true
+    });
+}
+
+#[cfg(test)]
+impl PaneStream {
+    /// [`probe_all`] over these streams only, so a test probes no other
+    /// test's stream. Returns how many it kept as open.
+    pub(super) fn probe_only(streams: &[&PaneStream]) -> usize {
+        let registry = Mutex::new(
+            (streams.iter())
+                .map(|stream| Arc::downgrade(&stream.cancellation))
+                .collect(),
+        );
+        probe_each(&registry);
+        registry.lock().map_or(0, |kept| kept.len())
+    }
+    /// [`probe_all`] would reach this stream.
+    pub(super) fn registered(&self) -> bool {
+        STREAMS.lock().is_ok_and(|streams| {
+            (streams.iter()).any(|s| std::ptr::eq(s.as_ptr(), Arc::as_ptr(&self.cancellation)))
+        })
     }
 }
 
@@ -152,10 +208,17 @@ impl PaneStream {
             bell: Bell::new()?,
             rtt_us: std::sync::atomic::AtomicU64::new(0),
             ping_every: ping_every(),
+            pong_limit: super::pinger::pong_limit(),
+            probe: AtomicBool::new(false),
+            probing: AtomicBool::new(false),
             #[cfg(test)]
             wakes: std::sync::atomic::AtomicU64::new(0),
         });
         let worker_cancellation = Arc::clone(&cancellation);
+        if let Ok(mut streams) = STREAMS.lock() {
+            streams.retain(|stream| stream.strong_count() > 0);
+            streams.push(Arc::downgrade(&cancellation));
+        }
         thread::Builder::new()
             .name("tmux-pane-stream".into())
             .spawn(move || {
@@ -204,6 +267,21 @@ impl PaneStream {
     pub fn rtt(&self) -> Option<Duration> {
         let micros = self.cancellation.rtt_us.load(Ordering::Relaxed);
         (micros > 0).then(|| Duration::from_micros(micros))
+    }
+
+    /// Asks whether the link is still there (the Mac woke, the network
+    /// changed): a ping now, unless one is already unanswered. No answer, and
+    /// nothing else, within the pong limit ends the stream as `Silent`.
+    pub fn probe(&self) {
+        if self.cancellation.check().is_err() {
+            return;
+        }
+        self.cancellation.probe();
+    }
+
+    /// A probe is waiting for its answer: keys sent now may be lost.
+    pub fn probing(&self) -> bool {
+        self.cancellation.probing.load(Ordering::Acquire)
     }
 
     pub fn events(&self) -> &Receiver<Event> {
@@ -415,11 +493,8 @@ fn run(
     // ahead: true until a read finds nothing.
     let mut readable = true;
     // A ping of our own, answered by the daemon's WebSocket, measures the
-    // round trip (the reveal hold is bounded by it). Its payload names it.
-    let mut ping: Option<([u8; 8], Instant)> = None;
-    // The first after one period: until then, input ACKs give the estimate,
-    // or the hold uses its cap.
-    let mut next_ping = Instant::now() + cancel.ping_every;
+    // round trip (the reveal hold is bounded by it) and finds a dead link.
+    let mut pinger = super::pinger::Pinger::new(cancel.ping_every, cancel.pong_limit);
     loop {
         cancel.check()?;
         #[cfg(test)]
@@ -445,12 +520,10 @@ fn run(
                 deliver(&events, wire::parse_binary_live(&bytes, &live)?, cancel)?;
             }
             Ok(Message::Pong(payload)) => {
-                if let Some((sent, at)) = ping
-                    && payload.as_ref() == sent
-                {
-                    let micros = u64::try_from(at.elapsed().as_micros()).unwrap_or(u64::MAX);
+                if let Some(rtt) = pinger.pong(payload.as_ref()) {
+                    let micros = u64::try_from(rtt.as_micros()).unwrap_or(u64::MAX);
                     cancel.rtt_us.store(micros.max(1), Ordering::Relaxed);
-                    ping = None;
+                    cancel.probing.store(false, Ordering::Release);
                 }
                 continue;
             }
@@ -469,8 +542,10 @@ fn run(
             {
                 // Checked only after a read that found nothing, so bytes that
                 // waited in the buffer (the app was suspended) count first.
+                let heard = socket.get_ref().heard;
                 if readable
-                    && silence.is_some_and(|limit| socket.get_ref().heard.elapsed() >= limit)
+                    && (silence.is_some_and(|limit| heard.elapsed() >= limit)
+                        || pinger.dead(heard, Instant::now()))
                 {
                     return Err(Error::Silent);
                 }
@@ -484,21 +559,24 @@ fn run(
         // A fragmented message is retained by tungstenite. A timeout cannot release
         // application commands against the state preceding that unfinished message.
         let fenced = !verified || socket.get_ref().boundary.is_partial();
-        if !fenced && Instant::now() >= next_ping {
-            let payload = uuid::Uuid::new_v4().as_bytes()[..8]
-                .try_into()
-                .unwrap_or([0; 8]);
-            socket.send(Message::Ping(payload.to_vec().into()))?;
-            ping = Some((payload, Instant::now()));
-            next_ping = Instant::now() + cancel.ping_every;
-        }
         if !fenced {
+            let mut sent = false;
             for _ in 0..16 {
                 cancel.check()?;
                 let Ok(command) = commands.try_recv() else {
                     break;
                 };
                 socket.send(Message::Text(command.0.into()))?;
+                sent = true;
+            }
+            let probe = cancel.probe.swap(false, Ordering::AcqRel);
+            let now = Instant::now();
+            if pinger.due(now, socket.get_ref().heard, probe, sent) {
+                let payload = uuid::Uuid::new_v4().as_bytes()[..8]
+                    .try_into()
+                    .unwrap_or([0; 8]);
+                socket.send(Message::Ping(payload.to_vec().into()))?;
+                pinger.sent(payload, now);
             }
         }
         if !readable && (fenced || commands.is_empty()) {
@@ -506,7 +584,7 @@ fn run(
             let until = quiet
                 .into_iter()
                 .chain((!verified).then_some(deadline))
-                .chain(verified.then_some(next_ping))
+                .chain(verified.then(|| pinger.wake_at(socket.get_ref().heard)))
                 .min();
             readable = wait(&socket.get_ref().socket, &cancel.bell, until)?;
         }

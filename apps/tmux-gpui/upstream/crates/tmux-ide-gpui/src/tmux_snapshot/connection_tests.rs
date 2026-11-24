@@ -171,7 +171,21 @@ fn a_short_drop_changes_nothing_and_a_long_one_only_the_slot_and_titles(cx: &mut
             ));
         });
         assert_eq!(bounds(cx), before, "{ms} ms: chrome moved");
-        assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
+        // Reconnect, 19 Nov (the PM's recommendation; the owner's decision is
+        // open on card #863; changes r1's "the slot is the only retry"): from
+        // 2 s the pane shows a calm card with "Retry now". It floats over the
+        // pane: no chrome moves for it.
+        let card = ms >= 2_000;
+        assert_eq!(
+            cx.debug_bounds("tmux-reconnect-card").is_some(),
+            card,
+            "{ms} ms"
+        );
+        assert_eq!(
+            cx.debug_bounds("tmux-reconnect-retry").is_some(),
+            card,
+            "{ms} ms"
+        );
         assert!(cx.debug_bounds("tmux-connection-retry").is_none());
     }
     // Past a minute the slot is the one way to retry now.
@@ -210,6 +224,62 @@ fn the_offline_slot_retries_the_request_it_was_drawn_for(cx: &mut TestAppContext
     );
 }
 
+/// The pane's card retries the request it was drawn for, at once.
+#[gpui::test]
+fn the_reconnect_card_retries_now(cx: &mut TestAppContext) {
+    let (sender, receiver) = mpsc::sync_channel(64);
+    let mut state = session_drop();
+    state.reconnect_attempt = Some(3);
+    let (view, cx) = cx.add_window_view(|window, cx| fixture_view(window, cx, sender, 7, state));
+    let (clock, at) = clock();
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.connection.clock = clock;
+            view.observe_connection(cx);
+        })
+    });
+    at.set(S(1_900));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("tmux-reconnect-card").is_none(),
+        "quiet for 2 s"
+    );
+    at.set(S(2_100));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    while receiver.try_recv().is_ok() {}
+    let retry = cx.debug_bounds("tmux-reconnect-retry").unwrap();
+    cx.simulate_click(retry.center(), Modifiers::none());
+    let sent: Vec<_> = (receiver.try_iter())
+        .map(|c| serde_json::to_value(c).unwrap())
+        .collect();
+    assert!(
+        sent.contains(&serde_json::json!({"type":"retry-reconnect","request":7})),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn the_pane_says_how_many_keys_were_not_sent_and_how_many_wait() {
+    assert_eq!(not_sent_words(0), NOT_SENT);
+    assert_eq!(
+        not_sent_words(1),
+        "1 key not sent. Type it again when the connection is back."
+    );
+    assert_eq!(
+        not_sent_words(12),
+        "12 keys not sent. Type them again when the connection is back."
+    );
+    assert_eq!(reconnecting_words(0), "Reconnecting…");
+    assert_eq!(
+        reconnecting_words(1),
+        "Reconnecting… 1 key waits to be sent."
+    );
+    assert_eq!(
+        reconnecting_words(7),
+        "Reconnecting… 7 keys wait to be sent."
+    );
+}
+
 #[gpui::test]
 fn a_refused_key_shows_not_sent_at_once_and_nothing_is_sent_later(cx: &mut TestAppContext) {
     let (sender, receiver) = mpsc::sync_channel(64);
@@ -232,8 +302,11 @@ fn a_refused_key_shows_not_sent_at_once_and_nothing_is_sent_later(cx: &mut TestA
         view.update(cx, |view, cx| assert!(!view.offer_terminal_input(cx)));
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    // The next frame: the toast in the pane, the slot at its words.
+    // The next frame: the toast in the pane, the slot at its words. Keys
+    // were refused: the toast is not the reconnect card and has no retry.
     assert!(cx.debug_bounds("tmux-not-sent").is_some());
+    assert!(cx.debug_bounds("tmux-reconnect-card").is_none());
+    assert!(cx.debug_bounds("tmux-reconnect-retry").is_none());
     view.read_with(cx, |view, _| {
         assert_eq!(view.connection_stage(), Stage::Words);
     });

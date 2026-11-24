@@ -7,10 +7,14 @@
 //! - to 8 s: a spinner in the slot, no words;
 //! - past 8 s: "Reconnecting…", and pane titles step down to the muted ink;
 //! - past 60 s on a session stream: "Offline since 10:42", a button that
-//!   retries now, the only manual retry.
+//!   retries now.
 //!
-//! A key refused while the stream is down shows "Not sent…" in its pane at once
-//! and moves the slot straight to its words. Keys are never queued or replayed.
+//! In the pane itself (reconnect, 19 Nov): nothing for the first 2 s of a
+//! session stream's drop, while keys typed meanwhile wait
+//! (`pending_input/reconnect.rs`); then a calm card, "Reconnecting…" with
+//! how many keys wait and a "Retry now" button. Keys the reconnect could not
+//! deliver show "N keys not sent…" in the pane at once and move the slot
+//! straight to its words; they are never sent later.
 //! The thresholds read [`Watch`]'s clock, which tests replace.
 use super::{SnapshotView, agent_indicator::FRAMES, browser};
 use gpui::{prelude::*, *};
@@ -27,6 +31,24 @@ pub(super) const RECONNECTING: &str = "Reconnecting…";
 /// The words before the app has ever had a connection (#357 review, item 3).
 pub(super) const CONNECTING: &str = "Connecting…";
 pub(super) const NOT_SENT: &str = "Not sent. The connection is back in a moment. Type again then.";
+pub(super) const RETRY_NOW: &str = "Retry now";
+
+/// What the pane says about keys a reconnect could not deliver.
+pub(super) fn not_sent_words(keys: usize) -> String {
+    match keys {
+        0 => NOT_SENT.to_owned(),
+        1 => "1 key not sent. Type it again when the connection is back.".to_owned(),
+        n => format!("{n} keys not sent. Type them again when the connection is back."),
+    }
+}
+/// The pane's reconnect card: "Reconnecting…", and how many keys wait.
+pub(super) fn reconnecting_words(held: usize) -> String {
+    match held {
+        0 => RECONNECTING.to_owned(),
+        1 => format!("{RECONNECTING} 1 key waits to be sent."),
+        n => format!("{RECONNECTING} {n} keys wait to be sent."),
+    }
+}
 
 /// What is being waited for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +313,13 @@ pub(super) struct Watch {
     /// keys were refused and said so; the latch then lifts by itself once the
     /// stream is back, so typing needs no click (`release_refused_keys`).
     pub(super) keys_refused: bool,
+    /// Keys a reconnect could not deliver: held keys it dropped and keys
+    /// refused after them. The pane's notice says how many; it clears with
+    /// the latch, once the same session takes input again.
+    pub(super) keys_not_sent: usize,
+    /// Wakes the view when a reconnect hold's limit passes, so held keys
+    /// that can no longer be delivered are reported without another event.
+    pub(super) _hold_wake: Option<(Instant, Task<()>)>,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -302,6 +331,8 @@ impl Default for Watch {
             _away_wake: None,
             agents_marked: std::cell::Cell::new(false),
             keys_refused: false,
+            keys_not_sent: 0,
+            _hold_wake: None,
         }
     }
 }
@@ -388,9 +419,12 @@ impl SnapshotView {
         });
     }
 
-    /// A key typed while the stream is down was refused (#702: never queued).
+    /// A key typed while the stream is down was refused (#702: never queued),
+    /// or a hold was dropped while its link was still only probed.
     fn key_refused(&self) -> bool {
-        self.input_interrupted && self.browser_state.reconnect_attempt.is_some()
+        self.input_interrupted
+            && (self.browser_state.reconnect_attempt.is_some()
+                || (self.connection.keys_refused && self.browser_state.link_probe))
     }
 
     /// How long the open session's stream has been reconnecting, by the
@@ -667,12 +701,32 @@ impl SnapshotView {
         )
     }
 
-    /// "Not sent…" in the pane the key was typed in, on glass, from the first
-    /// refused key until the stream is back.
-    pub(super) fn not_sent_toast(&self, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.key_refused() {
-            return None;
+    /// The reconnect card's words, once a session stream's drop (or a hold
+    /// on a suspect link) has lasted [`SPINNER_AFTER`]; `None` before.
+    pub(super) fn reconnect_card(&self) -> Option<String> {
+        let held = self.reconnect_held();
+        let dropped = self.session_reconnecting_for().unwrap_or_default();
+        let waited = held.map_or(dropped, |(_, waited)| waited.max(dropped));
+        (waited >= SPINNER_AFTER
+            && (self.browser_state.reconnect_attempt.is_some() || held.is_some()))
+        .then(|| reconnecting_words(held.map_or(0, |(keys, _)| keys)))
+    }
+
+    /// What the pane's toast says: the keys not sent, else the reconnect card.
+    pub(super) fn pane_notice(&self) -> Option<String> {
+        if self.key_refused() {
+            Some(not_sent_words(self.connection.keys_not_sent))
+        } else {
+            self.reconnect_card()
         }
+    }
+
+    /// In the pane the keys were typed in, on glass: "N keys not sent…" from
+    /// the first key a reconnect could not deliver until the stream is back;
+    /// otherwise, from 2 s into a drop, "Reconnecting…" with "Retry now".
+    pub(super) fn not_sent_toast(&self, width: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let refused = self.key_refused();
+        let words = self.pane_notice()?;
         // Over the selected pane's card, or over the whole terminal without cards.
         let rect = self.card_layout(width).and_then(|cards| {
             let selected = self.browser_state.selected_pane.as_ref()?;
@@ -698,15 +752,28 @@ impl SnapshotView {
                 .pb(px(bezel_theme::Theme::SPACE * 3.))
                 .child(
                     div()
-                        .debug_selector(|| "tmux-not-sent".into())
+                        .debug_selector(move || {
+                            if refused {
+                                "tmux-not-sent".into()
+                            } else {
+                                "tmux-reconnect-card".into()
+                            }
+                        })
                         .mx(px(16.))
                         .px_3()
                         .py_2()
                         .rounded_full()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
                         .text_color(ink)
                         .text_size(px(bezel_theme::TextStyle::Callout.size()))
                         .children(super::design::ink_probe(|| "not-sent".into()))
-                        .child(NOT_SENT)
+                        .child(words)
+                        .when(
+                            !refused && self.browser_state.reconnect_attempt.is_some(),
+                            |card| card.child(self.retry_now_button(cx)),
+                        )
                         .surface(
                             &bezel,
                             bezel_theme::SurfaceStyle::Glass(bezel_theme::Glass::Regular),
@@ -714,6 +781,30 @@ impl SnapshotView {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+impl SnapshotView {
+    /// The card's "Retry now": tries the reconnect at once, for the request
+    /// the card was drawn for.
+    fn retry_now_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let request = self.browser_state.request;
+        let hover = super::design::palette(&self.theme()).element_hover;
+        div()
+            .id("reconnect-retry-now")
+            .debug_selector(|| "tmux-reconnect-retry".into())
+            .px_2()
+            .rounded_full()
+            .cursor_pointer()
+            .font_weight(FontWeight::SEMIBOLD)
+            .hover(move |s| s.bg(hover))
+            .aria_label(RETRY_NOW)
+            .child(RETRY_NOW)
+            .on_click(cx.listener(move |view, _, _, cx| {
+                cx.stop_propagation();
+                view.retry_reconnect(request);
+            }))
+            .into_any_element()
     }
 }
 
@@ -743,6 +834,9 @@ pub(super) fn glass_over(bezel: &bezel_theme::Theme, desktop: u32) -> Hsla {
     }
     .into()
 }
+
+#[path = "network_watch.rs"]
+pub(super) mod network_watch;
 
 #[cfg(test)]
 #[path = "connection_tests.rs"]

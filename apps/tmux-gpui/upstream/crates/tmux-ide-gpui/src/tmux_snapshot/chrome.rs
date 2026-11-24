@@ -83,6 +83,8 @@ impl Chrome {
         {
             if self.watcher.is_none() {
                 self.watcher = macos::Watcher::new(self.wake.clone());
+                // Wake and network changes, once per process (reconnect).
+                super::connection::network_watch::start();
             }
             self.allowed = macos::translucency_allowed();
         }

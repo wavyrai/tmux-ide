@@ -6,12 +6,12 @@ use super::*;
 use crate::tmux_snapshot::pending_input::Target;
 use std::time::Duration;
 
-const PANE: &str = "pane-a";
+pub(super) const PANE: &str = "pane-a";
 
 fn region() -> crate::tmux_snapshot::copy::Region {
     region_of(PANE)
 }
-fn region_of(pane: &str) -> crate::tmux_snapshot::copy::Region {
+pub(super) fn region_of(pane: &str) -> crate::tmux_snapshot::copy::Region {
     crate::tmux_snapshot::copy::Region {
         id: pane.into(),
         left: 0,
@@ -22,7 +22,7 @@ fn region_of(pane: &str) -> crate::tmux_snapshot::copy::Region {
     }
 }
 /// A live session the user is typing into.
-fn live(view: &mut SnapshotView, cx: &mut Context<SnapshotView>) {
+pub(super) fn live(view: &mut SnapshotView, cx: &mut Context<SnapshotView>) {
     let mut state = view.browser_state.clone();
     state.request = view.browser_request;
     state.input_ready = true;
@@ -38,7 +38,7 @@ fn live(view: &mut SnapshotView, cx: &mut Context<SnapshotView>) {
 }
 /// What the terminal loop publishes while the catalog reconnects: the last
 /// frame, read-only, with no input targets.
-fn dropped(view: &SnapshotView, keys_lost: bool) -> browser::State {
+pub(super) fn dropped(view: &SnapshotView, keys_lost: bool) -> browser::State {
     let mut state = view.browser_state.clone();
     state.input_ready = false;
     state.retained_preview = true;
@@ -49,7 +49,7 @@ fn dropped(view: &SnapshotView, keys_lost: bool) -> browser::State {
     state
 }
 /// The stream is back on the same pane, with a new input token.
-fn back(view: &SnapshotView) -> browser::State {
+pub(super) fn back(view: &SnapshotView) -> browser::State {
     let mut state = view.browser_state.clone();
     state.input_ready = true;
     state.retained_preview = false;
@@ -62,7 +62,9 @@ fn back(view: &SnapshotView) -> browser::State {
     state.copy_region = Some(region());
     state
 }
-fn sent(receiver: &mpsc::Receiver<browser::Command>) -> Vec<(String, String, Option<String>)> {
+pub(super) fn sent(
+    receiver: &mpsc::Receiver<browser::Command>,
+) -> Vec<(String, String, Option<String>)> {
     receiver
         .try_iter()
         .filter_map(|command| match command {
@@ -76,7 +78,7 @@ fn sent(receiver: &mpsc::Receiver<browser::Command>) -> Vec<(String, String, Opt
         })
         .collect()
 }
-fn view_with(
+pub(super) fn view_with(
     cx: &mut TestAppContext,
 ) -> (
     Entity<SnapshotView>,
@@ -130,17 +132,18 @@ fn keys_typed_during_a_short_reconnect_reach_the_same_pane_in_order(cx: &mut Tes
     });
 }
 
-/// Three seconds from the drop, by the connection's clock. Keys typed later
-/// are refused at once; keys already held are dropped together at the limit.
+/// Five seconds from the drop (reconnect, 19 Nov; three before), by the
+/// connection's clock. Keys typed later are refused at once; keys already
+/// held are dropped together at the limit.
 #[gpui::test]
-fn a_reconnect_longer_than_three_seconds_refuses_every_held_key(cx: &mut TestAppContext) {
+fn a_reconnect_longer_than_five_seconds_refuses_every_held_key(cx: &mut TestAppContext) {
     for (typed_after, back_after, delivered) in [
-        (0, 2900, true),
-        (0, 3100, false),
+        (0, 4900, true),
+        (0, 5100, false),
         // The limit counts from the drop, not from the first key.
-        (2000, 2900, true),
-        (2000, 3100, false),
-        (3100, 3200, false),
+        (2000, 4900, true),
+        (2000, 5100, false),
+        (5100, 5200, false),
     ] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
@@ -194,11 +197,11 @@ fn nothing_is_held_when_keys_typed_before_the_drop_were_lost(cx: &mut TestAppCon
     });
 }
 
-/// The queue is small: 32 keys or 256 bytes. One key too many refuses them
-/// all; a part of what was typed is never sent.
+/// The queue is bounded: 512 keys, 64 KiB, or 32 inputs once text is joined.
+/// One key too many refuses them all; a part of what was typed is never sent.
 #[gpui::test]
 fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
-    for case in ["keys", "bytes"] {
+    for case in ["keys", "bytes", "inputs", "full-inputs"] {
         let (view, receiver, cx) = view_with(cx);
         cx.update(|window, cx| {
             view.update(cx, |view, cx| {
@@ -206,16 +209,40 @@ fn a_full_queue_refuses_everything_it_held(cx: &mut TestAppContext) {
                 let state = dropped(view, false);
                 view.apply_browser_state(Some(state), cx);
                 if case == "keys" {
-                    for _ in 0..32 {
+                    for _ in 0..512 {
                         view.replace_text_in_range(None, "k", window, cx);
                     }
+                } else if case == "bytes" {
+                    // 64 commits of 1023 bytes: three join into one input
+                    // (1023 UTF-16 units), so 22 inputs and 65,472 bytes.
+                    // 64 bytes more are 64 KiB exactly.
+                    for _ in 0..64 {
+                        view.replace_text_in_range(None, &"€".repeat(341), window, cx);
+                    }
+                    view.replace_text_in_range(None, &"x".repeat(64), window, cx);
+                } else if case == "full-inputs" {
+                    // 32 commits that each fill one input: none joins the next.
+                    for _ in 0..32 {
+                        view.replace_text_in_range(None, &"b".repeat(1024), window, cx);
+                    }
                 } else {
-                    view.replace_text_in_range(None, &"b".repeat(256), window, cx);
+                    // 16 commands and their Enter: 32 inputs that do not join.
+                    for _ in 0..16 {
+                        view.replace_text_in_range(None, "ls", window, cx);
+                        view.terminal_key(&key("enter"), window, cx);
+                    }
                 }
                 assert!(!view.input_interrupted, "{case}: the bound is smaller");
                 view.replace_text_in_range(None, "x", window, cx);
                 assert!(view.input_interrupted, "{case}");
                 assert!(view.not_sent_shown(), "{case}");
+                // Every held key and the one too many.
+                let held = match case {
+                    "keys" => 512,
+                    "bytes" => 65,
+                    _ => 32,
+                };
+                assert_eq!(view.connection.keys_not_sent, held + 1, "{case}");
                 let state = back(view);
                 view.apply_browser_state(Some(state), cx);
                 assert!(sent(&receiver).is_empty(), "{case}");
@@ -231,6 +258,7 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
         "other-pane",
         "other-session",
         "navigated",
+        "navigating",
         "home",
         "no-input-target",
         "window-left",
@@ -259,13 +287,15 @@ fn held_keys_never_reach_another_pane_session_or_request(cx: &mut TestAppContext
                         view.browser_request += 1;
                         state.request = view.browser_request;
                     }
+                    // The view asked for another request; this state is the old one's.
+                    "navigating" => view.browser_request += 1,
                     "home" => state.surface = browser::Surface::Home,
                     "no-input-target" => state.input_targets.clear(),
                     "window-left" => state.presence_revision += 1,
                     _ => unreachable!(),
                 }
                 view.apply_browser_state(Some(state), cx);
-                view.age_pending_input_by(Duration::from_millis(3100));
+                // At once: not when the hold's limit passes.
                 view.browser_tick(cx);
                 let delivered: Vec<_> = sent(&receiver)
                     .into_iter()

@@ -206,7 +206,7 @@ impl SnapshotView {
                 *gesture
             }
         };
-        if !self.offer_terminal_input(cx) {
+        if !self.offer_terminal_pointer(cx) {
             self.cancel_pointer();
             return true;
         }
