@@ -530,3 +530,65 @@ fn only_an_environment_mismatch_is_an_identity_failure_over_ssh() {
         Failure::Identity
     );
 }
+
+/// A window started for one SSH destination (`--tmux-native-ssh TARGET`), with
+/// no saved machine, across a remote daemon restart: the soak's SSH leg
+/// (#870). The daemon came back with a new generation and the session was
+/// still in tmux, and main ended on "That session is gone or was replaced"
+/// 22 of 22 times. `after` is the destination then selected (`None`: a saved
+/// machine with that id); `environments` the ids the catalog reported.
+#[cfg(unix)]
+fn direct_ssh_restart(
+    started: &str,
+    after: Option<&str>,
+    environments: (Option<&str>, Option<&str>),
+) -> (Local, mpsc::Receiver<Incoming>) {
+    let source = |destination: &str| {
+        let target = herdr_client::tmux_ssh::SshTarget::parse(destination).unwrap();
+        NativeOwner::new(CatalogSource::remote(target, None))
+    };
+    let (mut local, events) = attached();
+    local.sources = source(started);
+    local.catalog_identity = Some(identity("old-instance", environments.0));
+    let mut target = through_the_update(&mut local);
+    match after {
+        Some(destination) => local.sources = source(destination),
+        None => local.selected_profile = Some(ssh_profile(started)),
+    }
+    local.catalog_identity = Some(identity("new-instance", environments.1));
+    target.scope.generation = "generation-after-restart".into();
+    local.targets.insert("token-after-restart".into(), target);
+    assert!(local.reconnect_catalog().unwrap());
+    (local, events)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_window_started_for_an_ssh_destination_reopens_its_session_after_a_remote_restart() {
+    let same = (Some(ENVIRONMENT), Some(ENVIRONMENT));
+    let (local, _events) = direct_ssh_restart("target", Some("target"), same);
+    reopened_the_same_session(&local);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_started_for_destination_is_refused_on_another_destination_or_environment() {
+    let other = "33333333-3333-4333-8333-333333333333";
+    let same = (Some(ENVIRONMENT), Some(ENVIRONMENT));
+    let (local, _events) = direct_ssh_restart("target", Some("other-target"), same);
+    selects_a_session(&local);
+    let (local, _events) =
+        direct_ssh_restart("target", Some("target"), (Some(ENVIRONMENT), Some(other)));
+    selects_a_session(&local);
+    for environments in [
+        (None, None),
+        (None, Some(ENVIRONMENT)),
+        (Some(ENVIRONMENT), None),
+    ] {
+        let (local, _events) = direct_ssh_restart("target", Some("target"), environments);
+        selects_a_session(&local);
+    }
+    // A saved machine whose id is the destination's text is another machine.
+    let (local, _events) = direct_ssh_restart(PROFILE, None, same);
+    selects_a_session(&local);
+}

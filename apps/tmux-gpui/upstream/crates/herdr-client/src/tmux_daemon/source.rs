@@ -73,6 +73,14 @@ impl CatalogSource {
             stopped: AtomicBool::new(false),
         }))
     }
+    /// The SSH destination a remote source reaches; `None` for a local record.
+    pub fn ssh_target(&self) -> Option<&str> {
+        match self {
+            Self::Local(_) => None,
+            #[cfg(unix)]
+            Self::Remote(source) => Some(source.target.as_str()),
+        }
+    }
     pub(super) fn discover(&self, cancelled: &Arc<AtomicBool>) -> Result<Owner, Error> {
         match self {
             Self::Local(record) => {
