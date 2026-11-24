@@ -636,3 +636,36 @@ fn a_line_queued_with_a_fit_before_or_after_it_is_announced() {
         assert!(app.typed().is_empty(), "order {index}: a key was sent");
     }
 }
+
+/// A stream lost, or failed by a command, before the window is back to read
+/// the notice hands it to the next stream; one that had no notice hands
+/// nothing on.
+#[test]
+fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
+    let lost = || {
+        NativeError::Controller(herdr_client::tmux_controller::Error::Transport(
+            tmux_stream::Error::ReadyTimeout,
+        ))
+    };
+    for (notice, failed) in [(true, false), (true, true), (false, false), (false, true)] {
+        let (mut active, state, _seen, peer) = selection_tests::fixture(true);
+        if notice {
+            active.action_status.set(Some(super::KEYS_NOT_SENT));
+        }
+        let mut hold = hold::Hold::default();
+        let mut pending = std::collections::VecDeque::new();
+        if failed {
+            super::command_failed(Some(&active), false, &mut pending, &mut hold, &state, 1);
+        } else {
+            super::stream_lost(&active, &mut pending, &mut hold, &state, 1, &lost());
+        }
+        let next = super::carried(&mut hold);
+        assert_eq!(
+            next.is(super::KEYS_NOT_SENT),
+            notice,
+            "notice {notice}, command failed {failed}"
+        );
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}
