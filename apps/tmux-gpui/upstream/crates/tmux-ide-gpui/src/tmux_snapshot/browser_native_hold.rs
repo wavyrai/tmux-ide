@@ -28,6 +28,9 @@ pub(super) struct Hold {
     /// The last live frame the UI was shown. A catalog publication can replace the
     /// transport's state, frame included, in the same turn the stream fails.
     last: Option<Held>,
+    /// Keys dropped as the window left were not sent, and the stream that was
+    /// to say so once the window is back was lost (#875). The next stream does.
+    keys_not_sent: bool,
 }
 impl Hold {
     /// `hold_frames` is false for the legacy pipe catalog: no held frames.
@@ -85,8 +88,20 @@ impl Hold {
             _ => false,
         }
     }
+    /// Navigation: the user moved on, so a carried "keys not sent" goes too.
     pub fn clear(&mut self) {
         self.held = None;
+        self.keys_not_sent = false;
+    }
+    /// The lost stream had not yet said that keys were not sent: the next one
+    /// opened says it.
+    pub fn carry_keys_not_sent(&mut self) {
+        self.keys_not_sent = true;
+    }
+    /// Whether the stream being opened must say that keys were not sent.
+    /// True once per carry.
+    pub fn take_keys_not_sent(&mut self) -> bool {
+        std::mem::take(&mut self.keys_not_sent)
     }
     pub fn active(&self) -> bool {
         self.held.is_some()
@@ -108,12 +123,12 @@ impl Hold {
             || state.home_phase == HomePhase::Unavailable
             || state.home_notice.is_some()
         {
-            self.clear();
+            self.held = None;
             return state.clone();
         }
         if state.frame.is_some() && !state.retained_preview {
             if state.input_ready {
-                self.clear();
+                self.held = None;
             }
             return state.clone();
         }

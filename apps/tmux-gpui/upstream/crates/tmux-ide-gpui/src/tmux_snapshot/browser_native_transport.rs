@@ -502,7 +502,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             owner,
                             stream_interrupted: false,
                             owner_notice: None,
-                            action_status: Default::default(),
+                            action_status: loss::carried(&mut hold),
                             catalog_only,
                             daemon_version,
                             generation,

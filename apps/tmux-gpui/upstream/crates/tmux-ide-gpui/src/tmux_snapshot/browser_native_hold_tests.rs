@@ -263,3 +263,21 @@ fn a_key_dropped_during_the_hold_is_reported_from_then_on() {
     assert!(shown.reconnect_keys_lost);
     assert!(shown.status.ends_with(LOST_INPUT));
 }
+
+/// #875: "keys not sent" carried past a lost stream is taken once, by the
+/// next stream; the hold ending (another request, a live frame) keeps it, and
+/// navigation drops it.
+#[test]
+fn keys_not_sent_is_carried_once_and_dropped_by_navigation() {
+    let mut hold = Hold::default();
+    assert!(!hold.take_keys_not_sent());
+    hold.begin(&live(7), false);
+    hold.carry_keys_not_sent();
+    let _ = hold.publication(&live(8));
+    assert!(!hold.active(), "another request ends the hold");
+    assert!(hold.take_keys_not_sent(), "the next stream says it");
+    assert!(!hold.take_keys_not_sent(), "said twice");
+    hold.carry_keys_not_sent();
+    hold.clear();
+    assert!(!hold.take_keys_not_sent(), "kept past navigation");
+}

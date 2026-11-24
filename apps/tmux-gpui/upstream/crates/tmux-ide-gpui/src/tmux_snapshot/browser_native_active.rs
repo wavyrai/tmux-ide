@@ -16,6 +16,10 @@ impl Outcome {
     pub(super) fn set(&mut self, outcome: Option<&'static str>) {
         self.current = outcome;
     }
+    /// Whether `outcome` is the one waiting to be shown or still shown.
+    pub(super) fn is(&self, outcome: &str) -> bool {
+        self.current == Some(outcome)
+    }
 
     /// Writes the outcome over the idle line or the outcome last shown (this
     /// one or an earlier one). A connection state (connecting, an inactive

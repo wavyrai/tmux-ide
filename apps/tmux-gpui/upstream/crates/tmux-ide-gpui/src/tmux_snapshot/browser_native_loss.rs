@@ -186,6 +186,24 @@ pub(super) fn refused(command: &Command, active: Option<&mut Active>) {
     }
 }
 
+/// The stream is lost before the window is back to read that keys were not
+/// sent (a link that drops while the user is in another app): the next stream
+/// opened says it instead. Nothing is re-sent.
+fn carry(current: &Active, hold: &mut Hold) {
+    if current.action_status.is(KEYS_NOT_SENT) {
+        hold.carry_keys_not_sent();
+    }
+}
+/// The outcome a stream being opened starts with: the notice a lost stream
+/// carried, or none.
+pub(super) fn carried(hold: &mut Hold) -> super::active::Outcome {
+    let mut outcome = super::active::Outcome::default();
+    if hold.take_keys_not_sent() {
+        outcome.set(Some(KEYS_NOT_SENT));
+    }
+    outcome
+}
+
 #[cfg(test)]
 #[path = "browser_native_blur_tests.rs"]
 mod blur_tests;
@@ -203,6 +221,7 @@ pub(super) fn stream_lost(
 ) -> Command {
     let queued = drop_queued_input(pending);
     let unanswered = matches!(error, NativeError::Input(_));
+    carry(current, hold);
     hold.begin(state, queued || unanswered || current.input.busy());
     interrupted(current, presence_revision, diagnostics::cause(error))
 }
@@ -219,6 +238,9 @@ pub(super) fn command_failed(
 ) -> Option<Command> {
     let queued = drop_queued_input(pending);
     let in_flight = active.is_some_and(|a| a.input.busy());
+    if let Some(current) = active {
+        carry(current, hold);
+    }
     hold.begin(state, failed_input || queued || in_flight);
     active.map(|a| interrupted(a, presence_revision, Cause::Lost))
 }
