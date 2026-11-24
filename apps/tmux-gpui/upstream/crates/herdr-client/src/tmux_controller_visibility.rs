@@ -123,6 +123,10 @@ impl Controller {
         Ok(())
     }
 
+    /// The link is being probed: keys are better held than sent.
+    pub fn link_probing(&self) -> bool {
+        self.session.probing()
+    }
     /// The connection's round trip in ms: the last input ACK's while keys
     /// flow (fresher), else the stream's last ping; `None` before either.
     fn rtt_ms(&self, now: u64) -> Option<u64> {

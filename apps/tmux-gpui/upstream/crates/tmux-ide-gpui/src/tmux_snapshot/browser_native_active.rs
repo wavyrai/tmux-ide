@@ -80,6 +80,15 @@ pub(super) fn push(
     true
 }
 
+/// [`push`] with the terminal loop's own limit.
+#[cfg(test)]
+pub(in crate::tmux_snapshot) fn admit(
+    pending: &mut std::collections::VecDeque<Command>,
+    command: Command,
+) -> bool {
+    push(pending, command, MAX_PENDING)
+}
+
 /// Text typed while earlier text waits in the queue joins it: one input,
 /// one ACK, one echo. The first key of a burst is never held for this; it is
 /// queued alone and goes on the next turn. Bounded like one input (1024
@@ -559,6 +568,8 @@ impl Active {
         let input_ready = self.controller.input_ready();
         let reveal_before = state.reveal_hold;
         state.reveal_hold = self.controller.reveal_hold();
+        let probe_before = state.link_probe;
+        state.link_probe = self.controller.link_probing();
         let attachment_ready =
             (input_ready || !foreground) && state.frame.is_some() && !state.retained_preview;
         if attachment_ready && self.metadata_sent.as_ref() != Some(&metadata_key) {
@@ -616,6 +627,7 @@ impl Active {
             || surfaces_changed
             || ready != state.input_ready
             || reveal_before != state.reveal_hold
+            || probe_before != state.link_probe
             || presence != state.presence_revision
             || match (prior.as_ref(), state.frame.as_ref()) {
                 (Some(a), Some(b)) => !a.same(b),

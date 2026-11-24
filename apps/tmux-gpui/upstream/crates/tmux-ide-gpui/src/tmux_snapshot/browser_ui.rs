@@ -83,7 +83,7 @@ impl SnapshotView {
         }
         if self.browser_state.history_offset == 0
             && !event.modifiers.shift
-            && !self.offer_terminal_input(cx)
+            && !self.offer_terminal_pointer(cx)
         {
             self.wheel = Default::default();
             return;
@@ -155,7 +155,7 @@ impl SnapshotView {
             && !self.reconnect_hold_takes_keys())
             || (self.resize_gesture.busy() && self.divider.is_none())
         {
-            self.interrupt_input(cx);
+            self.refuse_key(!event.keystroke.modifiers.platform, cx);
             cx.stop_propagation();
             return;
         }

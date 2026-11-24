@@ -1,6 +1,7 @@
-//! Retrying a lost connection now (card #702). The footer slot's "Offline
-//! since…" button is the only manual retry (r1); it only asks the catalog to
-//! try now, and reconnection keeps its own identity checks.
+//! Retrying a lost connection now (card #702): the footer slot's "Offline
+//! since…" button and, from 2 s into a drop, the pane card's "Retry now"
+//! (card #863). Either only asks the catalog to try now, and reconnection
+//! keeps its own identity checks.
 use super::{SnapshotView, browser};
 
 impl SnapshotView {

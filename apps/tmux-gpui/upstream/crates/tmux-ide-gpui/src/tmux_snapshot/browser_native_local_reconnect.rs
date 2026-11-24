@@ -55,6 +55,9 @@ pub(super) struct Recovery {
     /// This recovery already asked the background fleet to retry its saved
     /// machines: once per recovery, not on every try (review N3).
     fleet_refreshed: bool,
+    /// The wake and network epoch the last try saw (`network_watch`): a
+    /// newer one means the Mac woke or the network is back, so try now.
+    network: u64,
 }
 /// A daemon record's modification time and size. A restarted daemon writes a
 /// new record, so a change means the next try need not wait out its backoff.
@@ -132,6 +135,7 @@ impl Recovery {
             ended: false,
             identity_retried: false,
             fleet_refreshed: false,
+            network: crate::tmux_snapshot::connection::network_watch::epoch(),
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -278,6 +282,7 @@ impl Local {
             ended: false,
             identity_retried: false,
             fleet_refreshed: false,
+            network: crate::tmux_snapshot::connection::network_watch::epoch(),
         });
         if fresh {
             // A new episode: the backoff and the one fleet retry start over.
@@ -297,7 +302,11 @@ impl Local {
             Cause::Identity if std::mem::replace(&mut recovery.identity_retried, true) => {
                 recovery.rebind = None;
             }
-            Cause::Identity | Cause::Closed | Cause::Lost | Cause::Silent => {}
+            // A link that went silent may be an SSH forward on a network that
+            // went away: the first try proves the route (or replaces it)
+            // instead of waiting on it.
+            Cause::Silent => recovery.rediscover_owner = true,
+            Cause::Identity | Cause::Closed | Cause::Lost => {}
         }
         // A drop, not navigation: agents and the catalog stay on screen. An
         // action in flight is cancelled, never replayed; a session creation
@@ -334,6 +343,7 @@ impl Local {
             ended: false,
             identity_retried: false,
             fleet_refreshed: false,
+            network: crate::tmux_snapshot::connection::network_watch::epoch(),
         });
         self.reconnect_retry(failure)
     }
@@ -417,12 +427,22 @@ impl Local {
         // A rewritten daemon record is a restarted daemon: try it now.
         let stamp = record_stamp(waiting.local_record.as_ref());
         let rewritten = stamp.is_some() && stamp != waiting.record;
-        if !rewritten && waiting.due.is_some_and(|due| Instant::now() < due) {
+        // The Mac woke or the network is back: try now, and start the
+        // backoff over, as a fresh drop would.
+        let network = crate::tmux_snapshot::connection::network_watch::epoch();
+        let back = network != waiting.network;
+        if !rewritten && !back && waiting.due.is_some_and(|due| Instant::now() < due) {
             return Ok(());
         }
         let Some(mut recovery) = self.recovery.take() else {
             return Ok(());
         };
+        if back {
+            recovery.network = network;
+            recovery.attempts = 0;
+            // A tunnel that outlived the old network is replaced, not trusted.
+            recovery.rediscover_owner = true;
+        }
         recovery.attempts = recovery.attempts.saturating_add(1);
         recovery.due = None;
         recovery.record = stamp;
