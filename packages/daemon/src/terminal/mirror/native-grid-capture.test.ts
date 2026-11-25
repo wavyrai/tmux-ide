@@ -355,7 +355,8 @@ describe("bounded first open and history pieces (#873)", () => {
       [header(9), row(9, "s")],
       [header(9), row(2, "a"), row(4, "b")],
       [header(9), row(3, "a"), row(2, "b")],
-      [{ ...header(9), version: 1 }, row(2, "a")],
+      [{ ...header(9), version: 1, currentAttributes: undefined }, row(2, "a")],
+      [{ ...header(9), history: undefined }, row(2, "a")],
       [header(9), { ...row(2, "a"), used: 5 }],
       [header(9), { ...row(2, "a"), cells: [[0, 1, "zz", 0, 8, 8, 8, 0, 0]] }],
     ])

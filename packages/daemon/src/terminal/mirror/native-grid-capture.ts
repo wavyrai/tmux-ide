@@ -372,13 +372,12 @@ export function decodeNativeHistoryPiece(text: string): NativeHistoryPiece | nul
   }
   if (!object(header) || !object(first) || !uint(first.row) || !uint(header.history)) return null;
   const firstRow = first.row;
-  if (firstRow >= header.history) return null;
   // Rewrite the header as a capture whose history ends at the piece's last row
   // and whose screen is empty, then reuse the full decoder's checks: re-number
   // the rows from zero so its contiguity check applies to the piece.
   const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
   const count = lines.length - 1;
-  if (count < 1 || firstRow + count > header.history) return null;
+  if (firstRow + count > header.history) return null;
   const renumbered: string[] = [];
   for (let index = 0; index < count; index++) {
     const line = lines[index + 1]!;

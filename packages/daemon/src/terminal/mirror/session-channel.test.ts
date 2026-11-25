@@ -4908,6 +4908,8 @@ describe("bounded native first open and history pieces (#873)", () => {
       rig.sim.reply([header(10), row(6)]);
       const answers = events.events.filter((event) => event.type === "history");
       expect(answers).toEqual([{ type: "history", piece: null }]);
+      // While that reseed runs, nothing is read.
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
     } finally {
       await rig.channel.dispose();
     }
@@ -4918,7 +4920,11 @@ describe("bounded native first open and history pieces (#873)", () => {
     const events = collect();
     try {
       const handle = rig.channel.subscribePane("pane.alpha", events.onEvent);
+      completeSeed(rig, ["plain"], "0 0 100 50");
+      expect(events.events.some((event) => event.type === "seed")).toBe(true);
+      const written = rig.sim.written.length;
       expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
+      expect(rig.sim.written.length).toBe(written);
       const native = await seeded();
       try {
         const written = native.rig.sim.written.length;
