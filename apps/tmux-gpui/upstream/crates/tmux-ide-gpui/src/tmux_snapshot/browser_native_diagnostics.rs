@@ -61,6 +61,15 @@ fn session_error(error: &NativeError) -> Option<&tmux_native_session::Error> {
         _ => None,
     }
 }
+/// Whether the stream ended on an SSH identity check that did not finish.
+fn remote_identity_inconclusive(error: &NativeError) -> bool {
+    let transport = match (error, session_error(error)) {
+        (NativeError::Controller(tmux_controller::Error::Transport(transport)), _)
+        | (_, Some(tmux_native_session::Error::Transport(transport))) => transport,
+        _ => return false,
+    };
+    matches!(transport, tmux_stream::Error::RemoteIdentity(identity) if identity.inconclusive())
+}
 /// The peer's close frame, when the stream ended with one.
 fn close(error: &NativeError) -> Option<&tmux_stream::Close> {
     match (error, session_error(error)) {
@@ -157,7 +166,12 @@ impl Stop {
             // local "stream-identity" (a ready frame that is not the lease's,
             // as after the daemon rebuilt the server owner) is recovered like
             // any drop: the catalog proves the daemon again before a new lease.
-            "stream-remote-identity" => "Couldn't reconnect. Refresh sessions to try again.".into(),
+            // So is an SSH check that did not finish (a link so slow the
+            // answer missed its deadline): no other machine answered, and the
+            // next stream is checked again (#870).
+            "stream-remote-identity" if !remote_identity_inconclusive(error) => {
+                "Couldn't reconnect. Refresh sessions to try again.".into()
+            }
             _ => return None,
         };
         Some(Self { request, status })
