@@ -136,6 +136,7 @@ fn retry_now_reads_trying_until_the_answer_and_sends_once(cx: &mut TestAppContex
     let retry = cx.debug_bounds("tmux-reconnect-retry").unwrap();
     cx.simulate_click(retry.center(), Modifiers::none());
     assert!(view.read_with(cx, |view, _| view.retry_trying()));
+    assert_eq!(view.read_with(cx, |view, _| view.retry_now_label()), TRYING);
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let retry = cx.debug_bounds("tmux-reconnect-retry").unwrap();
     cx.simulate_click(retry.center(), Modifiers::none());
@@ -150,6 +151,10 @@ fn retry_now_reads_trying_until_the_answer_and_sends_once(cx: &mut TestAppContex
         view.browser_state.pane_held = Some(held(start + S(900), 4_000, false));
     });
     assert!(!view.read_with(cx, |view, _| view.retry_trying()));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.retry_now_label()),
+        connection::RETRY_NOW
+    );
     // No answer at all: "Trying…" gives up after 10 s.
     view.update(cx, |view, _| {
         view.connection.retry_asked_at = Some(start + S(1_000))
@@ -158,6 +163,15 @@ fn retry_now_reads_trying_until_the_answer_and_sends_once(cx: &mut TestAppContex
     assert!(view.read_with(cx, |view, _| view.retry_trying()));
     at.set(S(11_000));
     assert!(!view.read_with(cx, |view, _| view.retry_trying()));
+    // A plain drop's "Trying…" is repainted away too, with no hold to count.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.browser_state.pane_held = None;
+            view.connection._held_wake = None;
+            view.wake_for_held(cx);
+        })
+    });
+    assert!(view.read_with(cx, |view, _| view.connection._held_wake.is_some()));
 }
 
 #[gpui::test]

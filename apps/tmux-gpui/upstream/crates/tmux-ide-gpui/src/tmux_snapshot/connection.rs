@@ -811,11 +811,7 @@ impl SnapshotView {
     fn retry_now_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let request = self.browser_state.request;
         let hover = super::design::palette(&self.theme()).element_hover;
-        let label = if self.retry_trying() {
-            TRYING
-        } else {
-            RETRY_NOW
-        };
+        let label = self.retry_now_label();
         div()
             .id("reconnect-retry-now")
             .debug_selector(|| "tmux-reconnect-retry".into())
@@ -871,7 +867,7 @@ pub(super) mod network_watch;
 
 #[path = "connection_held.rs"]
 mod held;
-pub(super) use held::{HELD, TRYING};
+pub(super) use held::HELD;
 
 #[cfg(test)]
 #[path = "connection_tests.rs"]

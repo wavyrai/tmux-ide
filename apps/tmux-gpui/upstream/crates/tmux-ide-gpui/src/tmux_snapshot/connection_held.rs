@@ -57,10 +57,19 @@ impl SnapshotView {
         let Some(asked) = self.connection.retry_asked_at else {
             return false;
         };
+        // The ask is forgotten when the wait ends (`observe_connection`).
         let (now, _) = (self.connection.clock)();
-        self.browser_state.reconnect_attempt.is_some()
-            && now.saturating_duration_since(asked) < TRYING_LIMIT
+        now.saturating_duration_since(asked) < TRYING_LIMIT
             && self.pane_held().is_none_or(|held| held.since < asked)
+    }
+
+    /// "Retry now", or "Trying…" while the try it asked for runs.
+    pub(in crate::tmux_snapshot) fn retry_now_label(&self) -> &'static str {
+        if self.retry_trying() {
+            TRYING
+        } else {
+            super::RETRY_NOW
+        }
     }
 
     /// Repaints once a second while a hold's countdown shows, and when
