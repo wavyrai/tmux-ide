@@ -466,3 +466,27 @@ fn a_swap_whose_target_changes_before_it_is_sent_is_stale() {
     drop(response);
     peer.join().unwrap();
 }
+#[test]
+fn a_paste_cut_by_retiring_the_stream_stays_unsent_through_another_retire() {
+    let (mut c, observed, response, peer) = fixture();
+    let lifetime = c.selectable("left").unwrap();
+    assert!(!c.paste_unsent());
+    c.begin_paste("left", &lifetime, &"x".repeat(1100), true, 0)
+        .unwrap();
+    observed.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(c.paste_unsent(), "a chunk remains after the first");
+    c.retire();
+    assert!(c.paste_unsent(), "forgotten by the retire");
+    c.retire();
+    assert!(c.paste_unsent(), "forgotten by a second retire");
+    drop(response);
+    peer.join().unwrap();
+}
+#[test]
+fn a_retire_with_no_paste_cut_reports_none() {
+    let (mut c, _observed, response, peer) = fixture();
+    c.retire();
+    assert!(!c.paste_unsent());
+    drop(response);
+    peer.join().unwrap();
+}
