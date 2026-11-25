@@ -34,6 +34,7 @@ import {
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import {
   BACKFILL_ALTERNATE_WAIT_MS,
+  BACKFILL_MAX_FAILURES,
   SessionRuntimeTerminalReplicaOwner,
   PARK_AFTER_MS,
 } from "./terminal-replica-owner.ts";
@@ -385,9 +386,13 @@ describe("backend: prepending a history piece (#873 point 2)", () => {
   });
 });
 
-function interpreterRig(onUpdate?: (update: CanonicalTerminalReplicaUpdate) => void) {
+function interpreterRig(
+  onUpdate?: (update: CanonicalTerminalReplicaUpdate) => void,
+  historyRowCap?: number,
+) {
   const updates: CanonicalTerminalReplicaUpdate[] = [];
   const interpreter = new TerminalReplicaInterpreter({
+    ...(historyRowCap !== undefined ? { historyRowCap } : {}),
     generation,
     workspaceName: "w",
     semanticPaneId: "pane",
@@ -780,11 +785,9 @@ describe("owner: the backfill (#873 point 3)", () => {
         r.fire(timer.delayMs);
         await vi.waitFor(() => expect(r.requests.length).toBe(asked + 1));
       }
-      expect(delays[0]).toBe(250);
-      expect(delays[1]).toBeGreaterThan(250);
-      expect(Math.max(...delays)).toBeLessThanOrEqual(4000);
-      // Bounded: it gave up before 40 tries.
-      expect(delays.length).toBeLessThan(40);
+      // 250 ms doubling to 4 s; the 16th failure in a row stops it.
+      expect(delays).toEqual([250, 500, 1000, 2000, ...Array.from({ length: 11 }, () => 4000)]);
+      expect(BACKFILL_MAX_FAILURES).toBe(16);
       const asked = r.requests.length;
       r.event({ type: "history", piece: null });
       await flush();
@@ -1021,6 +1024,28 @@ describe("the daemon's cap on rows held per pane (#873, owner decision of 25 Nov
     } finally {
       await r.owner.dispose();
     }
+  });
+
+  it("publishes a scroll at the cap as a one-row history delta, not the whole history", async () => {
+    const { interpreter, updates, reseed } = interpreterRig(undefined, 10);
+    await reseed(tailCapture(tmuxRows(15), 0));
+    await interpreter.whenIdle();
+    expect(interpreter.currentSeed()!.snapshot.history).toHaveLength(10);
+    updates.length = 0;
+    for (let n = 0; n < 5; n++) {
+      interpreter.enqueue({ type: "write", data: new TextEncoder().encode(lines(n, 1)) });
+      await interpreter.whenIdle();
+    }
+    const patches = updates.filter((u) => u.type === "terminal.patch");
+    expect(patches.length).toBeGreaterThanOrEqual(5);
+    for (const update of patches) {
+      if (update.type !== "terminal.patch") continue;
+      expect(update.patch.history).toBeUndefined();
+      expect(update.patch.historyDelta).toMatchObject({ trim: 1 });
+      expect(update.patch.historyDelta!.append).toHaveLength(1);
+    }
+    expect(interpreter.currentSeed()!.snapshot.history).toHaveLength(10);
+    expect(interpreter.omittedHistory()).toBe(10);
   });
 
   it("asks only up to the cap, then never again, and its history check agrees with tmux", async () => {

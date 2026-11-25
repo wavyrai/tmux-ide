@@ -9,6 +9,7 @@ import { applyTerminalReplicaPatch } from "@tmux-ide/core";
 import { MirrorControlChannel } from "../mirror/control-channel.ts";
 import type { MirrorFlowRecoveryObservation } from "../mirror/session-channel.ts";
 import { SessionRuntimeRegistry } from "./registry.ts";
+import { DAEMON_HISTORY_ROW_CAP } from "./terminal-interpreter-backend.ts";
 
 const available = spawnSync("tmux", ["-V"], { stdio: "ignore" }).status === 0;
 const socketName = `zz-runtime-opening-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -164,6 +165,7 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
           }),
         );
         let stage = "opening";
+        const heldRows = new Map<number, number>();
         const verifyNative = () => {
           // Check every pane's cheap convergence signals before walking any
           // full history. Repeatedly comparing already-ready 20k-line siblings
@@ -182,15 +184,23 @@ describe.skipIf(!available)("native concurrent runtime opening", () => {
               tmux("display-message", "-p", "-t", pane, "#{history_size}"),
             );
             if (historyLines > 0) expect(historySize).toBeGreaterThan(historyLines - 100);
+            // #873: the daemon holds at most its cap of tmux's newest rows.
+            const held = Math.min(historySize, DAEMON_HISTORY_ROW_CAP);
+            heldRows.set(index, held);
             for (const snapshot of snapshots) {
-              expect(snapshot.get(index)!.history, `${stage}: ${pane} history`).toHaveLength(
-                historySize,
-              );
+              expect(snapshot.get(index)!.history, `${stage}: ${pane} history`).toHaveLength(held);
               expect(snapshot.get(index)).toMatchObject({ cols, rows });
             }
           }
           for (const [index, pane] of panes.entries()) {
-            const nativeHistory = tmux("capture-pane", "-p", "-S", "-", "-t", pane);
+            const nativeHistory = tmux(
+              "capture-pane",
+              "-p",
+              "-S",
+              `-${heldRows.get(index)!}`,
+              "-t",
+              pane,
+            );
             const nativeVisible = tmux("capture-pane", "-p", "-t", pane);
             for (const snapshot of snapshots) {
               expect(text(snapshot.get(index)!)).toBe(nativeVisible);

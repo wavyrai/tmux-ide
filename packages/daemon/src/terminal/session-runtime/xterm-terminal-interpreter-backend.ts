@@ -147,7 +147,9 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     buffer.ybase -= extra;
     buffer.ydisp = Math.max(0, buffer.ydisp - extra);
     this.#setOmittedHistory(this.#omittedHistory + extra);
-    this.#historyProjectionInvalidated = true;
+    // No projection invalidation: the incremental projection reads a trim at
+    // the old end like tmux's own collection, so a scroll at the cap stays a
+    // one-row delta. Seeds and prepends invalidate on their own.
   }
 
   #normalBuffer() {
