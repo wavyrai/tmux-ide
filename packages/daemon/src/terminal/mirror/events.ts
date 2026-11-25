@@ -1,5 +1,5 @@
 import type { WindowLinkTopology } from "@tmux-ide/contracts";
-import type { NativeGridCapture } from "./native-grid-capture.ts";
+import type { NativeGridCapture, NativeHistoryPiece } from "./native-grid-capture.ts";
 /**
  * Public event contract of the daemon MirrorService (m43 card 1).
  *
@@ -77,6 +77,16 @@ export type MirrorPaneEvent =
       type: "flow";
       state: "paused" | "resumed";
       reason: "backpressure" | "requested";
+    }
+  | {
+      /**
+       * #873: the answer to this subscriber's own `requestNativeHistory`, in
+       * stream order: every delta before it was read before tmux read the
+       * piece, every delta after it later. Null when the read failed or output
+       * crossed it; the requester may ask again.
+       */
+      type: "history";
+      piece: NativeHistoryPiece | null;
     }
   | {
       /** Native recovery exhausted its bounds; this is not evidence of pane deletion. */

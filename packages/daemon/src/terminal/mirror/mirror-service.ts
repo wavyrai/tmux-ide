@@ -55,6 +55,7 @@ import {
 import type { TrustedMirrorSessionInventory } from "./trusted-inventory.ts";
 import type { InputAction } from "../protocol/input-coalescer.ts";
 import type { NativeGridReadResult } from "./native-grid-reader.ts";
+import type { NativeHistoryRequest } from "./native-grid-capture.ts";
 import {
   controlModeAuthorityKey,
   processControlModeOwnershipRegistry,
@@ -141,6 +142,12 @@ export interface MirrorSubscription {
   captureNativeBacking?(): Promise<NativeGridReadResult>;
   /** Native metadata on this exact retained pane; null means unavailable. */
   readHistorySize?(): Promise<number | null>;
+  /**
+   * #873: read older native history rows. The answer is one `history` event on
+   * this subscription, in stream order. False when nothing was sent (no
+   * event follows).
+   */
+  requestNativeHistory?(request: NativeHistoryRequest): boolean;
   readonly session: string;
   readonly semanticPaneId: string;
   /** Park delivery for this subscriber (offscreen freeze). Siblings and other
@@ -416,6 +423,7 @@ export class MirrorService {
       thaw: () => handle.thaw(),
       reseed: () => handle.reseed(),
       readHistorySize: () => handle.readHistorySize(),
+      requestNativeHistory: (historyRequest) => handle.requestNativeHistory(historyRequest),
       captureNativeBacking: () => handle.captureNativeBacking(),
       sendText: (text) => {
         this.assertWindowOwnership(request.session);

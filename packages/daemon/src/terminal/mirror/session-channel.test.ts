@@ -22,6 +22,7 @@ import { SessionRuntimeTerminalReplicaOwner } from "../session-runtime/terminal-
 import { createSessionRuntimeObservability } from "../session-runtime/runtime-observability.ts";
 import type { MirrorSubscribeRequest } from "./mirror-service.ts";
 import { SessionChannel } from "./session-channel.ts";
+import { nativeHistoryPieceRows, nativeSeedHistoryRows } from "./native-grid-capture.ts";
 import type {
   MirrorFlowRecoveryFailureReason,
   MirrorFlowRecoveryObservation,
@@ -4563,6 +4564,20 @@ describe("native capture-resume recovery", () => {
       }
     },
   );
+  it.each([false, true])(
+    "asks the owned snapshot for the newest history that fits the seed budget (#873, dual=%s)",
+    async (dual) => {
+      const s = await setup(dual, false, dual);
+      try {
+        s.rig.sim.feedLines("%pause %1");
+        const command = s.adapter.tryDispatch.mock.calls.at(-1)![1].commands[0]!;
+        expect(command).toContain("-Q");
+        expect(command.slice(-4)).toEqual(["-S", "-2571", "-t", "%1"]);
+      } finally {
+        await s.rig.channel.dispose();
+      }
+    },
+  );
   it("publishes one atomic grid synchronously and admits following output without continue debt", async () => {
     const s = await setup();
     try {
@@ -4845,6 +4860,229 @@ describe("native capture-resume recovery", () => {
       expect(s.events.events.some((e) => e.type === "seed")).toBe(false);
     } finally {
       await s.rig.channel.dispose();
+    }
+  });
+});
+
+describe("bounded native first open and history pieces (#873)", () => {
+  // A 100x50 pane whose tmux history holds 10 rows; the seed read rows 7 to
+  // 59, so it left out tmux rows 0 to 6.
+  const header = (history: number) =>
+    JSON.stringify({
+      version: 2,
+      currentAttributes: [0, 8, 8, 8],
+      cols: 100,
+      rows: 50,
+      history,
+      hscrolled: 0,
+      limit: 2000,
+      cursor: [0, 0],
+    });
+  const row = (index: number, text = "") =>
+    JSON.stringify({
+      row: index,
+      flags: 0,
+      used: text.length,
+      cells: [...text].map((char) => [0, 1, Buffer.from(char).toString("hex"), 0, 8, 8, 8, 0, 0]),
+    });
+  const tailSeed = () => [header(10), ...Array.from({ length: 53 }, (_, i) => row(7 + i))];
+  const hookBody = (rig: Rig) =>
+    [...rig.sim.written].reverse().find((command) => command.includes("capture-end"))!;
+  const seeded = async () => {
+    const rig = await startedRig();
+    const events = collect();
+    const handle = rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
+    completeSeed(rig, tailSeed(), "0 0 100 50");
+    return { rig, events, handle };
+  };
+
+  it("asks a native first open for the newest history that fits the seed budget", async () => {
+    const { rig } = await seeded();
+    try {
+      expect(hookBody(rig)).toContain("capture-pane -p -R -S -2571 -t %1");
+      expect(nativeSeedHistoryRows(100, 50)).toBe(2571);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("never reads more history than the channel's own history limit", async () => {
+    const rig = await startedRig({ historyLines: 100 });
+    const events = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
+      completeSeed(rig, tailSeed(), "0 0 100 50");
+      expect(hookBody(rig)).toContain("capture-pane -p -R -S -100 -t %1");
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("seeds from a tail capture and says how many older rows it left out", async () => {
+    const { rig, events } = await seeded();
+    try {
+      expect(events.events.some((event) => event.type === "fault")).toBe(false);
+      const seed = events.events.find((event) => event.type === "seed");
+      expect(seed?.type).toBe("seed");
+      expect(seed).toHaveProperty("native.history", 3);
+      expect(seed).toHaveProperty("native.omittedHistory", 7);
+      expect(events.events.some((event) => event.type === "fault")).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("reads the rows just older than the requester's oldest row and answers in order", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 5, historySize: 10 })).toBe(true);
+      // tmux rows 2 to 6 of 10 are offsets -8 to -4 from the screen's top.
+      expect(rig.sim.written.at(-1)).toContain("capture-pane -p -R -S -8 -E -4 -t %1");
+      rig.sim.reply([header(10), row(2, "a"), row(3, "b"), row(4), row(5), row(6, "z")]);
+      expect(events.events).toHaveLength(1);
+      const answer = events.events[0]!;
+      if (answer.type !== "history" || !answer.piece) throw new Error("no piece");
+      expect(answer.piece.firstRow).toBe(2);
+      expect(answer.piece.historySize).toBe(10);
+      expect(answer.piece.cols).toBe(100);
+      expect(answer.piece.rows.map((r) => r.cells.map((c) => c.text).join(""))).toEqual([
+        "a",
+        "b",
+        "",
+        "",
+        "z",
+      ]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("never asks past tmux's oldest row or for more than one piece", async () => {
+    const { rig, handle } = await seeded();
+    try {
+      expect(handle.requestNativeHistory({ endRow: 3, rows: 5, historySize: 10 })).toBe(true);
+      expect(rig.sim.written.at(-1)).toContain("capture-pane -p -R -S -10 -E -8 -t %1");
+      rig.sim.reply([header(10), row(0), row(1), row(2)]);
+      expect(handle.requestNativeHistory({ endRow: 9_000, rows: 9_000, historySize: 9_000 })).toBe(
+        true,
+      );
+      const piece = nativeHistoryPieceRows(100);
+      expect(rig.sim.written.at(-1)).toContain(`capture-pane -p -R -S -${piece} -E -1 -t %1`);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("answers null when the pane's output crossed the read, but not for a sibling's", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 });
+      rig.sim.output("%2", "sibling");
+      rig.sim.reply([header(10), row(6)]);
+      handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 });
+      rig.sim.output("%1", "crossed");
+      rig.sim.reply([header(10), row(6)]);
+      const answers = events.events.filter((event) => event.type === "history");
+      expect(answers.map((event) => event.type === "history" && event.piece !== null)).toEqual([
+        true,
+        false,
+      ]);
+      // The crossing output itself still went out, ahead of the answer.
+      expect(events.events.findIndex((event) => event.type === "delta")).toBeLessThan(
+        events.events.lastIndexOf(answers[1]!),
+      );
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("answers null for a failed read, a screen row or rows out of order", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      for (const [lines, ok] of [
+        [["no such pane"], false],
+        [[header(10), row(9), row(10)], true],
+        [[header(10), row(4), row(6)], true],
+        [[header(10)], true],
+      ] as const) {
+        handle.requestNativeHistory({ endRow: 7, rows: 2, historySize: 10 });
+        rig.sim.reply([...lines], ok);
+      }
+      expect(events.events.map((event) => event.type === "history" && event.piece)).toEqual([
+        null,
+        null,
+        null,
+        null,
+      ]);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("answers null when the viewer froze while the read was in flight", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 });
+      handle.freeze();
+      rig.sim.reply([header(10), row(6)]);
+      expect(events.events.filter((event) => event.type === "history")).toEqual([
+        { type: "history", piece: null },
+      ]);
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("answers null when a reseed began while the read was in flight", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 });
+      const read = rig.sim.written.length;
+      handle.reseed();
+      // The reseed's own commands queue behind the read; answer the read first.
+      expect(rig.sim.written.length).toBeGreaterThanOrEqual(read);
+      rig.sim.reply([header(10), row(6)]);
+      const answers = events.events.filter((event) => event.type === "history");
+      expect(answers).toEqual([{ type: "history", piece: null }]);
+      // While that reseed runs, nothing is read.
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("sends nothing for a viewer of the text capture or a request outside tmux's history", async () => {
+    const rig = await startedRig();
+    const events = collect();
+    try {
+      const handle = rig.channel.subscribePane("pane.alpha", events.onEvent);
+      completeSeed(rig, ["plain"], "0 0 100 50");
+      expect(events.events.some((event) => event.type === "seed")).toBe(true);
+      const written = rig.sim.written.length;
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
+      expect(rig.sim.written.length).toBe(written);
+      const native = await seeded();
+      try {
+        const written = native.rig.sim.written.length;
+        for (const request of [
+          { endRow: 0, rows: 1, historySize: 10 },
+          { endRow: 7, rows: 0, historySize: 10 },
+          { endRow: 11, rows: 1, historySize: 10 },
+          { endRow: 7.5, rows: 1, historySize: 10 },
+        ])
+          expect(native.handle.requestNativeHistory(request)).toBe(false);
+        expect(native.rig.sim.written.length).toBe(written);
+      } finally {
+        await native.rig.channel.dispose();
+      }
+    } finally {
+      await rig.channel.dispose();
     }
   });
 });

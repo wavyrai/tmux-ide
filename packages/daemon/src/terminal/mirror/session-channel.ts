@@ -13,6 +13,10 @@ import {
   decodeNativeGridCapture,
   isStockRawGridCapture,
   isNativeBootstrapCapture,
+  decodeNativeHistoryPiece,
+  nativeSeedHistoryRows,
+  NATIVE_HISTORY_PIECE_CELL_BUDGET,
+  type NativeHistoryRequest,
   NATIVE_BOOTSTRAP_PROBE_FLAGS,
   NATIVE_BOOTSTRAP_PROBE_LIMITS,
   readNativeBootstrapProbe,
@@ -169,6 +173,12 @@ const RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
 // Both the wire-byte cap and this finite allocation bound remain enforced.
 const RECOVERY_CAPTURE_MAX_LINES = RECOVERY_CAPTURE_MAX_BYTES / 64;
 const RECOVERY_CURSOR_MAX_BYTES = 1_024;
+/** #873: a seed's width when the layout does not know the pane yet. */
+const NATIVE_SEED_FALLBACK_COLS = 512;
+const NATIVE_HISTORY_PIECE_LIMITS = {
+  maxBytes: RECOVERY_CAPTURE_MAX_BYTES,
+  maxLines: RECOVERY_CAPTURE_MAX_LINES,
+} as const;
 const RECOVERY_CURSOR_PROBE_FORMAT = [
   "#{cursor_x}",
   "#{cursor_y}",
@@ -318,6 +328,8 @@ export interface SessionChannelOptions {
 
 export interface PaneSubscriptionHandle {
   readHistorySize(): Promise<number | null>;
+  /** #873: older native history rows, answered by one `history` event. */
+  requestNativeHistory(request: NativeHistoryRequest): boolean;
   captureNativeBacking(): Promise<NativeGridReadResult>;
   readonly semanticPaneId: string;
   freeze(): void;
@@ -1214,6 +1226,7 @@ export class SessionChannel {
           () =>
             !sub.closed && sub.pane === pane && this.panesBySemantic.get(semanticPaneId) === pane,
         ),
+      requestNativeHistory: (request) => this.requestNativeHistory(sub, request),
       readHistorySize: () =>
         new Promise((resolve) => {
           const current = () =>
@@ -1737,6 +1750,91 @@ export class SessionChannel {
       cols: pane.width,
       rows: layoutContentRows(pane.top, pane.height, event.rows, event.paneBorderStatus),
     };
+  }
+
+  /**
+   * #873: history rows a native first-open capture reads: the newest that fit
+   * the seed budget at the pane's tmux size. Older rows are read later in
+   * pieces (`requestNativeHistory`), so the open does not depend on the
+   * history's length. Without a known size, assume a 512-column pane.
+   */
+  private nativeSeedHistoryRowsFor(pane: PaneRecord): number {
+    const size = this.layoutSizeFor(pane.runtimeId);
+    const rows = size
+      ? nativeSeedHistoryRows(size.cols, size.rows)
+      : nativeSeedHistoryRows(NATIVE_SEED_FALLBACK_COLS, 1);
+    const limit = this.opts.historyLines;
+    return limit === undefined ? rows : Math.min(limit, rows);
+  }
+
+  /**
+   * #873: read history rows `endRow - rows .. endRow - 1` (tmux's numbers,
+   * from its oldest row) for this subscriber. The answer is one `history`
+   * event, sent from the reply callback so it keeps its place among the
+   * deltas. It is null unless the read stayed clear of every output, layout
+   * and reseed crossing: then the subscriber's parser, having applied every
+   * earlier delta, holds exactly the state tmux read the rows from.
+   */
+  private requestNativeHistory(sub: SubRecord, request: NativeHistoryRequest): boolean {
+    const pane = sub.pane;
+    const { endRow, rows, historySize } = request;
+    if (
+      this.disposed ||
+      sub.closed ||
+      sub.frozen ||
+      !sub.nativeBootstrap ||
+      this.nativeBootstrapUnavailable ||
+      sub.feed.currentState() !== "live" ||
+      ![endRow, rows, historySize].every((value) => Number.isSafeInteger(value)) ||
+      endRow < 1 ||
+      rows < 1 ||
+      historySize < endRow
+    )
+      return false;
+    const runtimeId = pane.runtimeId;
+    const size = this.layoutSizeFor(runtimeId);
+    const cols = size?.cols ?? NATIVE_SEED_FALLBACK_COLS;
+    const wanted = Math.min(
+      rows,
+      endRow,
+      Math.max(1, Math.floor(NATIVE_HISTORY_PIECE_CELL_BUDGET / cols)),
+    );
+    const start = endRow - wanted - historySize;
+    const end = endRow - 1 - historySize;
+    this.input.flush();
+    const outputOrdinal = this.outputOrdinals.get(runtimeId) ?? 0;
+    const feedEpoch = sub.feed.reseedEpoch();
+    const incarnation = pane.incarnation;
+    let marker: string | null = null;
+    this.captureWithViewer(
+      runtimeId,
+      ["-R", "-S", String(start), "-E", String(end)],
+      (value) => {
+        marker = value;
+      },
+      (reply) => {
+        if (marker) {
+          if (reply.ok) this.clearInternalReadMarkerOption(runtimeId, marker);
+          else this.retireInternalReadMarker(runtimeId, marker);
+        }
+        if (sub.closed || this.disposed) return;
+        const windowId = pane.windowRuntimeId;
+        const current =
+          !sub.frozen &&
+          sub.pane === pane &&
+          this.panesByRuntime.get(runtimeId) === pane &&
+          pane.incarnation === incarnation &&
+          sub.feed.currentState() === "live" &&
+          sub.feed.reseedEpoch() === feedEpoch &&
+          (this.outputOrdinals.get(runtimeId) ?? 0) === outputOrdinal &&
+          !(windowId !== null && this.pendingLayoutOutput.has(windowId));
+        const piece =
+          current && reply.ok ? decodeNativeHistoryPiece(reply.lines.join("\n") + "\n") : null;
+        sub.onEvent({ type: "history", piece });
+      },
+      NATIVE_HISTORY_PIECE_LIMITS,
+    );
+    return true;
   }
 
   private layoutSizeFor(runtime: string): { cols: number; rows: number } | null {
@@ -2365,16 +2463,24 @@ export class SessionChannel {
       const accepted = this.opts.ownedViewer!.tryDispatch(
         this.io,
         target.representation === "dual"
-          ? nativeAtomicDualSnapshotPlan({
-              serverEpoch: target.serverEpoch,
-              paneId: target.paneId,
-              paneBirthId: target.paneBirthId,
-            })
-          : nativeAtomicSnapshotPlan({
-              serverEpoch: target.serverEpoch,
-              paneId: target.paneId,
-              paneBirthId: target.paneBirthId,
-            }),
+          ? nativeAtomicDualSnapshotPlan(
+              {
+                serverEpoch: target.serverEpoch,
+                paneId: target.paneId,
+                paneBirthId: target.paneBirthId,
+              },
+              undefined,
+              this.nativeSeedHistoryRowsFor(pane),
+            )
+          : nativeAtomicSnapshotPlan(
+              {
+                serverEpoch: target.serverEpoch,
+                paneId: target.paneId,
+                paneBirthId: target.paneBirthId,
+              },
+              undefined,
+              this.nativeSeedHistoryRowsFor(pane),
+            ),
         (reply) => {
           if (settled || !exact()) {
             failed();
@@ -2640,7 +2746,7 @@ export class SessionChannel {
     const body =
       `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker}` +
       ` ; ${sentinel("start")}` +
-      ` ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId}` +
+      ` ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${nativeCapture ? this.nativeSeedHistoryRowsFor(pane) : (this.opts.historyLines ?? "")} -t ${pane.runtimeId}` +
       ` ; ${sentinel("capture-end")}` +
       (dualCapture
         ? ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("ansi-capture-end")}`
@@ -2720,7 +2826,9 @@ export class SessionChannel {
               return;
             }
             const captureLines = Object.freeze([...result.captureLines]);
-            const native = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+            const native = nativeCapture
+              ? decodeNativeGridCapture(captureLines.join("\n"), { tail: true })
+              : null;
             if (nativeCapture && (!native || !isNativeBootstrapCapture(native))) {
               if (nativeBootstrapUnsupported(captureLines, native)) {
                 this.nativeBootstrapUnavailable = true;

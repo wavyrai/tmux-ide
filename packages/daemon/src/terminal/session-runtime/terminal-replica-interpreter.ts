@@ -1,7 +1,7 @@
 import { assertStockCaptureRepresentable } from "./stock-capture-fidelity.ts";
 import { logger } from "../../lib/log.ts";
 import { rememberNativeSeedBacking } from "./native-seed-backing.ts";
-import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import type { NativeGridCapture, NativeHistoryPiece } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import {
   detectWidgetMarkerFromReplicaRows,
@@ -34,9 +34,10 @@ import {
   type SessionRuntimeObservability,
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
-import type {
-  TerminalInterpreterBackend,
-  TerminalInterpreterBackendFactory,
+import {
+  DAEMON_HISTORY_ROW_CAP,
+  type TerminalInterpreterBackend,
+  type TerminalInterpreterBackendFactory,
 } from "./terminal-interpreter-backend.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
 import {
@@ -148,6 +149,8 @@ export interface TerminalReplicaInterpreterOptions {
   readonly cols: number;
   readonly rows: number;
   readonly scrollback?: number;
+  /** #873: the most history rows held per pane; DAEMON_HISTORY_ROW_CAP by default. */
+  readonly historyRowCap?: number;
   readonly onUpdate?: (
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
@@ -191,6 +194,7 @@ export class TerminalReplicaInterpreter {
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
   #scrollback: number;
+  readonly #historyRowCap: number;
   readonly #listeners = new Set<
     (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
   >();
@@ -260,6 +264,7 @@ export class TerminalReplicaInterpreter {
     this.#incarnation = options.incarnation;
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
+    this.#historyRowCap = options.historyRowCap ?? DAEMON_HISTORY_ROW_CAP;
     this.#onRawCommit = options.onRawCommit;
     this.#onNativeReseedRequired = options.onNativeReseedRequired;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
@@ -269,6 +274,7 @@ export class TerminalReplicaInterpreter {
       cols: options.cols,
       rows: options.rows,
       scrollback: this.#scrollback,
+      historyRowCap: this.#historyRowCap,
     });
     this.#backend.startHistoryCollection?.();
     this.#kitty = new KittyImageStore(
@@ -334,6 +340,36 @@ export class TerminalReplicaInterpreter {
           }
         : operation;
     return this.#append(admitted);
+  }
+
+  /**
+   * #873: prepend the older history rows of a piece read from tmux, in order
+   * with the writes queued before it. True when the rows were prepended and a
+   * new revision published; false when the piece does not fit the replica as
+   * it is at that point of the stream (see the backend's prependNativeHistory).
+   */
+  prependNativeHistory(piece: NativeHistoryPiece): Promise<boolean> {
+    this.#flushWrites();
+    const run = this.#tail.then(() => this.#applyHistoryPiece(piece));
+    this.#tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * #873: tmux history rows older than the replica's oldest history row; tmux's
+   * history size is this plus the replica's history rows. Set by a native seed
+   * that left them out, zero after any other seed.
+   */
+  omittedHistory(): number {
+    return this.#backend.omittedHistory?.() ?? 0;
+  }
+
+  /** #873: the most history rows the replica holds; the backfill stops there. */
+  historyRowCap(): number {
+    return this.#historyRowCap;
   }
 
   whenIdle(): Promise<void> {
@@ -455,13 +491,14 @@ export class TerminalReplicaInterpreter {
       const scrollback = Math.max(
         operation.historyLimit ?? this.#scrollback,
         operation.historySize ?? 0,
-        operation.native?.history ?? 0,
+        (operation.native?.history ?? 0) + (operation.native?.omittedHistory ?? 0),
       );
       const replacement = this.#backendFactory({
         cols: nativeCols,
         rows: nativeRows,
         scrollback,
         historyLimit: operation.historyLimit ?? scrollback,
+        historyRowCap: this.#historyRowCap,
       });
       try {
         if (operation.native && !replacement.importNativeGrid?.(operation.native))
@@ -592,6 +629,25 @@ export class TerminalReplicaInterpreter {
       this.#rejectSeedReady(new Error("Terminal replica closed before bootstrap"));
     this.#backend.dispose();
     this.#emit(update);
+  }
+
+  #applyHistoryPiece(piece: NativeHistoryPiece): boolean {
+    if (
+      this.#closed ||
+      this.#needsSeed ||
+      this.#nativeReseedRequested ||
+      this.#pendingResize !== null ||
+      this.#backend.requiresNativeReseed() ||
+      // A synchronized update publishes nothing until it ends.
+      this.#backend.modes().synchronizedOutput ||
+      !this.#backend.prependNativeHistory?.(piece)
+    )
+      return false;
+    // Image anchors are absolute buffer lines; prepended rows moved them all.
+    this.#kitty.dropCursorPlacements();
+    this.#commit(false);
+    this.#publishGraphics();
+    return true;
   }
 
   async #write(
