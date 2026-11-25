@@ -32,6 +32,8 @@ struct Entry {
     queued: bool,
     watch: Option<super::CatalogWatchWorker>,
     watch_failed: bool,
+    /// The watch reported a change the agent rows have not taken yet.
+    notified: bool,
 }
 /// Call and drop only on a background owner, since retiring SSH may wait for its
 /// exact owned process. Registry policy and published selection tokens belong to
@@ -65,6 +67,7 @@ impl FleetCatalogPool {
                 queued: true,
                 watch: None,
                 watch_failed: false,
+                notified: false,
             },
         );
         self.queue.push_back(id);
@@ -100,6 +103,31 @@ impl FleetCatalogPool {
             && !entry.watch_failed)
             .then(|| entry.source.clone())
     }
+    /// Whether route `id`'s live lane is pushed fleet changes (servers,
+    /// sessions, agents), and whether it reported one since the last call.
+    pub fn push(&mut self, id: &str) -> (bool, bool) {
+        let Some(entry) = self.entries.get_mut(id) else {
+            return (false, false);
+        };
+        let push = !entry.watch_failed
+            && entry
+                .watch
+                .as_ref()
+                .is_some_and(super::CatalogWatchWorker::fleet_push);
+        (push, std::mem::take(&mut entry.notified))
+    }
+    /// Gives route `id` a lane, as a completed first read would. For tests.
+    #[doc(hidden)]
+    pub fn set_watch(&mut self, id: &str, watch: super::CatalogWatchWorker) {
+        if let Some(entry) = self.entries.get_mut(id) {
+            entry.watch = Some(watch);
+        }
+    }
+    /// Route `id`'s lane. For tests.
+    #[doc(hidden)]
+    pub fn watch(&self, id: &str) -> Option<&super::CatalogWatchWorker> {
+        self.entries.get(id)?.watch.as_ref()
+    }
     pub fn busy(&self) -> bool {
         !self.queue.is_empty() || self.entries.values().any(|entry| entry.worker.is_some())
     }
@@ -131,7 +159,10 @@ impl FleetCatalogPool {
             };
             if let Some(notice) = notice {
                 match notice {
-                    Ok(()) => invalidated.push(id.clone()),
+                    Ok(()) => {
+                        entry.notified = true;
+                        invalidated.push(id.clone());
+                    }
                     Err(error) => {
                         entry.catalog_identity = None;
                         entry.watch.take();

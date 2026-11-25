@@ -57,6 +57,54 @@ impl Gate {
         }
     }
 }
+impl Gate {
+    /// The machines whose daemons push agent changes now: `selected` when its
+    /// own lane does (`selected_push`), and each saved machine whose catalog
+    /// lane in the fleet pool does. And whether any of those lanes sent a
+    /// notice since the last call (card #876).
+    pub(in super::super) fn agent_push(
+        &self,
+        selected: &str,
+        selected_push: bool,
+    ) -> Result<(BTreeSet<String>, bool), Error> {
+        let mut pushing = BTreeSet::new();
+        if selected_push {
+            pushing.insert(selected.to_owned());
+        }
+        let mut notified = false;
+        #[cfg(unix)]
+        if let Some(registry) = &self.registry {
+            let mut registry = registry
+                .lock()
+                .map_err(|_| Error::Invalid("fleet owner closed"))?;
+            for (machine, (_, incarnation)) in &self.labels {
+                if machine == selected {
+                    continue;
+                }
+                let (push, notice) = registry.agent_push(machine, *incarnation);
+                if push {
+                    pushing.insert(machine.clone());
+                }
+                notified |= notice;
+            }
+        }
+        Ok((pushing, notified))
+    }
+}
+#[cfg(all(test, unix))]
+impl Gate {
+    /// A saved machine `id` on Home, behind `registry`, as a reconcile would
+    /// leave it. For tests.
+    pub(in crate::tmux_snapshot) fn install_test_route(
+        &mut self,
+        registry: Handle,
+        id: &str,
+        incarnation: uuid::Uuid,
+    ) {
+        self.registry = Some(registry);
+        self.labels.insert(id.into(), ("Saved".into(), incarnation));
+    }
+}
 impl Local {
     pub(in super::super) fn open_fleet_agent(
         &mut self,

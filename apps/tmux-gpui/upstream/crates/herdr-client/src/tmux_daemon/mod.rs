@@ -34,7 +34,7 @@ pub use catalog::{CatalogIdentity, CatalogSnapshot};
 pub use catalog_events::{
     CatalogEventEffect, CatalogEventError, CatalogEventIdentity, CatalogEvents,
 };
-pub use catalog_watch::{CatalogWatchError, CatalogWatchWorker};
+pub use catalog_watch::{CatalogWatchError, CatalogWatchWorker, probe_all as probe_catalog_lanes};
 mod create_pane;
 mod create_session;
 mod local_session;
