@@ -638,8 +638,8 @@ fn a_line_queued_with_a_fit_before_or_after_it_is_announced() {
 }
 
 /// A stream lost, or failed by a command, before the window is back to read
-/// the notice hands it to the next stream; one that had no notice hands
-/// nothing on.
+/// the notice hands it to the next stream; one with no notice, or another
+/// outcome, hands nothing on.
 #[test]
 fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
     let lost = || {
@@ -647,11 +647,19 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
             tmux_stream::Error::ReadyTimeout,
         ))
     };
-    for (notice, failed) in [(true, false), (true, true), (false, false), (false, true)] {
+    let other = Some("Pane action was not applied");
+    let cases = [
+        (Some(super::KEYS_NOT_SENT), false),
+        (Some(super::KEYS_NOT_SENT), true),
+        (None, false),
+        (None, true),
+        (other, false),
+        (other, true),
+    ];
+    for (outcome, failed) in cases {
+        let notice = outcome == Some(super::KEYS_NOT_SENT);
         let (mut active, state, _seen, peer) = selection_tests::fixture(true);
-        if notice {
-            active.action_status.set(Some(super::KEYS_NOT_SENT));
-        }
+        active.action_status.set(outcome);
         let mut hold = hold::Hold::default();
         let mut pending = std::collections::VecDeque::new();
         if failed {
@@ -662,7 +670,7 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
         assert_eq!(
             hold.take_keys_not_sent(),
             notice,
-            "notice {notice}, command failed {failed}"
+            "{outcome:?}, command failed {failed}"
         );
         active.controller.retire();
         peer.join().unwrap();
