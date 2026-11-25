@@ -487,14 +487,34 @@ fn a_panic_in_the_loop_is_restarted() {
         Ok(())
     });
     let supervised = supervised(QUICK, vec![panicking]);
-    let _first = first_catalog(&supervised);
+    let first = first_catalog(&supervised);
+    // The window leaves, and the catalog publishes once more: what the run
+    // saw is kept as it goes, since a panic returns nothing.
+    supervised
+        .bridge
+        .commands
+        .send(Command::Presence {
+            active: false,
+            revision: 5,
+        })
+        .unwrap();
+    let mut later = shown();
+    later.status = "Later".into();
+    first
+        .events
+        .send(Incoming::Catalog(Box::new(later)))
+        .unwrap();
+    until(&supervised.bridge.mailbox, "the later state", |state| {
+        state.status == "Later"
+    });
     supervised
         .bridge
         .commands
         .send(Command::Refresh { request: 66 })
         .unwrap();
     let next = supervised.next_catalog();
-    assert_eq!(next.seen.map(|seen| seen.request), Some(7));
+    let seen = next.seen.unwrap();
+    assert_eq!((seen.request, seen.presence), (7, (false, 5)));
 }
 
 /// The focus a window gave one run carries over more than one restart.
@@ -570,6 +590,10 @@ fn a_new_generation_starts_where_the_window_was() {
     assert_eq!(state.surface, Surface::Workspace);
     assert_eq!(state.selected_session, seen.session);
     assert_eq!(state.status, reconnect::RECONNECTING);
+    assert!(
+        matches!(done.try_recv(), Err(mpsc::TryRecvError::Empty)),
+        "the actor is still running"
+    );
     drop((events, output));
     assert!(matches!(
         done.recv_timeout(WAIT),
