@@ -176,6 +176,8 @@ describe("backend: rows a native seed left out (#873 point 1)", () => {
     [20, 3, 15, 9],
     [20, 2, 10, 40],
     [50, 30, 10, 25],
+    // Fewer rows held than a tenth of the limit: the collection takes a full tenth.
+    [50, 48, 2, 1],
   ])(
     "limit %i, %i left out, %i held, %i lines: tmux's history size is left out + held",
     async (limit, omitted, held, count) => {
@@ -210,6 +212,22 @@ describe("backend: rows a native seed left out (#873 point 1)", () => {
       // Two used rows: collect 2 at 20 (left out 5 -> 3), 19 -> 20 after the second row.
       expect(backend.omittedHistory()).toBe(3);
       expect(project(backend).history).toHaveLength(17);
+    } finally {
+      backend.dispose();
+    }
+  });
+
+  it("collects from the left-out rows on a scroll-on-clear erase over the limit", async () => {
+    // A reflow can leave tmux holding more than its limit: 5 left out and 20 held.
+    const limit = 20;
+    const backend = seededBackend(tailCapture(tmuxRows(25), 5, limit), limit);
+    try {
+      backend.setAuthoritativeModes({ scrollOnClear: true });
+      await backend.write("\x1b[1;1HA\x1b[2;1HB");
+      await backend.write("\x1b[2J");
+      // tmux: 25 -> 23 -> 24, then 24 -> 22 -> 23; both collections take left-out rows.
+      expect(project(backend).history).toHaveLength(22);
+      expect(backend.omittedHistory()).toBe(1);
     } finally {
       backend.dispose();
     }
@@ -265,7 +283,7 @@ describe("backend: prepending a history piece (#873 point 2)", () => {
     ["an empty piece", (rows: NativeGridCaptureRow[]) => piece(rows, 9, 0, 15)],
     [
       "a negative first row",
-      (rows: NativeGridCaptureRow[]) => ({ ...piece(rows, 0, 10, 15), firstRow: -1 }),
+      (rows: NativeGridCaptureRow[]) => ({ ...piece(rows, 0, 11, 15), firstRow: -1 }),
     ],
   ])("refuses %s and changes nothing", (_label, make) => {
     const { rows, backend } = setup();
@@ -316,6 +334,33 @@ describe("backend: prepending a history piece (#873 point 2)", () => {
       expect(project(backend).history.map(text)).toEqual(["R10", "R11", "R12", "R13", "R14"]);
     } finally {
       backend.dispose();
+    }
+  });
+
+  it("prepends up to the parser's capacity and no further", () => {
+    const rows = tmuxRows(15);
+    const make = () => {
+      const backend = createXtermTerminalInterpreterBackend({
+        cols: COLS,
+        rows: ROWS,
+        scrollback: 8,
+        historyLimit: 8,
+      }) as Backend;
+      expect(backend.importNativeGrid!(tailCapture(rows, 10, 8))).toBe(true);
+      return backend;
+    };
+    // Capacity is 9 history rows (the limit and one) plus the screen; 5 are held.
+    const fits = make();
+    const over = make();
+    try {
+      expect(over.prependNativeHistory(piece(rows, 5, 5, 15))).toBe(false);
+      expect(fits.prependNativeHistory(piece(rows, 6, 4, 15))).toBe(true);
+      expect(project(fits).history.map(text)).toEqual(
+        Array.from({ length: 9 }, (_, n) => `R${n + 6}`),
+      );
+    } finally {
+      fits.dispose();
+      over.dispose();
     }
   });
 
@@ -765,6 +810,45 @@ describe("owner: the backfill (#873 point 3)", () => {
       expect(r.timers().map((t) => t.delayMs)).toContain(250);
       r.fire(250);
       await vi.waitFor(() => expect(r.requests).toHaveLength(2));
+    } finally {
+      await r.owner.dispose();
+    }
+  });
+
+  it("ignores an answer that arrives while a reseed is capturing", async () => {
+    const r = await ownerRig();
+    try {
+      await vi.waitFor(() => expect(r.requests).toHaveLength(1));
+      const updates: CanonicalTerminalReplicaUpdate[] = [];
+      await r.owner.subscribe((u) => updates.push(u));
+      const before = updates.length;
+      r.event({ type: "reset", cols: COLS, rows: ROWS });
+      r.answer(r.requests[0]!);
+      await flush();
+      expect(updates).toHaveLength(before);
+    } finally {
+      await r.owner.dispose();
+    }
+  });
+
+  it("counts failures in a row: a prepended piece starts the count again", async () => {
+    const cols = 4096; // 64 rows per piece
+    const r = await ownerRig({ historyRows: 200, omitted: 150, cols });
+    try {
+      await vi.waitFor(() => expect(r.requests).toHaveLength(1));
+      const fail = async () => {
+        const asked = r.requests.length;
+        r.event({ type: "history", piece: null });
+        await flush();
+        r.fire();
+        await vi.waitFor(() => expect(r.requests.length).toBe(asked + 1));
+      };
+      for (let n = 0; n < 15; n++) await fail();
+      r.answer(r.requests.at(-1)!);
+      await vi.waitFor(() => expect(r.requests.length).toBe(17));
+      r.event({ type: "history", piece: null });
+      await flush();
+      expect(r.timers().map((t) => t.delayMs)).toEqual([250]);
     } finally {
       await r.owner.dispose();
     }
