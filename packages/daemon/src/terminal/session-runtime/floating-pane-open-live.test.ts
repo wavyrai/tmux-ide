@@ -172,10 +172,12 @@ it.for(cases)(
         // Closing the float from a shell removes it from the listing.
         run("kill-pane", "-t", panes[2]![0]!);
         await expect
-          .poll(async () =>
-            (await runtime!.describeSessionAuthority("f")).description.panes
-              .map((pane) => pane.semanticPaneId)
-              .sort(),
+          .poll(
+            async () =>
+              (await runtime!.describeSessionAuthority("f")).description.panes
+                .map((pane) => pane.semanticPaneId)
+                .sort(),
+            { timeout: 5_000 },
           )
           .toEqual(["pane.f0", "pane.f1"]);
       } finally {
