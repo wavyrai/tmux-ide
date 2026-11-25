@@ -1007,6 +1007,22 @@ describe("the daemon's cap on rows held per pane (#873, owner decision of 25 Nov
     expect(backend.omittedHistory()).toBe(5);
   });
 
+  it("trims a seed over the cap in the owner's replica and asks for nothing", async () => {
+    const r = await ownerRig({ historyRows: 30, omitted: 15, historyRowCap: 10 });
+    try {
+      const seen: CanonicalTerminalReplicaUpdate[] = [];
+      await r.owner.subscribe((u) => seen.push(u));
+      const snapshot = seen[0]!.type === "terminal.seed" ? seen[0]!.snapshot : null;
+      expect(snapshot!.history.map(text)).toEqual(
+        Array.from({ length: 10 }, (_, n) => `R${n + 20}`),
+      );
+      await flush();
+      expect(r.requests).toHaveLength(0);
+    } finally {
+      await r.owner.dispose();
+    }
+  });
+
   it("asks only up to the cap, then never again, and its history check agrees with tmux", async () => {
     const r = await ownerRig({ historyRows: 30, omitted: 25, historyRowCap: 10 });
     try {
