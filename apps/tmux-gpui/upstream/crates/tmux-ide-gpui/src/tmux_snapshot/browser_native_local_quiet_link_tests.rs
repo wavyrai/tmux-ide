@@ -103,9 +103,13 @@ fn a_session_lane_drop_keeps_the_rows_and_retries() {
         local.workspace_catalog_observing(),
         "the session stopped observing"
     );
-    assert!(local.home.active(), "nothing retries the lane");
+    assert!(!local.home.active(), "the session took Home's recovery");
+    assert!(
+        local.home_recovery_wait().is_some(),
+        "nothing retries the lane"
+    );
     // The retry is due: the lane resumes after its cursor.
-    local.home.retry_now(Instant::now());
+    network_watch::simulate_wake();
     local.home_recovery_tick().unwrap();
     let owned = local.sources.0.lock().unwrap();
     assert!(owned.catalog.recovering, "the lane was not resumed");

@@ -91,6 +91,20 @@ impl Gate {
         Ok((pushing, notified))
     }
 }
+#[cfg(all(test, unix))]
+impl Gate {
+    /// A saved machine `id` on Home, behind `registry`, as a reconcile would
+    /// leave it. For tests.
+    pub(in crate::tmux_snapshot) fn install_test_route(
+        &mut self,
+        registry: Handle,
+        id: &str,
+        incarnation: uuid::Uuid,
+    ) {
+        self.registry = Some(registry);
+        self.labels.insert(id.into(), ("Saved".into(), incarnation));
+    }
+}
 impl Local {
     pub(in super::super) fn open_fleet_agent(
         &mut self,

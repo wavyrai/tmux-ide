@@ -116,12 +116,17 @@ impl FleetCatalogPool {
                 .is_some_and(super::CatalogWatchWorker::fleet_push);
         (push, std::mem::take(&mut entry.notified))
     }
-    /// Gives route `id` a lane, as a completed first read would.
-    #[cfg(test)]
-    pub(super) fn set_watch(&mut self, id: &str, watch: super::CatalogWatchWorker) {
+    /// Gives route `id` a lane, as a completed first read would. For tests.
+    #[doc(hidden)]
+    pub fn set_watch(&mut self, id: &str, watch: super::CatalogWatchWorker) {
         if let Some(entry) = self.entries.get_mut(id) {
             entry.watch = Some(watch);
         }
+    }
+    /// Route `id`'s lane. For tests.
+    #[doc(hidden)]
+    pub fn watch(&self, id: &str) -> Option<&super::CatalogWatchWorker> {
+        self.entries.get(id)?.watch.as_ref()
     }
     pub fn busy(&self) -> bool {
         !self.queue.is_empty() || self.entries.values().any(|entry| entry.worker.is_some())

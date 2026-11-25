@@ -192,6 +192,16 @@ impl FleetRegistry {
         }
         self.pool.push(id)
     }
+    /// Gives route `id` a lane, as its first completed read would. For tests.
+    #[doc(hidden)]
+    pub fn set_watch(&mut self, id: &str, watch: super::CatalogWatchWorker) {
+        self.pool.set_watch(id, watch);
+    }
+    /// Route `id`'s lane. For tests.
+    #[doc(hidden)]
+    pub fn watch(&self, id: &str) -> Option<&super::CatalogWatchWorker> {
+        self.pool.watch(id)
+    }
     pub fn poll(&mut self) -> Result<Vec<FleetCatalogEvent>, FleetRegistryError> {
         let events = self.pool.poll()?;
         Ok(events

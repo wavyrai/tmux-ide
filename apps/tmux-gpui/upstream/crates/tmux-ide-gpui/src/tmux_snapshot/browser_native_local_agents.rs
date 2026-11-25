@@ -83,6 +83,10 @@ pub(super) struct Gate {
     /// The workspace status line before a click was refused, put back by the
     /// next agent that opens.
     refused_status: Option<String>,
+    /// The open session's catalog lane is being retried (card #876). Its own
+    /// recovery, apart from Home's: it never blocks opening a session and
+    /// never speaks on the status line.
+    pub(super) lane: home_recovery::Recovery,
 }
 impl Gate {
     pub(super) fn tab_observation(
@@ -516,7 +520,7 @@ impl Local {
     pub(super) fn agent_tick(&mut self) -> Result<(), Error> {
         // While a stream or Home reconnects, the rows stay as last known,
         // and the state says so until the re-read after the drop completes.
-        if self.recovery.is_some() || self.home.active() {
+        if self.recovery.is_some() || self.home.active() || self.agents.lane.active() {
             self.agents.pause();
             return self.publish_last_known();
         }
@@ -849,6 +853,9 @@ mod background_tests;
 #[cfg(test)]
 #[path = "browser_native_local_quiet_link_fixture.rs"]
 pub(super) mod quiet_link_fixture;
+#[cfg(test)]
+#[path = "browser_native_local_session_lane_tests.rs"]
+mod session_lane_tests;
 #[cfg(test)]
 #[path = "browser_native_local_agents_tests.rs"]
 mod tests;

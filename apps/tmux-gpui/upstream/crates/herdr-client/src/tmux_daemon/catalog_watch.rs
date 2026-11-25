@@ -227,8 +227,8 @@ impl CatalogWatchWorker {
         }
     }
     /// Puts a change, or the lane's end, in a detached worker's mailbox.
-    #[cfg(test)]
-    pub(super) fn report_detached(&self, lost: bool) {
+    #[doc(hidden)]
+    pub fn report_detached(&self, lost: bool) {
         if let Ok(mut notices) = self.mailbox.lock() {
             notices.changed = !lost;
             notices.failed = lost.then_some(CatalogWatchError::Closed);
@@ -254,8 +254,8 @@ impl CatalogWatchWorker {
         })
     }
     /// Sets a detached lane's push state, as a daemon's acknowledgement would.
-    #[cfg(test)]
-    pub(super) fn push_detached(&self, push: bool) {
+    #[doc(hidden)]
+    pub fn push_detached(&self, push: bool) {
         self.cancel.fleet_push.store(push, Ordering::Release);
     }
     pub fn cancel(&self) {

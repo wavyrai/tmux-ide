@@ -344,6 +344,30 @@ impl Owner {
         owned.catalog.poll(&source, visible, eligible)
     }
 }
+/// Tests outside this module drive the selected lane through these.
+#[cfg(test)]
+impl Owner {
+    /// Seeds `snapshot` and gives it `lane`, as a completed read would.
+    pub(in crate::tmux_snapshot) fn install_test_lane(
+        &self,
+        snapshot: &FleetCatalog,
+        lane: CatalogWatchWorker,
+    ) {
+        let mut owned = self.0.lock().unwrap();
+        owned.catalog.seed(snapshot);
+        owned.catalog.watch = Some(lane);
+    }
+    /// The lane ends with `error`, as a dropped socket would report it.
+    pub(in crate::tmux_snapshot) fn fail_test_lane(&self, error: herdr_client::tmux_daemon::Error) {
+        let mut owned = self.0.lock().unwrap();
+        owned.catalog.watch.take();
+        owned.catalog.failure = Some(error);
+    }
+    /// Whether the kept catalog waits for a retry after a drop.
+    pub(in crate::tmux_snapshot) fn test_held(&self) -> bool {
+        self.0.lock().unwrap().catalog.held
+    }
+}
 impl Local {
     pub(in crate::tmux_snapshot) fn selected_catalog_tick(&mut self) -> Result<(), Error> {
         let home = self.state.surface == Surface::Home && self.state.home_phase == HomePhase::Live;
