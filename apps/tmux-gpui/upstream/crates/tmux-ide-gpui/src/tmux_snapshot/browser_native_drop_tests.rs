@@ -232,3 +232,39 @@ fn a_blur_with_no_stream_reports_typing_for_the_held_session() {
         peer.join().unwrap();
     }
 }
+
+/// Review round 1, item 1: a paste longer than one chunk is under way (its
+/// first chunk unanswered) when another client splits a pane in. The stream
+/// is re-leased and its controller retired, which forgets the paste; the
+/// rest is never sent, and the re-leased stream says so.
+#[test]
+fn a_paste_cut_by_a_re_lease_is_announced() {
+    let script = Script::default();
+    script.hold_acks.store(true, Ordering::SeqCst);
+    let mut app = Loop::start_with(script.clone());
+    app.send(Command::Input {
+        request: 3,
+        id: "left".into(),
+        input_target: None,
+        input: Input::Paste("p".repeat(4096)),
+    });
+    let sent = std::cell::RefCell::new(Vec::new());
+    wait("the first chunk sent", || {
+        sent.borrow_mut().extend(app.typed());
+        !sent.borrow().is_empty()
+    });
+    let mut sent = sent.into_inner();
+    script.add_pane_now.store(true, Ordering::SeqCst);
+    wait("the route re-leased", || {
+        app.refreshes.load(Ordering::SeqCst) > 0
+    });
+    script.hold_acks.store(false, Ordering::SeqCst);
+    app.reopen(3);
+    app.until(
+        "the re-leased stream says the paste was not sent",
+        |state| state.request == 3 && state.input_ready && state.status == DROPPED,
+    );
+    thread::sleep(Duration::from_millis(100));
+    sent.extend(app.typed());
+    assert_eq!(sent.len(), 1, "more than the first chunk was sent");
+}
