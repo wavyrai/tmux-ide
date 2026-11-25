@@ -951,6 +951,8 @@ mod always;
 mod cause;
 #[path = "browser_native_local_reconnect_held_tests.rs"]
 mod held;
+#[path = "browser_native_local_reconnect_selection_tests.rs"]
+mod selection;
 #[path = "browser_native_local_update_tests.rs"]
 mod update;
 
