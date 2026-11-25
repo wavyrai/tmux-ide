@@ -9,7 +9,7 @@
 //! `--tmux-native-ssh TARGET` starts the app. `TMUX_IDE_CHURN_BLUR_EVERY_S`
 //! sends the window to the background for 3 s that often, as switching to
 //! another app does. With `TMUX_IDE_CHURN_ASSERT=1` it fails when a reconnect
-//! shows, or when anything but the first rows' load (two changes) does.
+//! shows, or when anything changes after the first 5 s of a phase.
 use super::*;
 
 fn seconds(name: &str, default: u64) -> Duration {
@@ -146,7 +146,11 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
             epoch_ms()
         );
         let (mut publications, mut changes, mut reconnects) = (0u64, 0u64, 0u64);
-        let end = Instant::now() + length;
+        let begun = Instant::now();
+        let end = begun + length;
+        // The first rows of every machine land in the first seconds of a
+        // phase (a saved machine's catalog arrives after the local one).
+        let settled = begun + Duration::from_secs(5);
         while Instant::now() < end {
             if let Some(at) = next_blur
                 && Instant::now() >= at
@@ -187,7 +191,7 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
                 let mut b = last.clone();
                 a["status"] = serde_json::Value::Null;
                 b["status"] = serde_json::Value::Null;
-                changes += u64::from(a != b);
+                changes += u64::from(a != b && Instant::now() >= settled);
                 let reconnecting = s.reconnect_attempt.is_some()
                     || s.status.contains("econnect")
                     || s.agents_last_known
@@ -205,10 +209,10 @@ fn sidebar_and_home_hold_one_connection_on_a_quiet_link() {
             serde_json::json!({"phase": phase, "seconds": length.as_secs(),
                 "publications": publications, "changes": changes, "reconnecting": reconnects})
         );
-        // After the first rows, a quiet link changes nothing on screen.
+        // Once the first rows are in, a quiet link changes nothing on screen.
         if std::env::var("TMUX_IDE_CHURN_ASSERT").is_ok_and(|v| v == "1") {
             assert_eq!(reconnects, 0, "{phase}: a reconnect showed");
-            assert!(changes <= 2, "{phase}: {changes} changes on a quiet link");
+            assert_eq!(changes, 0, "{phase}: {changes} changes on a quiet link");
         }
     }
     owner.shutdown().unwrap();
