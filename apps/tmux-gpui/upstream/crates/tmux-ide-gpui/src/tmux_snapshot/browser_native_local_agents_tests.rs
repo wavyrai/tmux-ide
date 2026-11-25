@@ -324,13 +324,13 @@ fn a_pushing_daemon_replaces_the_agent_timer_with_its_notices() {
     };
     let mut gate = Gate::default();
     gate.configure(vec![context()], 1, false, 0, Instant::now());
-    gate.pushed(true, false, "local");
+    gate.pushed(&["local".to_owned()].into(), false);
     finish_cycle(&mut gate);
     assert!(gate.due.is_none(), "a pushed cycle scheduled a re-read");
-    gate.pushed(true, true, "local");
+    gate.pushed(&["local".to_owned()].into(), true);
     assert!(gate.due.is_some_and(|due| due <= Instant::now()));
 
-    gate.pushed(false, false, "local");
+    gate.pushed(&Default::default(), false);
     finish_cycle(&mut gate);
     assert!(gate.due.is_some_and(|due| due > Instant::now()));
 
@@ -338,7 +338,7 @@ fn a_pushing_daemon_replaces_the_agent_timer_with_its_notices() {
     remote.machine = "remote".into();
     let mut gate = Gate::default();
     gate.configure(vec![context(), remote], 2, false, 0, Instant::now());
-    gate.pushed(true, false, "local");
+    gate.pushed(&["local".to_owned()].into(), false);
     finish_cycle(&mut gate);
     assert!(gate.due.is_some(), "a remote session lost its re-read");
 }
