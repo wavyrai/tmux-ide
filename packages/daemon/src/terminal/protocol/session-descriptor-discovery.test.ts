@@ -264,7 +264,7 @@ it("carries live browser icon metadata without changing pane identity", () => {
 
 it("reports a terminal browser's kind from its control option and command (#718)", () => {
   expect(
-    SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{pane_pid}\t#{qa:@tmux_ide_browser_control}"),
+    SESSION_PANE_DESCRIPTOR_FORMAT.includes("\t#{pane_pid}\t#{qa:@tmux_ide_browser_control}\t"),
   ).toBe(true);
   const record = (command: string, control: string) => {
     const fields = line("%3").split("\t");
@@ -390,5 +390,22 @@ describe("sameSessionPaneInventory (#730)", () => {
       ),
     ).toBe(false);
     expect(sameSessionPaneInventory([], [])).toBe(true);
+  });
+});
+
+describe("floating panes (#882)", () => {
+  it("reads tmux's floating flag, and reads a tmux without it as tiled", () => {
+    expect(SESSION_PANE_DESCRIPTOR_FORMAT.endsWith("\t#{pane_floating_flag}")).toBe(true);
+    // line() ends at the 21st field; fields 22 to 26 stay empty here.
+    const tiled = `${line("%1")}\t\t\t\t\t\t0`;
+    const floating = `${line("%2")}\t\t\t\t\t\t1`;
+    const older = `${line("%3")}\t\t\t\t\t`;
+    const parsed = parseSessionPaneDescriptors([tiled, floating, older]);
+    expect(parsed.map((pane) => [pane.runtimePaneId, pane.floating])).toEqual([
+      ["%1", false],
+      ["%2", true],
+      ["%3", false],
+    ]);
+    expect(parseSessionPaneDescriptors([`${line("%4")}\t\t\t\t\t\t1\textra`])).toEqual([]);
   });
 });

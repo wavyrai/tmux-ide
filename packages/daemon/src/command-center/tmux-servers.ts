@@ -597,7 +597,10 @@ export function mountTmuxServerRoutes(app: Hono, options: TmuxServerRoutesOption
           () => undefined,
           {
             expectedRuntimeSessionId: identity.runtimeSessionId,
-            expectedSemanticPaneIds: identity.description.panes.map((pane) => pane.semanticPaneId),
+            // #882: a floating pane has no tiled cell; the layout fence leaves it out.
+            expectedSemanticPaneIds: identity.description.panes.flatMap((pane) =>
+              pane.floating === true ? [] : [pane.semanticPaneId],
+            ),
             onAuthority(snapshot) {
               if (snapshot.windowLinks.liveSessionId !== c.req.query("liveSessionId")) {
                 sessionReplaced = true;

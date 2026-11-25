@@ -44,6 +44,7 @@ function coldPaneRows(descriptors: readonly string[]): string {
           f[16],
           f[6],
           "",
+          "",
           "tmux-ide-pane-v2",
         ].join(separator);
       })

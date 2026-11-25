@@ -498,6 +498,8 @@ export interface NativeTerminalInventoryPaneSnapshot extends TrustedSemanticPane
   /** Durable `@tmux_ide_mission` creation stamp, or null when unset. */
   readonly missionStamp: string | null;
   readonly dir: string;
+  /** #882: a floating pane; present, but not in the tiled layout. */
+  readonly floating?: boolean;
 }
 
 export interface NativeTerminalInventorySnapshot {
@@ -600,6 +602,7 @@ function projectTrustedMirrorInventory(
       type: nullable(pane.type),
       missionStamp: nullable(pane.missionStamp),
       dir: boundedWireValue(pane.dir, 4_096),
+      ...(pane.floating === true ? { floating: true } : {}),
     });
   });
   if (
@@ -633,6 +636,7 @@ function analyzeInventoryPanes(panes: readonly NativeTerminalInventoryPaneSnapsh
         interactionEndpoint: _interactionEndpoint,
         nativeIdentity: _nativeIdentity,
         nativePaneBirthId: _nativePaneBirthId,
+        floating: _floating,
         ...row
       }) => row,
     ),
@@ -725,6 +729,8 @@ const PANE_FORMAT = [
   "#{@tmux_ide_window_id}",
   "#{window_index}",
   "#{pane_birth_id}",
+  // #882: a floating pane (tmux 3.7+) has no tiled cell; older tmux prints "".
+  "#{pane_floating_flag}",
   PANE_WIRE_SENTINEL,
 ].join(WIRE_SEPARATOR);
 
@@ -786,7 +792,7 @@ function parsePaneSnapshot(
   const links = new Map<number, { windowId: string; active: boolean; panes: Set<string> }>();
   for (const line of strictLines(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 21 || fields[20] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 22 || fields[21] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -810,7 +816,9 @@ function parsePaneSnapshot(
       windowStampValue,
       windowIndexValue,
       nativePaneBirthId,
+      floating,
     ] = fields as [
+      string,
       string,
       string,
       string,
@@ -868,6 +876,7 @@ function parsePaneSnapshot(
       // registered workspace remains the trusted application-shell root, so
       // keep discovery available and carry the empty presentation value.
       dir: boundedWireValue(dir, 4_096),
+      ...(floating === "1" ? { floating: true } : {}),
     };
     const windowIndex = nonnegativeInteger(windowIndexValue);
     const link = links.get(windowIndex) ?? {
@@ -1038,6 +1047,7 @@ export async function discoverWorkspaceRegistryTerminalInventory(
         interactionEndpoint: _interactionEndpoint,
         nativeIdentity: _nativeIdentity,
         nativePaneBirthId: _nativePaneBirthId,
+        floating: _floating,
         ...row
       }) => row,
     ),
@@ -1068,6 +1078,7 @@ export async function discoverWorkspaceRegistrySemanticPanes(
       interactionEndpoint: _interactionEndpoint,
       nativeIdentity: _nativeIdentity,
       nativePaneBirthId: _nativePaneBirthId,
+      floating: _floating,
       ...row
     }) => row,
   );
@@ -1400,6 +1411,7 @@ export class WorkspaceTerminalInventoryRuntime {
               interactionEndpoint: _interactionEndpoint,
               nativeIdentity: _nativeIdentity,
               nativePaneBirthId: _nativePaneBirthId,
+              floating: _floating,
               ...row
             }) => row,
           );
@@ -2155,6 +2167,7 @@ export class NativeTerminalAttachmentRuntime {
               interactionEndpoint: _interactionEndpoint,
               nativeIdentity: _nativeIdentity,
               nativePaneBirthId: _nativePaneBirthId,
+              floating: _floating,
               ...row
             }) => row,
           );
@@ -2431,6 +2444,7 @@ export class NativeTerminalAttachmentRuntime {
           interactionEndpoint: _interactionEndpoint,
           nativeIdentity: _nativeIdentity,
           nativePaneBirthId: _nativePaneBirthId,
+          floating: _floating,
           ...row
         }) => row,
       ),

@@ -243,3 +243,45 @@ describe("terminal runtime inventory version 2 (#806)", () => {
     ).toEqual([]);
   });
 });
+
+describe("terminal runtime inventory with floating panes (#882)", () => {
+  const pane = (
+    runtimePaneId: string,
+    semanticPaneId: string,
+    active: boolean,
+    floating = false,
+  ) => ({
+    windowId: "@1",
+    runtimePaneId,
+    windowPaneCount: 3,
+    semanticPaneId,
+    windowStamp: "window.one",
+    index: 0,
+    title: "t",
+    currentCommand: "zsh",
+    active,
+    role: null,
+    name: null,
+    type: null,
+    missionStamp: null,
+    ...(floating ? { floating: true } : {}),
+  });
+
+  it("attaches the tiled panes only, and an active float keeps its window active", () => {
+    const projected = projectTerminalRuntimeInventoryV2(
+      {
+        ...session,
+        panes: [
+          pane("%1", "pane.one", false),
+          pane("%2", "pane.two", false),
+          pane("%3", "pane.float", true, true),
+        ],
+      },
+      0,
+    );
+    expect(projected.semanticPaneIds).toEqual(["pane.one", "pane.two"]);
+    expect(projected.windows).toEqual([
+      { semanticWindowId: "window.one", active: true, semanticPaneIds: ["pane.one", "pane.two"] },
+    ]);
+  });
+});

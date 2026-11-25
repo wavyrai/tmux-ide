@@ -22,6 +22,8 @@ export interface TrustedMirrorPaneInventory {
   readonly type: string | null;
   readonly missionStamp: string | null;
   readonly dir: string;
+  /** #882: a floating pane, listed but with no cell in the tiled layout. */
+  readonly floating?: boolean;
 }
 
 export interface TrustedMirrorSessionInventory {
