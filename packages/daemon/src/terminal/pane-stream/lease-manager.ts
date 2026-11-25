@@ -67,6 +67,8 @@ export interface PaneStreamLeaseDescriptor {
   readonly panes: readonly string[];
   /** #806: the one window this stream was issued for, or null for a pane set of the session. */
   readonly semanticWindowId: string | null;
+  /** #872: a person asked for this stream; its panes' holds are lifted before it opens. */
+  readonly retryAskedByPerson: boolean;
   readonly viewerMode: PaneStreamViewerMode;
   readonly terminalDelivery: TerminalDeliveryOffer | null;
   readonly status: PaneStreamLeaseStatus;
@@ -368,6 +370,7 @@ export class PaneStreamLeaseManager {
       runtimeSessionId: state.runtimeSessionId,
       panes: [...state.request.panes],
       semanticWindowId: state.request.semanticWindowId ?? null,
+      retryAskedByPerson: state.request.retryAskedByPerson === true,
       viewerMode: state.request.viewerMode,
       terminalDelivery: state.request.terminalDelivery ?? null,
       status: state.status,

@@ -5,6 +5,7 @@ import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import { PARK_AFTER_MS, SessionRuntimeTerminalReplicaOwner } from "./terminal-replica-owner.ts";
 import { createSessionRuntimeObservability } from "./runtime-observability.ts";
 import type { SessionRuntimeTraceContext } from "./runtime-observability.ts";
+import { MirrorPaneHeldError } from "../mirror/pane-hold.ts";
 
 const generation = "00000000-0000-4000-8000-000000000001";
 
@@ -197,6 +198,42 @@ describe("SessionRuntimeTerminalReplicaOwner", () => {
       }
     },
   );
+
+  it("fails a held pane's open with the hold, its time left and why (#872)", async () => {
+    const onFault = vi.fn();
+    const mirror = {
+      subscribe: async (candidate: MirrorSubscribeRequest): Promise<MirrorSubscription> => {
+        queueMicrotask(() => {
+          candidate.onLayout?.(layout(4, 1));
+          candidate.onEvent({
+            type: "fault",
+            reason: "native-recovery-failed",
+            hold: { retryInMs: 12_000, why: "too-large" },
+          });
+        });
+        return subscription(candidate);
+      },
+    };
+    const owner = new SessionRuntimeTerminalReplicaOwner(
+      generation,
+      "workspace",
+      "pane-a",
+      mirror as never,
+      { incarnation: `${generation}:0`, initialRevision: 0, onFault },
+    );
+    try {
+      const opening = owner.subscribe(() => undefined);
+      await expect(opening).rejects.toBeInstanceOf(MirrorPaneHeldError);
+      await expect(opening).rejects.toMatchObject({
+        name: "MirrorPaneHeldError",
+        hold: { retryInMs: 12_000, why: "too-large" },
+      });
+      expect(onFault).toHaveBeenCalledOnce();
+      expect(onFault.mock.calls[0]![0]).toBeInstanceOf(MirrorPaneHeldError);
+    } finally {
+      await owner.dispose();
+    }
+  });
 
   it("shares history checks and ignores counts overtaken by output or disposal", async () => {
     let request!: MirrorSubscribeRequest;

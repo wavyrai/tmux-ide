@@ -4120,6 +4120,148 @@ describe("hold after repeated failed recoveries (#869)", () => {
       await rig.channel.dispose();
     }
   });
+
+  // #872: a refusal used to read exactly like a failure, so a client could not
+  // say why a pane does not open, and nothing but the clock ended a hold.
+  /** The fault events of one open; whether tmux was asked is `failOpen`'s. */
+  function faultsOfOpen(rig: Rig): Array<Extract<MirrorPaneEvent, { type: "fault" }>> {
+    const viewer = collect();
+    const asked = probes(rig);
+    const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent, undefined, true);
+    if (probes(rig) > asked) {
+      rig.sim.reply(["temporary failure"], false);
+      rig.sim.reply(["temporary failure"], false);
+    }
+    handle.close();
+    return viewer.events.filter(
+      (event): event is Extract<MirrorPaneEvent, { type: "fault" }> => event.type === "fault",
+    );
+  }
+
+  it("says a refused open is held, for how long, and why; a real failure says neither (#872)", async () => {
+    const rig = await startedRig();
+    try {
+      expect(faultsOfOpen(rig)).toEqual([{ type: "fault", reason: "native-recovery-failed" }]);
+      expect(faultsOfOpen(rig)).toEqual([{ type: "fault", reason: "native-recovery-failed" }]);
+      expect(faultsOfOpen(rig)).toEqual([
+        {
+          type: "fault",
+          reason: "native-recovery-failed",
+          hold: { retryInMs: 2_000, why: "failed" },
+        },
+      ]);
+      advanceRecoveryClock(rig, 1_250);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 750, why: "failed" });
+      // The clock has fractions of a millisecond: what is left rounds up.
+      advanceRecoveryClock(rig, 0.5);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 750, why: "failed" });
+      advanceRecoveryClock(rig, 749);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 1, why: "failed" });
+      advanceRecoveryClock(rig, 0.5);
+      // The hold ended: a real try, whose failure starts the next hold.
+      expect(faultsOfOpen(rig)).toEqual([{ type: "fault", reason: "native-recovery-failed" }]);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 4_000, why: "failed" });
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("names a capture over its size cap as too large (#872)", async () => {
+    const rig = await startedRig();
+    try {
+      const failTooLarge = (collector: "capture-byte-cap" | null): boolean => {
+        const viewer = collect();
+        const handle = rig.channel.subscribePane("pane.alpha", viewer.onEvent, undefined, true);
+        const recovery = internalsOf(rig).recoveries.get("%1") as
+          | { collectorFailureReason: string | null }
+          | undefined;
+        if (recovery) {
+          recovery.collectorFailureReason = collector;
+          internalsOf(rig).failRecovery(recovery, "attempts-exhausted");
+        }
+        handle.close();
+        return recovery !== undefined;
+      };
+      expect(failTooLarge("capture-byte-cap")).toBe(true);
+      expect(failTooLarge("capture-byte-cap")).toBe(true);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 2_000, why: "too-large" });
+      // The why is the last failure's: one that was not over the cap is "failed".
+      advanceRecoveryClock(rig, 2_000);
+      expect(failTooLarge(null)).toBe(true);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 4_000, why: "failed" });
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("ends the hold when the pane's history is cleared, and not when tmux trims it (#872)", async () => {
+    const rig = await startedRig();
+    const history = (size: number) =>
+      rig.sim.feedLines(`%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : ${size}`);
+    try {
+      history(1_962);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      // At its limit tmux drops a tenth of the history at once: still the same pane.
+      history(1_800);
+      expect(failOpen(rig)).toBe(false);
+      // Another pane's clear is not this pane's.
+      rig.sim.feedLines("%subscription-changed tmux-ide-pane-history $1 @1 0 %2 : 0");
+      expect(failOpen(rig)).toBe(false);
+      // clear-history: tmux is asked at once, and the count starts over.
+      history(0);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("keeps the hold of a pane with no history when tmux reports 0 again (#872)", async () => {
+    const rig = await startedRig();
+    const history = (size: number) =>
+      rig.sim.feedLines(`%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : ${size}`);
+    try {
+      history(0);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      // Nothing was cleared: the history was already empty.
+      history(0);
+      expect(failOpen(rig)).toBe(false);
+      // Lines arrive, then a clear: that one ends the hold.
+      history(5);
+      expect(failOpen(rig)).toBe(false);
+      history(0);
+      expect(failOpen(rig)).toBe(true);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("asks tmux at once for a person's retry inside the hold, and holds longer if it fails (#872)", async () => {
+    const rig = await startedRig();
+    try {
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      rig.channel.liftRecoveryHold("pane.alpha");
+      expect(failOpen(rig)).toBe(true);
+      // That was the third failure in a row: the next hold is 4 s, not 2 s.
+      advanceRecoveryClock(rig, 3_999);
+      expect(failOpen(rig)).toBe(false);
+      advanceRecoveryClock(rig, 1);
+      expect(failOpen(rig)).toBe(true);
+      // A pane that is not held, or not known, is left as it is.
+      rig.channel.liftRecoveryHold("pane.beta");
+      rig.channel.liftRecoveryHold("pane.unknown");
+      expect(failOpen(rig)).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
 });
 
 describe("native recovery formats", () => {

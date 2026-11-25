@@ -114,6 +114,8 @@ pub enum CatalogAction {
     Issue {
         scope: ServerScope,
         selection: TerminalSelection,
+        /// #872: the lease a person's "Retry now" asked for.
+        retry_asked_by_person: bool,
     },
 }
 pub enum CatalogResult {
@@ -563,12 +565,19 @@ fn execute(
         } => client
             .create_session(operation_id, &display_name)
             .map(CatalogResult::Created),
-        CatalogAction::Issue { selection, .. } => client
-            .issue_terminal(&selection)
+        CatalogAction::Issue {
+            selection,
+            retry_asked_by_person,
+            ..
+        } => client
+            .issue_terminal_asked(&selection, retry_asked_by_person)
             .map(|handoff| CatalogResult::Issued(Box::new(handoff))),
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "worker_issue_tests.rs"]
+mod issue_tests;
 #[cfg(all(test, unix))]
 #[path = "worker_preferences_tests.rs"]
 mod preferences_tests;

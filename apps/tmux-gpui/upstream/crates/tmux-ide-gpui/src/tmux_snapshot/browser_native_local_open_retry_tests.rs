@@ -148,6 +148,7 @@ fn a_session_whose_open_or_lease_fails_is_recovered_not_stopped() {
                 panes: vec!["%1".into(), "%2".into()],
                 selected: "%2".into(),
                 window: None,
+                retry_asked_by_person: false,
             }
         } else {
             Stage::Open {

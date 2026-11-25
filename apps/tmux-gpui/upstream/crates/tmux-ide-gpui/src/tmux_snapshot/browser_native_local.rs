@@ -254,6 +254,7 @@ impl Local {
                     .attempt()
                     .filter(|_| state.surface == Surface::Home)
             });
+        state.pane_held = self.recovery.as_ref().and_then(reconnect::Recovery::held);
         state.home_fault = state.surface == Surface::Home && self.home.fault().is_some();
         state.window_stream = (self.active.as_ref()).is_some_and(|route| route.window.is_some());
         state.act = home_recovery::act(self.home.fault(), &state);
@@ -749,6 +750,7 @@ impl Local {
                     selected,
                     workspace,
                     window,
+                    ..
                 },
                 CatalogResult::Issued(capability),
             ) => self.issued(target, workspace, panes, selected, window, capability)?,

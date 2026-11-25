@@ -93,6 +93,9 @@ pub(super) fn cause(error: &NativeError) -> super::Cause {
     use super::Cause;
     if let Some(close) = close(error) {
         return match close.reason.as_deref() {
+            Some(reason) if reason.starts_with("pane-held:") => {
+                held(reason).unwrap_or(Cause::Closed)
+            }
             Some("tmux-server-retired") => Cause::ServerRetired,
             Some("daemon-restarting") => Cause::DaemonRestarting,
             Some("panes-closed") => Cause::PanesClosed,
@@ -104,6 +107,28 @@ pub(super) fn cause(error: &NativeError) -> super::Cause {
         "stream-silent" => Cause::Silent,
         _ => Cause::Lost,
     }
+}
+/// The longest hold a close may name: the daemon's cap is 30 s.
+const HELD_LIMIT_MS: u64 = 600_000;
+/// "pane-held:<ms>:<why>": `<ms>` whole milliseconds, 1 to [`HELD_LIMIT_MS`],
+/// no leading zero; `<why>` "too-large", or anything else for a failure.
+fn held(reason: &str) -> Option<super::Cause> {
+    let mut parts = reason.splitn(3, ':');
+    let (Some("pane-held"), Some(ms), Some(why)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    if why.is_empty() || ms.starts_with('0') || !ms.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let ms = ms
+        .parse::<u64>()
+        .ok()
+        .filter(|ms| (1..=HELD_LIMIT_MS).contains(ms))?;
+    Some(super::Cause::Held {
+        retry_in: std::time::Duration::from_millis(ms),
+        too_large: why == "too-large",
+    })
 }
 fn token(value: &str) -> bool {
     !value.is_empty()
