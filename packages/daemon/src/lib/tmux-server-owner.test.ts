@@ -116,6 +116,7 @@ it("adopts spaced native names without poisoning healthy strict terminal invento
           `window.${i}`,
           "0",
           "",
+          "",
           "tmux-ide-pane-v2",
         ].join(separator),
       };

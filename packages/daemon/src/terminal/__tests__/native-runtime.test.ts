@@ -187,6 +187,7 @@ function applicationShellPaneWire(
     options.windowStamp ?? "",
     "0",
     "",
+    "",
     "tmux-ide-pane-v2",
   ].join(INVENTORY_SEPARATOR);
 }
@@ -277,6 +278,7 @@ describe("workspace-registry semantic pane discovery", () => {
       "/repo",
       options.windowStamp ?? "",
       String(options.windowIndex ?? Number((options.windowId ?? "@2").slice(1))),
+      "",
       "",
       "tmux-ide-pane-v2",
     ].join(INVENTORY_SEPARATOR);
@@ -966,8 +968,8 @@ describe("async terminal inventory reads", () => {
           if (args[1].includes("list-panes")) {
             if (race) epoch = "00000000-0000-4000-8000-000000000002";
             return result.replace(
-              `${INVENTORY_SEPARATOR}${INVENTORY_SEPARATOR}tmux-ide-pane-v2`,
-              `${INVENTORY_SEPARATOR}17${INVENTORY_SEPARATOR}tmux-ide-pane-v2`,
+              `${INVENTORY_SEPARATOR}${INVENTORY_SEPARATOR}${INVENTORY_SEPARATOR}tmux-ide-pane-v2`,
+              `${INVENTORY_SEPARATOR}17${INVENTORY_SEPARATOR}${INVENTORY_SEPARATOR}tmux-ide-pane-v2`,
             );
           }
           return result;

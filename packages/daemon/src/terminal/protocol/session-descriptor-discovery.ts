@@ -29,6 +29,11 @@ export interface SessionPaneDescriptor {
   windowActive: boolean;
   windowPaneCount: number;
   sessionWindowCount: number;
+  /**
+   * #882: a floating pane (tmux 3.7 and later). It has no cell in the tiled
+   * layout; tmux older than 3.7 prints nothing and the pane reads as tiled.
+   */
+  floating?: boolean;
 }
 
 /**
@@ -66,6 +71,8 @@ export const SESSION_PANE_DESCRIPTOR_FORMAT = [
   "#{pane_pid}",
   // Set only by a terminal browser that has tmux-ide's native controls (#718).
   "#{qa:@tmux_ide_browser_control}",
+  // #882: tmux 3.7+ floating panes have no cell in the tiled layout.
+  "#{pane_floating_flag}",
 ].join("\t");
 
 /**
@@ -176,7 +183,7 @@ export function parseSessionPaneDescriptorReply(
       continue;
     }
     const encoded = utf8Line.split("\t");
-    if (encoded.length < 21 || encoded.length > 26) continue;
+    if (encoded.length < 21 || encoded.length > 27) continue;
     const [
       runtimePaneId = "",
       semanticPaneId = "",
@@ -204,6 +211,7 @@ export function parseSessionPaneDescriptorReply(
       readerRaw = "",
       panePidRaw = "",
       browserControl = "",
+      floatingRaw = "",
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -270,6 +278,7 @@ export function parseSessionPaneDescriptorReply(
       windowActive: windowActiveRaw === "1",
       windowPaneCount,
       sessionWindowCount,
+      floating: floatingRaw === "1",
     });
   }
   return { descriptors, malformedUtf8Records };
