@@ -134,6 +134,7 @@ fn focus_and_pane_changes_cancel_editor_without_retiring_terminal() {
         local_record: Some(path.clone()),
         sources: NativeOwner::new(CatalogSource::Local(path.clone())),
         selected_profile: None,
+        resume: None,
     };
     local.open_editor(request.clone()).unwrap();
     local.open_editor(request.clone()).unwrap();

@@ -148,8 +148,8 @@ fn sidebar_entry_and_activation_refuse_composition_background_and_full_queue(
     cx.simulate_keystrokes("enter");
     view.read_with(cx, |view, _| {
         assert!(!view.sidebar_keyboard.active);
-        assert!(view.browser_commands.is_none());
-        assert!(!view.browser_state.input_ready);
+        // #878: a full queue is backpressure; the window keeps its sender.
+        assert!(view.browser_commands.is_some());
     });
     assert!(receiver.try_recv().is_err());
 }

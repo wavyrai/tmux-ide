@@ -124,11 +124,21 @@ impl SnapshotView {
             Selection::Home => browser::Command::Home { request },
             Selection::Refresh => browser::Command::Refresh { request },
         };
-        if self
+        let sent = self
             .browser_commands
             .as_ref()
-            .is_some_and(|s| s.try_send(command).is_ok())
-        {
+            .map(|s| match s.try_send(command) {
+                Ok(()) => Some(true),
+                // A full queue is backpressure, not a lost connection: keep the
+                // sender, and the window where it is (#878).
+                Err(std::sync::mpsc::TrySendError::Full(_)) => None,
+                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => Some(false),
+            });
+        if matches!(sent, Some(None)) {
+            cx.notify();
+            return;
+        }
+        if sent == Some(Some(true)) {
             if same_window_pane.is_some() {
                 self.last_resize =
                     geometry::reselect_fit(self.last_resize, self.browser_request, request);
