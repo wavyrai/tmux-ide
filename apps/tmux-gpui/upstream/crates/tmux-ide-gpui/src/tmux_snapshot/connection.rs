@@ -320,10 +320,6 @@ pub(super) struct Watch {
     /// Wakes the view when a reconnect hold's limit passes, so held keys
     /// that can no longer be delivered are reported without another event.
     pub(super) _hold_wake: Option<(Instant, Task<()>)>,
-    /// #872: when "Retry now" last asked for a try, by this clock.
-    pub(super) retry_asked_at: Option<Instant>,
-    /// #872: repaints a held session's countdown once a second.
-    pub(super) _held_wake: Option<Task<()>>,
 }
 impl Default for Watch {
     fn default() -> Self {
@@ -337,8 +333,6 @@ impl Default for Watch {
             keys_refused: false,
             keys_not_sent: 0,
             _hold_wake: None,
-            retry_asked_at: None,
-            _held_wake: None,
         }
     }
 }
@@ -375,7 +369,6 @@ impl SnapshotView {
             (None, _) => {
                 watch.since = None;
                 watch._wake = None;
-                watch.retry_asked_at = None;
             }
             // Startup turning into a reconnect keeps its start: the wait goes on.
             (Some(kind), Some((_, at, wall))) => watch.since = Some((kind, at, wall)),
@@ -398,7 +391,6 @@ impl SnapshotView {
                 }));
             }
         }
-        self.wake_for_held(cx);
     }
 
     /// Repaints at the 8 s and 60 s marks of each away machine.
@@ -458,17 +450,11 @@ impl SnapshotView {
             return Stage::Quiet;
         };
         let (now, _) = (self.connection.clock)();
-        let stage = stage(
+        stage(
             kind,
             now.saturating_duration_since(since),
             self.key_refused(),
-        );
-        // A held session's daemon answers: it is not offline (#872).
-        if stage == Stage::Offline && self.pane_held().is_some() {
-            Stage::Words
-        } else {
-            stage
-        }
+        )
     }
 
     /// A remote machine's state while it is retried, by the watch's clock.
@@ -490,9 +476,6 @@ impl SnapshotView {
 
     /// The slot's words: "Connecting…" until a connection has existed.
     pub(super) fn connection_words(&self) -> &'static str {
-        if self.pane_held().is_some() {
-            return HELD;
-        }
         match self.connection.since {
             Some((Kind::Startup, _, _)) if !self.connection.connected_once => CONNECTING,
             _ => RECONNECTING,
@@ -721,10 +704,6 @@ impl SnapshotView {
     /// The reconnect card's words, once a session stream's drop (or a hold
     /// on a suspect link) has lasted [`SPINNER_AFTER`]; `None` before.
     pub(super) fn reconnect_card(&self) -> Option<String> {
-        // The daemon said why: at once, whatever the clock (#872).
-        if let Some(words) = self.held_card() {
-            return Some(words);
-        }
         let held = self.reconnect_held();
         let dropped = self.session_reconnecting_for().unwrap_or_default();
         let waited = held.map_or(dropped, |(_, waited)| waited.max(dropped));
@@ -811,7 +790,6 @@ impl SnapshotView {
     fn retry_now_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let request = self.browser_state.request;
         let hover = super::design::palette(&self.theme()).element_hover;
-        let label = self.retry_now_label();
         div()
             .id("reconnect-retry-now")
             .debug_selector(|| "tmux-reconnect-retry".into())
@@ -820,16 +798,11 @@ impl SnapshotView {
             .cursor_pointer()
             .font_weight(FontWeight::SEMIBOLD)
             .hover(move |s| s.bg(hover))
-            .aria_label(label)
-            .child(label)
+            .aria_label(RETRY_NOW)
+            .child(RETRY_NOW)
             .on_click(cx.listener(move |view, _, _, cx| {
                 cx.stop_propagation();
-                // One try at a time: a second click waits for the answer.
-                if !view.retry_trying() && view.retry_reconnect(request) {
-                    view.connection.retry_asked_at = Some((view.connection.clock)().0);
-                    view.wake_for_held(cx);
-                    cx.notify();
-                }
+                view.retry_reconnect(request);
             }))
             .into_any_element()
     }
@@ -864,10 +837,6 @@ pub(super) fn glass_over(bezel: &bezel_theme::Theme, desktop: u32) -> Hsla {
 
 #[path = "network_watch.rs"]
 pub(super) mod network_watch;
-
-#[path = "connection_held.rs"]
-mod held;
-pub(super) use held::HELD;
 
 #[cfg(test)]
 #[path = "connection_tests.rs"]

@@ -129,16 +129,10 @@ impl Hold {
         result.reconnect_attempt = Some(attempt);
         result.pane_held = state.pane_held;
         result.reconnect_keys_lost = held.lost_input;
-        // #872: a session the daemon holds back says so, not an attempt count.
-        let waiting = if state.pane_held.is_some() {
-            crate::tmux_snapshot::connection::HELD.to_owned()
+        result.status = if held.lost_input {
+            format!("Reconnecting… attempt {attempt} — {LOST_INPUT}")
         } else {
             format!("Reconnecting… attempt {attempt}")
-        };
-        result.status = if held.lost_input {
-            format!("{waiting} — {LOST_INPUT}")
-        } else {
-            waiting
         };
         result
     }
