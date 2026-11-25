@@ -46,7 +46,8 @@ class FakeSocket implements PaneStreamClientSocket {
     this.closed = { code, reason };
   }
   emit(type: string, data?: unknown): void {
-    for (const listener of this.listeners.get(type) ?? []) listener({ data });
+    // A copy, as a real socket does: a listener added during dispatch waits.
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener({ data });
   }
   message(frame: unknown): void {
     this.emit("message", JSON.stringify(frame));
