@@ -116,6 +116,10 @@ impl Policy {
     pub fn paste_pending(&self) -> bool {
         self.paste.is_some()
     }
+    /// Whether the paste under way has chunks not yet sent.
+    pub fn paste_unsent(&self) -> bool {
+        self.paste.as_ref().is_some_and(|p| !p.chunks.is_empty())
+    }
     pub(super) fn paste_completion(&mut self, pane: &str, sequence: u32, result: InputResult) {
         let Some(t) = self.paste.as_mut() else {
             return;

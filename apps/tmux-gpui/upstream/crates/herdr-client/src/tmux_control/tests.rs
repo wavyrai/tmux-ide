@@ -941,3 +941,15 @@ fn negotiated_bytes_preserve_hex_and_validate_before_sequence() {
             .is_ok()
     );
 }
+#[test]
+fn paste_unsent_while_chunks_remain_not_once_the_last_is_sent() {
+    let mut p = granted();
+    p.begin_paste("pane.one", &lifetime(), "short", false, 0)
+        .unwrap();
+    assert!(p.paste_pending());
+    assert!(!p.paste_unsent(), "one chunk, already sent");
+    let mut p = granted();
+    p.begin_paste("pane.one", &lifetime(), &"a".repeat(2048), false, 0)
+        .unwrap();
+    assert!(p.paste_unsent(), "chunks remain after the first");
+}

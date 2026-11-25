@@ -169,6 +169,11 @@ fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
 /// before it left were not sent (#875). It stays until the next command.
 pub(super) const KEYS_NOT_SENT: &str =
     "Keys typed as the window lost focus were not sent. Type them again.";
+/// What the status line says once a stream that was retired and replaced
+/// under the window (a re-lease, a close or split, an owner operation) is
+/// back, when keys queued for it were not sent (#877).
+pub(super) const KEYS_DROPPED: &str =
+    "Keys typed as the terminal reconnected were not sent. Type them again.";
 /// Whether `command` is typing: text, a key, bytes or a paste. A fit, a
 /// pointer or a wheel step is not.
 fn typed(command: &Command) -> bool {
@@ -187,14 +192,36 @@ fn typed(command: &Command) -> bool {
 /// it next). When any of them was typing, the window says so once it is back
 /// (#875: a line typed 5 ms before the window left was lost with no notice).
 /// The loop keeps that in `hold` until then: the stream may be lost or
-/// re-leased while the window is away.
+/// re-leased while the window is away. So is the rest of a paste the focus
+/// loss cuts. With no stream (it was lost and the UI sent keys before it saw
+/// that), the keys belong to the held stream's session (#877).
 pub(super) fn blur(pending: &mut VecDeque<Command>, active: Option<&mut Active>, hold: &mut Hold) {
     let queued = pending.iter().any(typed);
     pending.retain(|command| !matches!(command, Command::Input { .. }));
-    if let Some(current) = active
-        && (queued || current.input.waiting_keys())
-    {
-        hold.carry_keys_not_sent(&current.session);
+    let session = match active {
+        Some(current) => (queued || unsent(current)).then(|| current.session.clone()),
+        None => queued.then(|| hold.session().map(str::to_owned)).flatten(),
+    };
+    if let Some(session) = session {
+        hold.carry_keys_not_sent(&session, KEYS_NOT_SENT);
+    }
+}
+/// Whether typing admitted to the stream is still unsent: the key the input
+/// scheduler holds back, or the rest of a paste.
+fn unsent(current: &mut Active) -> bool {
+    current.input.waiting_keys() || current.controller.paste_unsent()
+}
+/// The stream is retired and replaced under the window: a close or split
+/// that retired it, a re-lease, or an owner operation that retires it before
+/// its receipt. Queued keys, the key held back and the rest of a paste are
+/// dropped, never replayed; keys already sent count as sent. When any of the
+/// dropped ones was typing, the next stream of the session says so (#877).
+pub(super) fn retired(current: &mut Active, pending: &mut VecDeque<Command>, hold: &mut Hold) {
+    let dropped = pending.iter().any(typed) || unsent(current);
+    current.input.focus_loss();
+    pending.retain(|command| !matches!(command, Command::Input { .. }));
+    if dropped {
+        hold.carry_keys_not_sent(&current.session, KEYS_DROPPED);
     }
 }
 /// Typing that reached the loop after the window left is refused there, and
@@ -203,7 +230,7 @@ pub(super) fn refused(command: &Command, active: Option<&Active>, hold: &mut Hol
     if let Some(current) = active
         && typed(command)
     {
-        hold.carry_keys_not_sent(&current.session);
+        hold.carry_keys_not_sent(&current.session, KEYS_NOT_SENT);
     }
 }
 
@@ -211,8 +238,10 @@ pub(super) fn refused(command: &Command, active: Option<&Active>, hold: &mut Hol
 /// anyone read it: the next stream of its session says it again. Nothing is
 /// re-sent.
 fn carry(current: &Active, hold: &mut Hold) {
-    if current.action_status.is(KEYS_NOT_SENT) {
-        hold.carry_keys_not_sent(&current.session);
+    for notice in [KEYS_NOT_SENT, KEYS_DROPPED] {
+        if current.action_status.is(notice) {
+            hold.carry_keys_not_sent(&current.session, notice);
+        }
     }
 }
 /// Polls the stream. Once the window is back and the stream takes input, it
@@ -226,8 +255,11 @@ pub(super) fn poll(
     now: u64,
 ) -> Result<bool, NativeError> {
     let dirty = current.poll(state, foreground, now)?;
-    if foreground && current.controller.input_ready() && hold.take_keys_not_sent(&current.session) {
-        current.action_status.set(Some(KEYS_NOT_SENT));
+    if foreground
+        && current.controller.input_ready()
+        && let Some(notice) = hold.take_keys_not_sent(&current.session)
+    {
+        current.action_status.set(Some(notice));
         current.action_status.publish(&mut state.status);
         return Ok(true);
     }
@@ -237,6 +269,12 @@ pub(super) fn poll(
 #[cfg(test)]
 #[path = "browser_native_blur_tests.rs"]
 mod blur_tests;
+#[cfg(test)]
+#[path = "browser_native_drop_tests.rs"]
+mod drop_tests;
+#[cfg(test)]
+#[path = "browser_native_loop_harness.rs"]
+mod harness;
 /// The stream under `current` failed with `error`. Keys in flight or queued
 /// die with it, so the held frame says they were not sent; so does a key that
 /// went unanswered until the scheduler gave it up (an input error). Returns
@@ -253,6 +291,7 @@ pub(super) fn stream_lost(
     let unanswered = matches!(error, NativeError::Input(_));
     carry(current, hold);
     hold.begin(state, queued || unanswered || current.input.busy());
+    hold.held_session(&current.session);
     interrupted(current, presence_revision, diagnostics::cause(error))
 }
 /// A command failed in a way `fatal` says leaves the stream unusable. It is
@@ -272,6 +311,9 @@ pub(super) fn command_failed(
         carry(current, hold);
     }
     hold.begin(state, failed_input || queued || in_flight);
+    if let Some(current) = active {
+        hold.held_session(&current.session);
+    }
     active.map(|a| interrupted(a, presence_revision, Cause::Lost))
 }
 

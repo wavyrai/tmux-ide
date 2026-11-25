@@ -15,6 +15,8 @@ struct Held {
     attempt: u32,
     /// Keys typed just before the drop were not delivered and are never replayed.
     lost_input: bool,
+    /// The live session of the stream that was lost, when known.
+    session: Option<String>,
 }
 /// Shown while reconnecting when keys typed just before the drop were lost.
 pub(super) const LOST_INPUT: &str = "keys typed just before the drop were not sent; retype them";
@@ -31,7 +33,7 @@ pub(super) struct Hold {
     /// The session whose typed keys were dropped as the window left (#875),
     /// until a stream of that session says so with the window back. It lives
     /// here, not on the stream, so a stream retired meanwhile cannot lose it.
-    keys_not_sent: Option<String>,
+    keys_not_sent: Option<(String, &'static str)>,
 }
 impl Hold {
     /// `hold_frames` is false for the legacy pipe catalog: no held frames.
@@ -94,18 +96,29 @@ impl Hold {
         self.held = None;
         self.keys_not_sent = None;
     }
-    /// Keys typed into `session` were dropped and not sent: the window says
-    /// so once it is back on a stream of that session.
-    pub fn carry_keys_not_sent(&mut self, session: &str) {
-        self.keys_not_sent = Some(session.to_owned());
+    /// Keys typed into `session` were dropped and not sent: once the window is
+    /// back on a stream of that session, it shows `notice`.
+    pub fn carry_keys_not_sent(&mut self, session: &str, notice: &'static str) {
+        self.keys_not_sent = Some((session.to_owned(), notice));
     }
-    /// Whether a stream of `session` must now say that keys were not sent.
-    /// Asking ends the carry: one for another session is dropped, because the
-    /// user has moved on to that session.
-    pub fn take_keys_not_sent(&mut self, session: &str) -> bool {
+    /// What a stream of `session` must now say about keys not sent, if
+    /// anything. Asking ends the carry: one for another session is dropped,
+    /// because the user has moved on to that session.
+    pub fn take_keys_not_sent(&mut self, session: &str) -> Option<&'static str> {
         self.keys_not_sent
             .take()
-            .is_some_and(|carried| carried == session)
+            .filter(|(carried, _)| carried == session)
+            .map(|(_, notice)| notice)
+    }
+    /// The held frame is of a stream of `session`.
+    pub fn held_session(&mut self, session: &str) {
+        if let Some(held) = &mut self.held {
+            held.session = Some(session.to_owned());
+        }
+    }
+    /// The live session of the held frame's stream, when known.
+    pub fn session(&self) -> Option<&str> {
+        self.held.as_ref().and_then(|held| held.session.as_deref())
     }
     pub fn active(&self) -> bool {
         self.held.is_some()
@@ -188,6 +201,7 @@ fn live(state: &State) -> Option<Held> {
     Some(Held {
         attempt: 1,
         lost_input: false,
+        session: None,
         request: state.request,
         presentation: State {
             surface: Surface::Workspace,

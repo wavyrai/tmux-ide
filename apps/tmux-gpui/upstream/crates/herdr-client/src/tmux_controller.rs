@@ -70,6 +70,8 @@ pub struct Controller {
     actionable: bool,
     ready: bool,
     retired: bool,
+    /// Retiring the stream cut a paste short: its rest was never sent.
+    paste_cut: bool,
     desired_presence: Option<(bool, u64)>,
     last_presence: Option<(bool, u64)>,
     viewport: Option<(u16, u16, String, u64)>,
@@ -150,6 +152,7 @@ impl Controller {
             actionable: false,
             ready: false,
             retired: false,
+            paste_cut: false,
             desired_presence: None,
             last_presence: None,
             viewport: None,
@@ -167,6 +170,7 @@ impl Controller {
         })
     }
     pub fn retire(&mut self) {
+        self.paste_cut |= self.policy.paste_unsent();
         self.retired = true;
         self.actionable = false;
         self.pending_selection = None;
@@ -300,6 +304,11 @@ impl Controller {
             .begin_paste_submission(pane, lifetime, text, bracketed, now)?;
         self.send(command)?;
         Ok(Some(sequence))
+    }
+    /// Whether the paste under way has chunks not yet sent, or had them when
+    /// the stream was retired. A focus loss or a retire drops them.
+    pub fn paste_unsent(&self) -> bool {
+        self.paste_cut || self.policy.paste_unsent()
     }
     pub fn next_paste(&mut self, now: u64) -> Result<Option<u32>, Error> {
         if !self.actionable || !self.owns(Authority::Input) {
