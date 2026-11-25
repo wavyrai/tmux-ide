@@ -43,6 +43,7 @@ function validLimit(limit: number): boolean {
 export function nativeAtomicSnapshotPlan(
   target: NativeAtomicSnapshotTarget,
   maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES,
+  historyRows?: number,
 ): OwnedViewerRequest {
   const validated = TargetSchema.parse(target);
   const continuationBytes = `%continue ${validated.paneId}\n`.length;
@@ -61,7 +62,7 @@ export function nativeAtomicSnapshotPlan(
         "-U",
         String(maxBytes - continuationBytes),
         "-S",
-        "-",
+        historyStart(historyRows),
         "-t",
         validated.paneId,
       ],
@@ -69,6 +70,13 @@ export function nativeAtomicSnapshotPlan(
     resultIndex: 0,
     limits: { maxBytes, maxLines: MAX_LINES },
   };
+}
+/** #873: `-S -` reads all history; `-S -N` the newest N rows. */
+function historyStart(historyRows: number | undefined): string {
+  if (historyRows === undefined) return "-";
+  if (!Number.isSafeInteger(historyRows) || historyRows < 0 || historyRows > 1_000_000)
+    throw new TypeError("Invalid atomic snapshot history rows");
+  return `-${historyRows}`;
 }
 const decimal = (value: string | undefined): number | null =>
   value !== undefined && /^(0|[1-9][0-9]*)$/u.test(value) && Number.isSafeInteger(Number(value))
@@ -84,7 +92,7 @@ function validModes(line: string, capture: NativeGridCapture): boolean {
     numeric[1] !== capture.cursor[1] ||
     numeric[2] !== capture.cols ||
     numeric[3] !== capture.rows ||
-    numeric[4] !== capture.history ||
+    numeric[4] !== capture.history + (capture.omittedHistory ?? 0) ||
     numeric[5] !== capture.limit
   )
     return false;
@@ -138,7 +146,9 @@ export function decodeNativeAtomicSnapshot(
     // Native Q emits this notification inside its own child frame. It must be
     // terminal and exact; a separate asynchronous notification proves nothing here.
     if (reply.lines.at(-1) !== `%continue ${expected.paneId}`) return unknown;
-    const capture = decodeNativeGridCapture(reply.lines.slice(1, -1).join("\n") + "\n");
+    const capture = decodeNativeGridCapture(reply.lines.slice(1, -1).join("\n") + "\n", {
+      tail: true,
+    });
     if (!capture || !isNativeBootstrapCapture(capture) || !validModes(metadata.cursor, capture))
       return unknown;
     return {
@@ -179,8 +189,9 @@ export type NativeAtomicDualSnapshotResult =
 export function nativeAtomicDualSnapshotPlan(
   target: NativeAtomicSnapshotTarget,
   maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES,
+  historyRows?: number,
 ): OwnedViewerRequest {
-  const plan = nativeAtomicSnapshotPlan(target, maxBytes);
+  const plan = nativeAtomicSnapshotPlan(target, maxBytes, historyRows);
   return {
     ...plan,
     commands: [
@@ -193,7 +204,7 @@ export function nativeAtomicDualSnapshotPlan(
         "-U",
         String(maxBytes),
         "-S",
-        "-",
+        historyStart(historyRows),
         "-t",
         target.paneId,
       ],

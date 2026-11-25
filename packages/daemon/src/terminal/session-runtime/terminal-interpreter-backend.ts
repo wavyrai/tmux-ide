@@ -1,4 +1,4 @@
-import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import type { NativeGridCapture, NativeHistoryPiece } from "../mirror/native-grid-capture.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import type {
   TerminalReplicaCursor,
@@ -32,6 +32,21 @@ export interface TerminalInterpreterBackend {
   /** Exact native painted state; false means this parser cannot import it. */
   canImportNativeGrid?(): boolean;
   importNativeGrid?(snapshot: NativeGridCapture): boolean;
+  /**
+   * #873: tmux history rows older than the oldest row held, left out by the
+   * last native import and not yet prepended or collected. tmux's history
+   * size is this plus the history rows held. Zero after any other start.
+   */
+  omittedHistory?(): number;
+  /** #873: the most history rows this parser holds (DAEMON_HISTORY_ROW_CAP unless set). */
+  historyRowCap?(): number;
+  /**
+   * #873: prepend the piece's rows that are older than the oldest row held.
+   * Applies only on the normal screen, at the piece's width, when the piece
+   * was read at this history size and reaches the oldest row held; otherwise
+   * changes nothing and returns false.
+   */
+  prependNativeHistory?(piece: NativeHistoryPiece): boolean;
   resize(cols: number, rows: number): void;
   /** x === cols preserves native wrap-pending state; project() returns a cell position. */
   setAuthoritativeCursor(x: number, y: number): void;
@@ -81,7 +96,15 @@ export interface TerminalInterpreterBackendFactoryOptions {
   readonly scrollback: number;
   /** Native collection policy; retained capacity can be larger after tmux reflow. */
   readonly historyLimit?: number;
+  /**
+   * #873: the most history rows the daemon holds for a pane, whatever tmux's
+   * history-limit. Older rows stay in tmux and count as left out.
+   */
+  readonly historyRowCap?: number;
 }
+
+/** #873, owner decision of 25 Nov 2026: the daemon holds at most this many history rows per pane. */
+export const DAEMON_HISTORY_ROW_CAP = 10_000;
 
 export type TerminalInterpreterBackendFactory = (
   options: TerminalInterpreterBackendFactoryOptions,
