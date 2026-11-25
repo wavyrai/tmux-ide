@@ -123,6 +123,15 @@ interface RuntimeOwner<Snapshot, Patch, Tombstone> {
   preparationError: Error | null;
 }
 
+function runtimeErrorCode(error: unknown): string | null {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+    ? error.code
+    : null;
+}
+
 function phaseOf<Shell extends ApplicationShellProjectionInputV1>(
   state: ApplicationShellSessionState<Shell>,
 ): WorkspaceClientPhase {
@@ -909,7 +918,10 @@ export function createWorkspaceClient<
       WorkspaceClientRuntimePort<TerminalSnapshot, TerminalPatch, TerminalTombstone>
     >({
       wait: (delayMs, signal) => waitWithClock(clock, delayMs, signal),
-      retryable: () =>
+      // A session over the stream's pane limit is refused the same way on
+      // every try; trying again only kept the terminal on "connecting" (#585).
+      retryable: (error) =>
+        runtimeErrorCode(error) !== "pane-limit-exceeded" &&
         !disposed &&
         generation === expectedGeneration &&
         target === expectedTarget &&
@@ -936,15 +948,8 @@ export function createWorkspaceClient<
             prepare,
           );
         } catch (error) {
-          const code =
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            typeof error.code === "string"
-              ? error.code
-              : null;
           if (
-            code === "topology-changed" &&
+            runtimeErrorCode(error) === "topology-changed" &&
             !disposed &&
             generation === expectedGeneration &&
             target === expectedTarget &&
@@ -993,6 +998,7 @@ export function createWorkspaceClient<
       ) {
         return;
       }
+      if (state.phase === "failed") options.ports.didFailRuntime?.(state.error);
       if (state.phase !== "live" || state.value === null) {
         if (activeRuntimeOwner === owner && runtime !== null) {
           const suspendedRuntime = runtime;

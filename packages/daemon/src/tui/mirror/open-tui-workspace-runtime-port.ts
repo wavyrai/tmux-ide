@@ -1,4 +1,5 @@
 import {
+  PANE_STREAM_MAX_PANES,
   STOCK_CAPTURE_TAB_UNAVAILABLE,
   TERMINAL_DELIVERY_MAX_PIPELINED,
   TERMINAL_DELIVERY_PIPELINING_CAPABILITY_VERSION,
@@ -331,6 +332,22 @@ function layoutExactlyCoversPanes(
     (observedPanes.length === expectedPanes.length ||
       snapshot.windows.some((window) => window.zoomed))
   );
+}
+
+/**
+ * A session with more panes than one pane stream carries (#585). The daemon
+ * refuses such a stream on every try, so the runtime supervisor does not try
+ * again until the session's panes change (`code` is what it checks).
+ */
+export class OpenTuiPaneLimitError extends Error {
+  readonly code = "pane-limit-exceeded";
+  constructor(
+    readonly panes: number,
+    readonly limit: number,
+  ) {
+    super(`Session has ${panes} panes; one pane stream carries at most ${limit}`);
+    this.name = "OpenTuiPaneLimitError";
+  }
 }
 
 function canonicalPaneIds(inventory: WorkspaceClientRuntimeInventory): readonly string[] {
@@ -1059,6 +1076,8 @@ export async function connectOpenTuiWorkspaceRuntimePort(
 ): Promise<OpenTuiWorkspaceRuntimePort> {
   const { inventory, routing } = options;
   const panes = canonicalPaneIds(inventory);
+  if (panes.length > PANE_STREAM_MAX_PANES)
+    throw new OpenTuiPaneLimitError(panes.length, PANE_STREAM_MAX_PANES);
   const expected: OpenTuiVerifiedRoutingIdentity = {
     daemonInstanceId: inventory.daemonGeneration,
     workspaceName: inventory.workspaceName,

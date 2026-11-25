@@ -186,7 +186,19 @@ export function createApplicationConnectionFeedback(
       } else if (phase === "connection-start") update("Connecting to daemon");
       else if (phase === "connection-resolved") update("Reading terminal layout");
       else if (phase === "runtime-fault") update("Connection interrupted — retrying");
-      else if (phase === "runtime-progress") {
+      else if (
+        phase === "runtime-refused" &&
+        Number.isSafeInteger(details.panes) &&
+        Number.isSafeInteger(details.limit)
+      ) {
+        // #585: refused on every try, so the app stops here instead of retrying.
+        // Words approved by the owner on 25 Nov 2026.
+        stop();
+        update(
+          `Session too large to stream here: ${String(details.panes)} panes, the limit is ${String(details.limit)}. Move some windows to another session, or open it in the Mac app.`,
+          true,
+        );
+      } else if (phase === "runtime-progress") {
         if (
           details.runtimePhase === "seed" &&
           Number.isSafeInteger(details.seededPanes) &&
