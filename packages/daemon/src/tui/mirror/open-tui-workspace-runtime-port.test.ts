@@ -513,6 +513,55 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     await port.close();
   });
 
+  it("accepts a pane whose delivery is announced after the layout and another pane's seed (#585)", async () => {
+    // The daemon opens a stream without a pane whose delivery still fails and
+    // announces that pane seconds later.
+    const test = rig(false);
+    let options!: OpenPaneStreamClientOptions;
+    test.openPaneStream.mockImplementationOnce(async (_expected, next) => {
+      options = next as OpenPaneStreamClientOptions;
+      options.onNegotiated(PANE_A, { accepted: true, negotiated: negotiated() });
+      return test.client;
+    });
+    let settled = false;
+    const opening = connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(),
+      routing: test.routing,
+    }).then((port) => {
+      settled = true;
+      return port;
+    });
+    await vi.waitFor(() => expect(options).toBeDefined());
+    options.onLayout?.({
+      type: "layout",
+      semanticWindowId: "window.main",
+      windowName: "main",
+      currentWindow: true,
+      cols: 120,
+      rows: 40,
+      zoomed: false,
+      paneBorderStatus: "off",
+      panes: [
+        { pane: PANE_A, left: 0, top: 0, width: 60, height: 40, active: true },
+        { pane: PANE_B, left: 60, top: 0, width: 60, height: 40, active: false },
+      ],
+    });
+    const first = seedDelivery(PANE_A, blankTerminalReplicaSnapshot(4, 2), "301");
+    options.onTerminalDelivery(PANE_A, first.envelope);
+    for (const chunk of first.chunks) options.onTerminalDelivery(PANE_A, chunk);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    options.onNegotiated(PANE_B, { accepted: true, negotiated: negotiated() });
+    const second = seedDelivery(PANE_B, blankTerminalReplicaSnapshot(4, 2), "302");
+    options.onTerminalDelivery(PANE_B, second.envelope);
+    for (const chunk of second.chunks) options.onTerminalDelivery(PANE_B, chunk);
+    const port = await opening;
+    expect(test.client.close).not.toHaveBeenCalled();
+    expect(port.getLayout()).toMatchObject({ panes: [{ pane: PANE_A }, { pane: PANE_B }] });
+    await port.close();
+  });
+
   it.each([undefined, "window.final"])(
     "opens visible panes and retains latest scoped fit %s while a hidden seed arrives",
     async (finalWindow) => {
