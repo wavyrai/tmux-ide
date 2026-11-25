@@ -518,7 +518,8 @@ fn probed_after_ready(
 fn a_probe_finds_a_dead_link_in_seconds() {
     let (ended, registered) = probed_after_ready(false, Duration::from_secs(9));
     assert!(registered, "probe_all would not reach this lane");
-    let (after, error) = ended.expect("the probe found nothing");
+    assert!(ended.is_some(), "the probe found nothing");
+    let (after, error) = ended.unwrap();
     assert!(matches!(error, CatalogWatchError::Timeout), "{error:?}");
     assert!(
         after >= PROBE_LIMIT - Duration::from_millis(100)
