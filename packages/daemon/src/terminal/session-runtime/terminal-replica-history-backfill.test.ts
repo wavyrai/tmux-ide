@@ -29,7 +29,11 @@ import type { MirrorPaneEvent } from "../mirror/events.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
 import type { TerminalInterpreterBackend } from "./terminal-interpreter-backend.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
-import { SessionRuntimeTerminalReplicaOwner, PARK_AFTER_MS } from "./terminal-replica-owner.ts";
+import {
+  BACKFILL_ALTERNATE_WAIT_MS,
+  SessionRuntimeTerminalReplicaOwner,
+  PARK_AFTER_MS,
+} from "./terminal-replica-owner.ts";
 import {
   SessionRuntimeTerminalDeliveryHub,
   type TerminalDeliverySourceOwner,
@@ -298,6 +302,23 @@ describe("backend: prepending a history piece (#873 point 2)", () => {
     }
   });
 
+  it("refuses a piece the parser has no room for", () => {
+    const rows = tmuxRows(15);
+    const backend = createXtermTerminalInterpreterBackend({
+      cols: COLS,
+      rows: ROWS,
+      scrollback: 8,
+      historyLimit: 8,
+    }) as Backend;
+    try {
+      expect(backend.importNativeGrid!(tailCapture(rows, 10, 8))).toBe(true);
+      expect(backend.prependNativeHistory(piece(rows, 0, 10, 15))).toBe(false);
+      expect(project(backend).history.map(text)).toEqual(["R10", "R11", "R12", "R13", "R14"]);
+    } finally {
+      backend.dispose();
+    }
+  });
+
   it("collects at the limit after a prepend from the rows it now holds", async () => {
     const limit = 20;
     const rows = tmuxRows(20);
@@ -385,6 +406,18 @@ describe("interpreter: the left-out count and the prepend operation (#873 points
     const last = updates.at(-1)!;
     expect(last.revision).toBeGreaterThan(seedRevision);
     expect(last.stateHash).toBe(hashTerminalReplicaSnapshot(snapshot));
+  });
+
+  it("refuses a piece inside a synchronized update", async () => {
+    const { interpreter, updates, reseed } = interpreterRig();
+    const i = interpreter as Interpreter;
+    const rows = tmuxRows(15);
+    await reseed(tailCapture(rows, 10));
+    await interpreter.enqueue({ type: "write", data: new TextEncoder().encode("\x1b[?2026h") });
+    const count = updates.length;
+    expect(await i.prependNativeHistory(piece(rows, 0, 10, 15))).toBe(false);
+    expect(updates).toHaveLength(count);
+    expect(i.omittedHistory()).toBe(10);
   });
 
   it("refuses a piece read before a write it is queued behind, and publishes nothing", async () => {
@@ -515,7 +548,8 @@ async function ownerRig(
   const captureNativeBacking = vi.fn(async () => ({
     status: "captured" as const,
     isCurrent: () => true,
-    snapshot: tailCapture(tmux, 0, 2000, cols),
+    // The rows the replica holds: a comparison would wrongly pass.
+    snapshot: tailCapture(tmux, options.omitted ?? 10, 2000, cols),
   }));
   let historySize = historyRows;
   const readHistorySize = vi.fn(async () => historySize);
@@ -766,9 +800,10 @@ describe("owner: the backfill (#873 point 3)", () => {
       r.event({ type: "history", piece: null });
       await flush();
       r.fire(250);
-      await flush();
+      await vi.waitFor(() =>
+        expect(r.timers().map((t) => t.delayMs)).toContain(BACKFILL_ALTERNATE_WAIT_MS),
+      );
       expect(r.requests).toHaveLength(1);
-      expect(r.timers().length).toBeGreaterThan(0);
       r.event({ type: "delta", data: new TextEncoder().encode("\x1b[?1049l") });
       await flush();
       r.fire();
