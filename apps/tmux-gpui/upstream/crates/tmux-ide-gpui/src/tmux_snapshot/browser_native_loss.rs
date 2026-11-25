@@ -121,6 +121,25 @@ impl Releases {
     }
 }
 
+/// A focus change for the stream under `current`. A stream that cannot take
+/// it is dead though no poll has said so yet (soak, 23 Nov 2026: another
+/// client's detach, then the window left 10 ms later), or it refuses the
+/// change. It is retired here either way: a window that left never keeps a
+/// stream that takes input, and the poll that follows reports the stream
+/// lost, so the catalog re-issues the route. It never ends the loop (#871).
+pub(super) fn presence(current: &mut Active, foreground: bool, revision: u64, now: u64) {
+    if current.reissue || current.stream_interrupted {
+        return;
+    }
+    if let Err(error) = current.controller.presence(foreground, revision, now) {
+        eprintln!(
+            "tmux-preview: focus change not sent, stream retired: {}",
+            diagnostics::detail(&error.into())
+        );
+        current.controller.retire();
+    }
+}
+
 /// Whether `command` is a key. A key for which no stream is open is about to
 /// be dropped: the UI sent it before it saw the hold. The held frame then
 /// reports lost keys (`changed` is set when that is news), so the keys the UI
@@ -220,3 +239,7 @@ pub(super) fn fatal(result: &Result<(), NativeError>, active: Option<&Active>) -
 #[cfg(test)]
 #[path = "browser_native_loss_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "browser_native_presence_tests.rs"]
+mod presence_tests;

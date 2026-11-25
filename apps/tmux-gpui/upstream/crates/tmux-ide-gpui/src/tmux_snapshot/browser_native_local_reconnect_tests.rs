@@ -947,6 +947,8 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
 mod always;
 #[path = "browser_native_local_reconnect_cause_tests.rs"]
 mod cause;
+#[path = "browser_native_local_reconnect_selection_tests.rs"]
+mod selection;
 #[path = "browser_native_local_update_tests.rs"]
 mod update;
 

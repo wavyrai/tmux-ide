@@ -406,6 +406,19 @@ impl Local {
         self.state.status = RECONNECTING.into();
         self.publish()
     }
+    /// The terminal loop selected `pane` after its route was dropped for this
+    /// recovery: every later try opens that pane.
+    pub(super) fn reconnect_select(&mut self, pane: &str) {
+        let Some(recovery) = self.recovery.as_mut() else {
+            return;
+        };
+        recovery.pane = Some(pane.to_owned());
+        if let Some(rebind) = recovery.rebind.as_mut()
+            && rebind.panes.iter().any(|listed| listed == pane)
+        {
+            rebind.selected = pane.to_owned();
+        }
+    }
     /// The Retry button: try now instead of waiting out the backoff.
     pub(super) fn reconnect_now(&mut self, request: u64) -> Result<(), Error> {
         if request != self.state.request {

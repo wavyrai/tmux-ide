@@ -193,6 +193,19 @@ impl Local {
                     route.request = request;
                     self.state.request = request;
                     self.state.selected_pane = Some(pane);
+                } else if self.active.is_none()
+                    && self.recovery.is_some()
+                    && from_request == self.state.request
+                    && request > from_request
+                {
+                    // #871: the route was dropped for recovery after the loop
+                    // moved it to `request`. The loop now refuses any open
+                    // older than that, so the reopen must carry it. Dropping
+                    // the route cancelled any tab switch, so no tab moves.
+                    self.state.request = request;
+                    self.state.selected_pane = Some(pane.clone());
+                    self.reconnect_select(&pane);
+                    self.publish()?;
                 }
                 Ok(())
             }
