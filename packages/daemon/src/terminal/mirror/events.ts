@@ -179,6 +179,11 @@ export interface MirrorPaneDescription {
   displayNameSource: "manual" | "agent" | "process" | "title" | "generated";
   windowName: string | null;
   active: boolean;
+  /**
+   * #882: a floating pane (tmux 3.7 and later). It is listed, but it has no
+   * cell in the tiled layout, so no stream attaches to it or waits for it.
+   */
+  floating?: true;
 }
 
 /** Identity-join diagnostic, stripped of runtime addresses at the boundary. */

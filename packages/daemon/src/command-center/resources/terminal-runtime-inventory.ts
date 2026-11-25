@@ -11,12 +11,26 @@ import {
 import type { NativeTerminalRuntimeSessionSnapshot } from "../../terminal/attachments/native-runtime.ts";
 import { paneIdentities, projectApplicationShellResource } from "./application-shell.ts";
 
+/**
+ * #882: floating panes (tmux 3.7+) are listed by the catalog but have no cell
+ * in the tiled layout a client attaches to. Until floats are drawn, the
+ * attachable inventory leaves them out, so a session holding one still opens.
+ */
+function floatingPaneIds(session: NativeTerminalRuntimeSessionSnapshot): ReadonlySet<string> {
+  return new Set(
+    session.panes.flatMap((pane) =>
+      pane.floating === true && pane.semanticPaneId !== null ? [pane.semanticPaneId] : [],
+    ),
+  );
+}
+
 /** Pure, wire-safe agent-free topology projection. */
 export function projectTerminalRuntimeInventory(
   session: NativeTerminalRuntimeSessionSnapshot,
   resourceRevision: number,
 ): TerminalRuntimeInventoryProjectionV1 {
   const shell = projectApplicationShellResource(session);
+  const floating = floatingPaneIds(session);
   return TerminalRuntimeInventoryProjectionV1SchemaZ.parse({
     workspaceName: session.workspaceName,
     workspaceId: shell.workspace.id,
@@ -25,7 +39,8 @@ export function projectTerminalRuntimeInventory(
     semanticPaneIds: [
       ...new Set(
         shell.terminalInventory.resources.flatMap((resource) =>
-          resource.attachability.status === "available"
+          resource.attachability.status === "available" &&
+          !floating.has(resource.attachability.semanticPaneId)
             ? [resource.attachability.semanticPaneId]
             : [],
         ),
@@ -58,10 +73,13 @@ export function projectTerminalRuntimeInventoryV2(
       complete: true,
     };
     windows.set(pane.windowId, entry);
+    if (pane.active) entry.active = true;
+    // #882: a floating pane is not part of its window's tiled pane set, but an
+    // active float (a modal pane takes the focus) still marks its window active.
+    if (pane.floating === true) return;
     const attachability = identities[index]!.attachability;
     if (attachability.status === "available") entry.panes.push(attachability.semanticPaneId);
     else entry.complete = false;
-    if (pane.active) entry.active = true;
   });
   return TerminalRuntimeInventoryProjectionV2SchemaZ.parse({
     ...projectTerminalRuntimeInventory(session, resourceRevision),

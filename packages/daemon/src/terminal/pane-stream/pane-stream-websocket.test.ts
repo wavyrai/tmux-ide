@@ -285,6 +285,8 @@ class FakeMirror implements PaneStreamMirror {
 
   /** A pane's window when it is not the default one (#806 window-scoped streams). */
   windowOf = new Map<string, string>();
+  /** #882: panes the description lists as floating (no tiled cell). */
+  floating = new Set<string>();
 
   constructor(panes: string[]) {
     this.panes = panes;
@@ -305,6 +307,7 @@ class FakeMirror implements PaneStreamMirror {
         title: semanticPaneId,
         windowName: "main",
         active: false,
+        ...(this.floating.has(semanticPaneId) ? { floating: true as const } : {}),
       })),
       diagnostics: [],
       degraded: false,
@@ -2448,6 +2451,35 @@ describe("PaneStreamAdmissionCoordinator", () => {
     expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(0);
     expect(h.deliveryListeners.size).toBe(0);
     expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" });
+  });
+
+  it("opens the tiled panes of a session that also lists a floating pane (#882)", async () => {
+    const h = harness({ panes: ["pane.one", "pane.two", "pane.float"] });
+    h.mirror.floating.add("pane.float");
+    h.mirror.initialLayouts = [authoritativeLayout(["pane.one", "pane.two"])];
+
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.framesOfType("error")).toHaveLength(0);
+    expect([...h.deliveryListeners.keys()].sort()).toEqual(["pane.one", "pane.two"]);
+    expect(
+      socket
+        .framesOfType("layout-snapshot")[0]
+        ?.layouts[0].panes.map((pane: { pane: string }) => pane.pane),
+    ).toEqual(["pane.one", "pane.two"]);
+  });
+
+  it("refuses a stream for a floating pane: it has no tiled cell to show (#882)", async () => {
+    const h = harness({ panes: ["pane.one", "pane.float"] });
+    h.mirror.floating.add("pane.float");
+    h.mirror.initialLayouts = [authoritativeLayout(["pane.one"])];
+    await expect(
+      connect(h, { panes: ["pane.one", "pane.float"], semanticDelivery: true }),
+    ).rejects.toMatchObject({ code: "pane-not-found" });
   });
 
   it("rejects a delivery-generation splice before negotiation or seed publication", async () => {

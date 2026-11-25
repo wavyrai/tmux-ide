@@ -835,6 +835,7 @@ export class SessionChannel {
         displayNameSource: display.source,
         windowName: pane.descriptor?.windowName ?? null,
         active: pane.active,
+        ...(pane.descriptor?.floating ? { floating: true as const } : {}),
       };
     });
     return {
@@ -1305,16 +1306,19 @@ export class SessionChannel {
     const identity = await this.attachedSessionIdentity();
     const inventory = await this.describeTrustedInventory(identity.runtimeSessionId);
     if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+    // #882: a floating pane has no cell in the tiled layout, so neither the
+    // pane set a stream expects nor the layout coverage includes it.
+    const tiled = inventory.panes.filter((pane) => pane.floating !== true);
 
     const expectedByWindow = new Map<string, Set<string>>();
-    for (const pane of inventory.panes) {
+    for (const pane of tiled) {
       const expected = expectedByWindow.get(pane.runtimeWindowId) ?? new Set<string>();
       expected.add(pane.semanticPaneId);
       expectedByWindow.set(pane.runtimeWindowId, expected);
     }
     if (expectedSemanticPaneIds) {
       const requested = [...expectedSemanticPaneIds].sort();
-      const authoritative = inventory.panes.map(({ semanticPaneId }) => semanticPaneId).sort();
+      const authoritative = tiled.map(({ semanticPaneId }) => semanticPaneId).sort();
       if (
         requested.length === 0 ||
         new Set(requested).size !== requested.length ||
@@ -3294,8 +3298,14 @@ export class SessionChannel {
         return;
       }
       const leafIds = new Set(membership.leaves.map((leaf) => leaf.id));
+      // #882: a floating pane is never a leaf; it leaves by tmux's pane list.
+      const floatingIds = new Set((membership.floating ?? []).map((leaf) => leaf.id));
       const knownPaneVanished = [...this.panesByRuntime.values()].some(
-        (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId),
+        (pane) =>
+          pane.windowRuntimeId === change.windowId &&
+          !leafIds.has(pane.runtimeId) &&
+          !floatingIds.has(pane.runtimeId) &&
+          !pane.descriptor?.floating,
       );
       if (
         membership.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) ||
@@ -3775,15 +3785,36 @@ export class SessionChannel {
     const stagedPaneIds = new Set<string>();
     let stagedPaneCount = 0;
     let stagedPaneMembershipExact = true;
+    // #882: a floating pane (tmux 3.7+) has no cell in the tiled layout. It
+    // belongs to its window by tmux's own pane list; every other pane must be
+    // exactly one tiled leaf, as before.
+    const floatingByWindow = new Map<string, Set<string>>();
+    for (const descriptor of descriptors) {
+      if (!descriptor.floating) continue;
+      const floating = floatingByWindow.get(descriptor.windowId!) ?? new Set<string>();
+      floating.add(descriptor.runtimePaneId);
+      floatingByWindow.set(descriptor.windowId!, floating);
+    }
+    let floatingPaneCount = 0;
     for (const [runtimeWindowId, layout] of confirmedWindowStage.layouts) {
       const membership = layout.zoomed ? layout.unzoomed : layout;
-      if (!membership || membership.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
+      const floating = floatingByWindow.get(runtimeWindowId) ?? new Set<string>();
+      if (
+        !membership ||
+        membership.leaves.length + floating.size !== computedWindowCounts.get(runtimeWindowId) ||
+        (membership.floating ?? []).some((leaf) => !floating.has(leaf.id))
+      ) {
         stagedPaneMembershipExact = false;
         break;
       }
+      floatingPaneCount += floating.size;
       for (const leaf of membership.leaves) {
         stagedPaneCount += 1;
-        if (stagedPaneIds.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
+        if (
+          stagedPaneIds.has(leaf.id) ||
+          floating.has(leaf.id) ||
+          descriptorWindowByPane.get(leaf.id) !== runtimeWindowId
+        ) {
           stagedPaneMembershipExact = false;
           break;
         }
@@ -3796,8 +3827,8 @@ export class SessionChannel {
       confirmedWindowStage.links.length !== descriptors[0]!.sessionWindowCount ||
       confirmedWindowStage.windows.size !== computedWindowCounts.size ||
       !stagedPaneMembershipExact ||
-      stagedPaneCount !== descriptors.length ||
-      stagedPaneIds.size !== descriptors.length ||
+      stagedPaneCount + floatingPaneCount !== descriptors.length ||
+      stagedPaneIds.size + floatingPaneCount !== descriptors.length ||
       [...computedWindowCounts.keys()].some(
         (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId),
       )
@@ -3898,6 +3929,7 @@ export class SessionChannel {
         missionStamp: descriptor.missionStamp,
         nativePaneBirthId: descriptor.nativePaneBirthId ?? null,
         dir: descriptor.cwd ?? "",
+        ...(descriptor.floating ? { floating: true } : {}),
       });
     });
     return Object.freeze({

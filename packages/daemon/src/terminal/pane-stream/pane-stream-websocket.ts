@@ -209,6 +209,14 @@ function semanticBackendRefusal(error: unknown): string | null {
 }
 const TYPE_FIRST_INPUT_FRAME_PREFIX = Buffer.from('{"type":"input",', "utf8");
 
+/**
+ * #882: the panes a stream can attach to and the layout covers. A floating
+ * pane is listed by the description but has no tiled cell, so it is left out.
+ */
+function tiledPanes(described: MirrorSessionDescription): MirrorSessionDescription["panes"] {
+  return described.panes.filter((pane) => pane.floating !== true);
+}
+
 function startsWithBuffer(raw: Buffer, prefix: Buffer): boolean {
   return (
     raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0
@@ -691,7 +699,7 @@ export class PaneStreamAdmissionCoordinator {
           "The workspace session could not be described.",
         );
       }
-      const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+      const known = new Set(tiledPanes(described).map((pane) => pane.semanticPaneId));
       for (const pane of request.panes) {
         if (!known.has(pane)) {
           throw new PaneStreamAdmissionError(
@@ -704,7 +712,7 @@ export class PaneStreamAdmissionCoordinator {
       // panes, as the trusted inventory places them now.
       if (request.semanticWindowId !== undefined) {
         const windowPanes = new Set(
-          described.panes
+          tiledPanes(described)
             .filter((pane) => pane.semanticWindowId === request.semanticWindowId)
             .map((pane) => pane.semanticPaneId),
         );
@@ -1744,7 +1752,7 @@ export class PaneStreamLiveConnection {
       return;
     }
     if (this.#closed) return;
-    const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+    const known = new Set(tiledPanes(described).map((pane) => pane.semanticPaneId));
     if (this.#descriptor.terminalDelivery) {
       await this.#subscribeSemantic(known);
       return;
@@ -3015,7 +3023,7 @@ export class PaneStreamLiveConnection {
       return this.#topologyFailed("session inventory unavailable", error);
     }
     if (this.#closed) return this.#topologyFailed("closed");
-    const next = [...new Set(described.panes.map((pane) => pane.semanticPaneId))].sort();
+    const next = [...new Set(tiledPanes(described).map((pane) => pane.semanticPaneId))].sort();
     if (next.length === 0) return this.#topologyFailed("session has no panes");
     const frames = this.#validateInitialLayout(snapshot.layouts, next);
     if (!frames) return "stale";
@@ -3036,7 +3044,7 @@ export class PaneStreamLiveConnection {
     if (window !== null) {
       windowPanes = [
         ...new Set(
-          described.panes
+          tiledPanes(described)
             .filter((pane) => pane.semanticWindowId === window)
             .map((pane) => pane.semanticPaneId),
         ),
