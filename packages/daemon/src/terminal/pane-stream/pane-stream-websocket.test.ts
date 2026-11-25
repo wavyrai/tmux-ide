@@ -5602,6 +5602,41 @@ describe("a step of the opening that fails", () => {
     expect(socket.framesOfType("layout-snapshot")).toEqual([]);
   });
 
+  it("closes as a topology change when a late pane comes from another daemon generation", async () => {
+    let tries = 0;
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      deferredPaneRetryDelaysMs: [1],
+      openTerminalDelivery: async (pane, _offer, onMessage) => {
+        if (pane === "pane.two" && ++tries <= 3) throw new Error("tmux timed out");
+        h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+        const generation = pane === "pane.two" ? "00000000-0000-4000-8000-0000000000ff" : INSTANCE;
+        return {
+          negotiation: { ...negotiation, negotiated: { ...negotiation.negotiated, generation } },
+          ack: vi.fn(),
+          nack: vi.fn(),
+          setVisibility: vi.fn(),
+          close: async () => undefined,
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1012, reason: "topology-changed" }),
+    );
+    expect(tries).toBe(4);
+    expect(
+      socket
+        .framesOfType("terminal-delivery-ready")
+        .map((frame) => (frame as { pane: string }).pane),
+    ).toEqual(["pane.one"]);
+  });
+
   it("closes with the pane and its cause when every deferred try has failed too", async () => {
     const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
     onTestFinished(() => logged.mockRestore());
