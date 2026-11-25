@@ -282,5 +282,9 @@ fn the_held_frame_carries_the_daemon_s_hold_of_a_pane() {
     let shown = hold.publication(&state);
     assert!(shown.frame.is_some());
     assert_eq!(shown.pane_held, Some(pane_held));
-    assert_eq!(hold.publication(&reconnecting(7, 3)).pane_held, None);
+    // The status says the session cannot open, not an attempt count.
+    assert_eq!(shown.status, "Can't open this session");
+    let unheld = hold.publication(&reconnecting(7, 3));
+    assert_eq!(unheld.pane_held, None);
+    assert_eq!(unheld.status, "Reconnecting… attempt 3");
 }
