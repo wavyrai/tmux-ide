@@ -36,6 +36,10 @@ struct Script {
     /// The stream closes when the app gives input up (the window left): a
     /// link that drops while the user is in another app.
     close_on_release: bool,
+    /// When the app gives input up, another client splits a pane in: the
+    /// next layout names a pane the stream's lease lacks, so the route is
+    /// re-leased.
+    add_pane_on_release: bool,
     /// While set, inputs are not answered: a link's round trip, so the input
     /// scheduler holds a ninth key back. Answered once cleared.
     hold_acks: Arc<AtomicBool>,
@@ -160,6 +164,12 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: Script) {
                 json!({"type":"authority-receipt","requestId":value["requestId"],"authority":value["authority"],"status":"released","snapshot":snapshot})
             };
             send(&mut socket, receipt);
+            if script.add_pane_on_release && !granted && value["authority"] == "input" {
+                send(
+                    &mut socket,
+                    json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":2,"height":2,"active":false},{"pane":"extra","left":8,"top":0,"width":1,"height":2,"active":false}]}),
+                );
+            }
             if script.close_on_release && !granted && value["authority"] == "input" {
                 let _ = seen.send(value);
                 let _ = socket.close(None);
@@ -198,6 +208,8 @@ struct Loop {
     seen_tx: mpsc::Sender<Value>,
     /// The revision of the last focus change the loop passed on.
     passed_on: Arc<AtomicU64>,
+    /// How many times the loop asked the catalog to re-issue its route.
+    refreshes: Arc<AtomicU64>,
 }
 /// A scripted daemon on a fresh loopback port.
 fn listen(seen: &mpsc::Sender<Value>, script: Script) -> u16 {
@@ -209,11 +221,15 @@ fn listen(seen: &mpsc::Sender<Value>, script: Script) -> u16 {
 }
 /// The catalog's open of request `request` on `port`.
 fn open(events: &mpsc::SyncSender<Incoming>, request: u64, port: u16) {
+    open_session(events, request, port, SESSION);
+}
+/// The catalog's open of request `request` on `port`, for `session`.
+fn open_session(events: &mpsc::SyncSender<Incoming>, request: u64, port: u16, session: &str) {
     events
         .send(Incoming::Catalog(Box::new(State {
             request,
             surface: Surface::Workspace,
-            selected_session: Some(SESSION.into()),
+            selected_session: Some(session.into()),
             ..State::default()
         })))
         .unwrap();
@@ -222,7 +238,7 @@ fn open(events: &mpsc::SyncSender<Incoming>, request: u64, port: u16) {
             version: 1,
             id: ID.into(),
             request,
-            live_session_id: SESSION.into(),
+            live_session_id: session.into(),
             capability: Box::new(handoff(port)),
         }))
         .unwrap();
@@ -240,8 +256,13 @@ impl Loop {
         let held = gate.clone();
         let passed_on = Arc::new(AtomicU64::new(0));
         let presence = passed_on.clone();
+        let refreshes = Arc::new(AtomicU64::new(0));
+        let refreshed = refreshes.clone();
         let bridge = start_events(Default::default(), receiver, true, move || {
             move |command| {
+                if matches!(command, Command::NativeTerminalRefresh { .. }) {
+                    refreshed.fetch_add(1, Ordering::SeqCst);
+                }
                 if let Command::Presence { revision, .. } = command {
                     presence.store(revision, Ordering::SeqCst);
                     if held.swap(false, Ordering::SeqCst) {
@@ -260,6 +281,7 @@ impl Loop {
             events,
             seen_tx,
             passed_on,
+            refreshes,
         };
         running.until("input ready", |state| state.input_ready);
         running
@@ -292,10 +314,15 @@ impl Loop {
     }
     /// The catalog re-issues the route as `request`, on a new stream.
     fn reopen(&self, request: u64) {
-        open(
+        self.reopen_session(request, SESSION);
+    }
+    /// The catalog opens `session` as `request`, on a new stream.
+    fn reopen_session(&self, request: u64, session: &str) {
+        open_session(
             &self.events,
             request,
             listen(&self.seen_tx, Script::default()),
+            session,
         );
     }
     fn send(&self, command: Command) {
@@ -732,5 +759,64 @@ fn a_line_dropped_as_the_window_leaves_a_dead_stream_is_announced_on_the_next_on
         "line 4402, dropped as the window left a dead stream, announced",
     );
     thread::sleep(Duration::from_millis(100));
+    assert!(app.typed().is_empty(), "a key was sent");
+}
+
+/// Review round 2, item 1: another client splits a pane in while the window
+/// is away, right after the focus loss dropped a line. The stream is
+/// re-leased (a refresh of the same route), and the window, back on the new
+/// stream, still says the line was not sent. The line is never sent.
+#[test]
+fn a_line_dropped_at_the_focus_loss_is_announced_after_a_re_lease_in_the_background() {
+    let mut app = Loop::start_with(Script {
+        add_pane_on_release: true,
+        ..Script::default()
+    });
+    let mut commands = line(4402);
+    commands.push(focus(false, 1));
+    app.one_turn(0, commands);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.refreshes.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "the route was not re-leased");
+        thread::sleep(Duration::from_millis(2));
+    }
+    app.reopen(3);
+    app.send(focus(true, 2));
+    noticed(
+        &mut app,
+        3,
+        2,
+        "line 4402, dropped at the focus loss, announced after a re-lease",
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert!(app.typed().is_empty(), "a key was sent");
+}
+
+/// Review round 2, N4: the stream is lost while the window is away, and the
+/// catalog then opens another session. The notice belongs to the session the
+/// keys were typed into, so the other session does not show it.
+#[test]
+fn keys_not_sent_in_one_session_are_not_announced_in_another() {
+    const OTHER: &str = "live-session.98765432109876543210";
+    let mut app = Loop::start_with(Script {
+        close_on_release: true,
+        ..Script::default()
+    });
+    let mut commands = line(4402);
+    commands.push(focus(false, 1));
+    app.one_turn(0, commands);
+    app.until("the stream lost in the background", |state| {
+        state.reconnect_attempt.is_some()
+    });
+    app.reopen_session(4, OTHER);
+    app.send(focus(true, 2));
+    let back = app.until("the other session back with input", |state| {
+        state.request == 4 && state.presence_revision == 2 && state.input_ready
+    });
+    assert_eq!(back.status, "Connected");
+    thread::sleep(Duration::from_millis(100));
+    if let Some(Some(later)) = app.bridge.mailbox.lock().unwrap().take() {
+        assert_eq!(later.status, "Connected", "a turn later");
+    }
     assert!(app.typed().is_empty(), "a key was sent");
 }
