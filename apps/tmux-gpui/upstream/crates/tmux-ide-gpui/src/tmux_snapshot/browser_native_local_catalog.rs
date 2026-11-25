@@ -91,7 +91,8 @@ impl Local {
             || (!self.tab_catalog()?
                 && !self.fleet_open_catalog()?
                 && !self.navigate_catalog()?
-                && !self.reconnect_catalog()?)
+                && !self.reconnect_catalog()?
+                && !self.resume_catalog()?)
         {
             self.publish()?;
             if initial && self.local_record.is_some() && self.selected_profile.is_none() {

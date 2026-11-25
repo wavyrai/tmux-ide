@@ -102,9 +102,13 @@ pub(super) async fn run_browser(
         let update = mailbox.try_lock().ok().and_then(|mut slot| slot.take());
         if let Some(state) = update {
             let done = state.is_none();
+            let stopped = mailbox.stopped();
             if entity
                 .update_in(cx, |view, window, cx| {
                     view.apply_browser_state(state, cx);
+                    if done {
+                        view.connection_stopped(stopped);
+                    }
                     view.finish_session_open(window, cx);
                     view.finish_header_actions(window, cx);
                 })

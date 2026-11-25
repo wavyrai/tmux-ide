@@ -60,6 +60,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             local_record: Some(path.clone()),
             sources: NativeOwner::new(CatalogSource::Local(path.clone())),
             selected_profile: None,
+            resume: None,
         },
         receiver,
     )

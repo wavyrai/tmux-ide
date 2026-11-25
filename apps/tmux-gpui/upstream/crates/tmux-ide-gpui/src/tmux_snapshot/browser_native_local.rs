@@ -73,10 +73,14 @@ mod open_retry;
 mod pane_limit;
 #[path = "browser_native_local_home_quiet.rs"]
 mod quiet;
+#[path = "browser_native_local_resume.rs"]
+mod resume;
 #[path = "browser_native_local_split.rs"]
 mod split;
 #[path = "browser_native_local_stage.rs"]
 mod stage;
+#[path = "browser_native_local_supervise.rs"]
+mod supervise;
 #[path = "browser_native_local_window.rs"]
 mod window;
 use stage::Stage;
@@ -118,6 +122,8 @@ struct Local {
     local_record: Option<PathBuf>,
     sources: NativeOwner,
     selected_profile: Option<herdr_client::tmux_daemon::SavedMachine>,
+    /// The session to reopen after a restart of the terminal loop (#878).
+    resume: Option<resume::Resume>,
 }
 pub(in crate::tmux_snapshot) fn start(
     record: PathBuf,
@@ -149,17 +155,53 @@ fn start_source(
     machine_label: String,
     kitty: crate::tmux_snapshot::kitty_graphics::Store,
 ) -> Result<(Bridge, NativeOwner), Error> {
+    let sources = NativeOwner::new(source.clone());
+    let first = generation(
+        &sources,
+        source,
+        local_record.clone(),
+        machine_id.clone(),
+        machine_label.clone(),
+        None,
+    )?;
+    let owner = sources.clone();
+    let mut first = Some(first);
+    // A restart (#878) starts on the source and machine the window was on.
+    let start = move |seen: Option<&Seen>| match first.take() {
+        Some(first) => Ok(first),
+        None => {
+            let (id, label) =
+                (owner.machine()?).unwrap_or_else(|| (machine_id.clone(), machine_label.clone()));
+            let source = owner.observation_source()?;
+            generation(&owner, source, local_record.clone(), id, label, seen)
+        }
+    };
+    let cleanup = sources.clone();
+    let bridge = supervise::supervise(kitty, start, move || {
+        let _ = cleanup.shutdown();
+    });
+    Ok((bridge, sources))
+}
+/// One catalog actor, its event channel and its command sink. `seen` is what
+/// the window was shown when an earlier terminal loop ended.
+fn generation(
+    sources: &NativeOwner,
+    source: CatalogSource,
+    local_record: Option<PathBuf>,
+    machine_id: String,
+    machine_label: String,
+    seen: Option<&Seen>,
+) -> Result<supervise::Generation, Error> {
     let worker = CatalogWorker::spawn_source(source.clone())?;
 
     let (events, receiver) = mpsc::sync_channel(8);
     let (commands, input) = mpsc::sync_channel(32);
-    let sources = NativeOwner::new(source.clone());
     let registry_worker = local_record
         .as_ref()
         .map(|record| CatalogWorker::spawn(record.clone()))
         .transpose()?;
     let split = split::Reader::from_source(source)?;
-    let local = Local {
+    let mut local = Local {
         machine_id,
         machine_label,
         catalog_identity: None,
@@ -199,23 +241,27 @@ fn start_source(
         local_record,
         sources: sources.clone(),
         selected_profile: None,
+        resume: None,
     };
-    let cleanup = sources.clone();
+    if let Some(seen) = seen {
+        local.resume_from(seen);
+    }
+    // Closed when the actor ends, by return or by unwinding.
+    let (finished, done) = mpsc::channel::<()>();
     let actor = std::thread::Builder::new()
         .name("tmux-native-browser".into())
         .spawn(move || {
+            let _finished = finished;
             if local.run(input).is_err() {
                 eprintln!("tmux-ide: native catalog closed");
             }
-            let _ = cleanup.shutdown();
         })?;
     let commands = watch::Commands::new(commands, actor.thread().clone());
-    Ok((
-        start_events(kitty, receiver, true, move || {
-            move |command| commands.send(command)
-        }),
-        sources,
-    ))
+    Ok(supervise::Generation {
+        events: receiver,
+        output: Box::new(move |command| commands.send(command)),
+        done,
+    })
 }
 impl Local {
     fn emit(&mut self, event: Incoming) -> Result<(), Error> {
@@ -831,14 +877,14 @@ mod home_live_tests;
 #[path = "browser_native_local_home_reconnect_live_tests.rs"]
 mod home_reconnect_live_tests;
 #[cfg(test)]
+#[path = "browser_native_local_loop_end_tests.rs"]
+mod loop_end_tests;
+#[cfg(test)]
 #[path = "browser_native_local_old_daemon_live_tests.rs"]
 mod old_daemon_live_tests;
 #[cfg(test)]
 #[path = "browser_native_local_open_live_tests.rs"]
 mod open_live_tests;
-#[cfg(test)]
-#[path = "browser_native_local_loop_end_tests.rs"]
-mod loop_end_tests;
 #[cfg(test)]
 #[path = "browser_native_local_reconnect_live_tests.rs"]
 mod reconnect_live_tests;

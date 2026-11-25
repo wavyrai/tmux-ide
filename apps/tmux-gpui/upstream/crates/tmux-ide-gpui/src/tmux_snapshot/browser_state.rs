@@ -1,7 +1,15 @@
 //! Apply one already-decoded browser mailbox publication on the UI thread.
 use super::{SnapshotView, browser};
 use gpui::Context;
+const LOST: &str = "Connection lost. Reopen Tmux IDE to reconnect.";
 impl SnapshotView {
+    /// The terminal loop was given up on after its restarts (#878): the
+    /// message says why.
+    pub(super) fn connection_stopped(&mut self, reason: Option<&str>) {
+        if let Some(reason) = reason {
+            self.browser_state.status = format!("{LOST} The terminal stopped: {reason}.");
+        }
+    }
     pub(super) fn apply_browser_state(
         &mut self,
         state: Option<browser::State>,
@@ -79,7 +87,7 @@ impl SnapshotView {
                 self.frame = None;
                 self.browser_state.diagnostics = None;
                 self.browser_state.retained_preview = false;
-                self.browser_state.status = "Connection lost. Reopen Tmux IDE to reconnect.".into();
+                self.browser_state.status = LOST.into();
                 self.browser_commands = None;
             }
             _ => {}
