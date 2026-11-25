@@ -72,6 +72,8 @@ pub(super) enum Stage {
         selected: String,
         /// #806: the one window `panes` are, for a session streamed by window.
         window: Option<String>,
+        /// #872: a person's "Retry now" asked for this lease.
+        retry_asked_by_person: bool,
     },
 }
 impl Stage {
@@ -169,6 +171,7 @@ impl Stage {
                 panes,
                 selected,
                 window,
+                retry_asked_by_person,
             } => CatalogAction::Issue {
                 scope: target.scope.clone(),
                 selection: TerminalSelection {
@@ -179,6 +182,7 @@ impl Stage {
                     mode: ViewerMode::Interactive,
                     window: window.clone(),
                 },
+                retry_asked_by_person: *retry_asked_by_person,
             },
         }
     }

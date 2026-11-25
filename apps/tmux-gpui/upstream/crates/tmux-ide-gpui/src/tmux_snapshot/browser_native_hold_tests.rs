@@ -263,3 +263,24 @@ fn a_key_dropped_during_the_hold_is_reported_from_then_on() {
     assert!(shown.reconnect_keys_lost);
     assert!(shown.status.ends_with(LOST_INPUT));
 }
+
+/// #872: the daemon's hold of a pane reaches the view through the held
+/// frame's publication, and goes when the catalog drops it.
+#[test]
+fn the_held_frame_carries_the_daemon_s_hold_of_a_pane() {
+    let mut hold = Hold::default();
+    hold.begin(&live(7), false);
+    let pane_held = crate::tmux_snapshot::browser::PaneHeld {
+        since: std::time::Instant::now(),
+        retry_in: std::time::Duration::from_secs(12),
+        too_large: true,
+    };
+    let state = State {
+        pane_held: Some(pane_held),
+        ..reconnecting(7, 2)
+    };
+    let shown = hold.publication(&state);
+    assert!(shown.frame.is_some());
+    assert_eq!(shown.pane_held, Some(pane_held));
+    assert_eq!(hold.publication(&reconnecting(7, 3)).pane_held, None);
+}

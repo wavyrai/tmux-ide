@@ -127,6 +127,7 @@ impl Hold {
         result.appearance = state.appearance.clone();
         result.presence_revision = state.presence_revision;
         result.reconnect_attempt = Some(attempt);
+        result.pane_held = state.pane_held;
         result.reconnect_keys_lost = held.lost_input;
         result.status = if held.lost_input {
             format!("Reconnecting… attempt {attempt} — {LOST_INPUT}")

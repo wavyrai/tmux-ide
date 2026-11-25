@@ -553,3 +553,16 @@ fn a_peer_close_reports_its_code_and_a_token_reason() {
         peer.join().unwrap();
     }
 }
+
+/// #872: the held pane's close reason survives the token check, so the app
+/// can read its wait and why.
+#[test]
+fn a_held_pane_close_reason_is_kept_as_a_token() {
+    for reason in [
+        "pane-held:1:failed",
+        "pane-held:30000:too-large",
+        "pane-held:600000:too-large",
+    ] {
+        assert_eq!(Close::new(1013, reason).reason.as_deref(), Some(reason));
+    }
+}

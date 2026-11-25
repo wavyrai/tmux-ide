@@ -644,6 +644,7 @@ fn creates_session_in_explicit_owned_fixture() {
                 mode: crate::tmux_stream::ViewerMode::ReadOnly,
                 window: None,
             },
+            retry_asked_by_person: false,
         })
         .unwrap();
     let CatalogResult::Issued(handoff) = worker_tests::await_result(&mut worker).unwrap() else {

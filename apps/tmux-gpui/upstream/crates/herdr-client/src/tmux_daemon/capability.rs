@@ -121,15 +121,22 @@ fn knows_topology_bundle(product_version: Option<&str>) -> bool {
 pub(super) fn knows_window_streams(product_version: Option<&str>) -> bool {
     release_at_least(product_version, WINDOW_STREAMS_SINCE)
 }
+/// Whether a daemon of this product version takes `retryAskedByPerson` (#872).
+fn knows_person_retry(product_version: Option<&str>) -> bool {
+    release_at_least(product_version, PERSON_RETRY_SINCE)
+}
 /// The issue request. A window-scoped selection (#806) names its window, and
 /// only to a daemon that knows the field: a released daemon refuses unknown
-/// stream fields, so an older one gets no window selection at all.
+/// stream fields, so an older one gets no window selection at all. A retry a
+/// person asked for (#872) says so, likewise only to a daemon that knows it;
+/// an older one gets the request unchanged.
 pub(super) fn issue_body(
     request_id: &str,
     generation: &str,
     selection: &TerminalSelection,
     versions: &[u32],
     daemon_version: Option<&str>,
+    retry_asked_by_person: bool,
 ) -> Result<String, Error> {
     let mut body = serde_json::json!({"requestId":request_id,"expectedDaemonInstanceId":generation,
         "stream":{"protocolVersion":2,"workspaceName":selection.workspace_name,"panes":selection.visible_panes,"viewerMode":selection.mode,
@@ -139,6 +146,9 @@ pub(super) fn issue_body(
             return Err(Error::TerminalSelection);
         }
         body["stream"]["semanticWindowId"] = window.as_str().into();
+    }
+    if retry_asked_by_person && knows_person_retry(daemon_version) {
+        body["stream"]["retryAskedByPerson"] = true.into();
     }
     Ok(body.to_string())
 }
@@ -229,6 +239,8 @@ const MAX_OFFERED_VERSIONS_2_9_26: usize = 16;
 /// The first daemon release with window-scoped streams (#806). Not yet set
 /// by a release: the PM confirms it when the daemon side ships.
 const WINDOW_STREAMS_SINCE: [u64; 3] = [2, 9, 26];
+/// The first daemon release that takes `stream.retryAskedByPerson` (#872).
+const PERSON_RETRY_SINCE: [u64; 3] = [2, 9, 28];
 /// Capability 122, history on demand (#435). 2.9.26 shipped without it, so a
 /// released 2.9.26 daemon must not be offered it (lead, 17 Nov).
 const PARTIAL_HISTORY_SINCE: [u64; 3] = [2, 9, 27];
@@ -258,7 +270,16 @@ impl ServerClient {
     /// Issue a one-use terminal capability; no owner credential enters the handoff.
     /// Read-only and interactive modes stay distinct through request and response.
     pub fn issue_terminal(&self, selection: &TerminalSelection) -> Result<Handoff, Error> {
-        self.issue_selected(selection, true)
+        self.issue_selected(selection, true, false)
+    }
+    /// [`Self::issue_terminal`] for a retry a person asked for when
+    /// `retry_asked_by_person` (#872): the daemon tries a held pane at once.
+    pub fn issue_terminal_asked(
+        &self,
+        selection: &TerminalSelection,
+        retry_asked_by_person: bool,
+    ) -> Result<Handoff, Error> {
+        self.issue_selected(selection, true, retry_asked_by_person)
     }
     /// Local pixel producers observe exactly one pane without acquiring input
     /// authority or subscribing to their own graphics payloads.
@@ -271,12 +292,13 @@ impl ServerClient {
         if selection.mode != ViewerMode::ReadOnly || selection.visible_panes.len() != 1 {
             return Err(Error::TerminalSelection);
         }
-        self.issue_selected(selection, false)
+        self.issue_selected(selection, false, false)
     }
     fn issue_selected(
         &self,
         selection: &TerminalSelection,
         graphics: bool,
+        retry_asked_by_person: bool,
     ) -> Result<Handoff, Error> {
         self.assert_current()?;
         selection.validate()?;
@@ -290,6 +312,7 @@ impl ServerClient {
             selection,
             &prelude.versions,
             prelude.daemon_version.as_deref(),
+            retry_asked_by_person,
         )?;
         let path = format!(
             "api/v1/tmux-servers/{}/{}/pane-streams/issue?liveSessionId={}",
