@@ -273,3 +273,24 @@ fn leaving_the_session_resumes_the_kept_lane() {
     assert!(!local.sources.test_held(), "the kept lane waits for nobody");
     assert!(local.home_recovery_wait().is_none());
 }
+
+/// The session's retry keeps its backoff: a tick before the first retry is
+/// due (250 ms after the drop) does not reconnect. A wake still retries at
+/// once (`a_resumed_session_lane_reads_the_rows_again_and_says_nothing`).
+#[test]
+fn a_session_lane_retry_waits_for_its_backoff() {
+    let (mut local, _events) = session();
+    let dropped = Instant::now();
+    drop_lane(&mut local, lost());
+    assert!(
+        local
+            .home_recovery_wait()
+            .is_some_and(|wait| wait > Duration::ZERO)
+    );
+    local.home_recovery_tick().unwrap();
+    // Only meaningful while the backoff has not run out; a slower machine
+    // skips the check rather than fail on timing.
+    if dropped.elapsed() < Duration::from_millis(200) {
+        assert!(local.sources.test_held(), "retried before its backoff");
+    }
+}
