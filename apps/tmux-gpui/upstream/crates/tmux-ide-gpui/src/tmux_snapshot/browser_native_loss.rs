@@ -186,35 +186,38 @@ fn typed(command: &Command) -> bool {
 /// key the input scheduler admitted but has not sent (`focus_loss` cancels
 /// it next). When any of them was typing, the window says so once it is back
 /// (#875: a line typed 5 ms before the window left was lost with no notice).
-pub(super) fn blur(pending: &mut VecDeque<Command>, active: Option<&mut Active>) {
+/// The loop keeps that in `hold` until then: the stream may be lost or
+/// re-leased while the window is away.
+pub(super) fn blur(pending: &mut VecDeque<Command>, active: Option<&mut Active>, hold: &mut Hold) {
     let queued = pending.iter().any(typed);
     pending.retain(|command| !matches!(command, Command::Input { .. }));
     if let Some(current) = active
         && (queued || current.input.waiting_keys())
     {
-        current.action_status.set(Some(KEYS_NOT_SENT));
+        hold.carry_keys_not_sent(&current.session);
     }
 }
 /// Typing that reached the loop after the window left is refused there, and
 /// says so as [`blur`] does.
-pub(super) fn refused(command: &Command, active: Option<&mut Active>) {
+pub(super) fn refused(command: &Command, active: Option<&Active>, hold: &mut Hold) {
     if let Some(current) = active
         && typed(command)
     {
-        current.action_status.set(Some(KEYS_NOT_SENT));
+        hold.carry_keys_not_sent(&current.session);
     }
 }
 
-/// The stream is lost before the window is back to read that keys were not
-/// sent (a link that drops while the user is in another app): the next stream
-/// opened says it instead. Nothing is re-sent.
+/// The stream is lost while it says that keys were not sent, perhaps before
+/// anyone read it: the next stream of its session says it again. Nothing is
+/// re-sent.
 fn carry(current: &Active, hold: &mut Hold) {
     if current.action_status.is(KEYS_NOT_SENT) {
-        hold.carry_keys_not_sent();
+        hold.carry_keys_not_sent(&current.session);
     }
 }
-/// Polls the stream, after handing it the notice a lost stream carried: the
-/// first stream polled after the loss says it once the window is back.
+/// Polls the stream. With the window back and the stream taking input, it
+/// first takes over a "keys not sent" for its session, which it then shows
+/// until the next command.
 pub(super) fn poll(
     current: &mut Active,
     hold: &mut Hold,
@@ -222,7 +225,7 @@ pub(super) fn poll(
     foreground: bool,
     now: u64,
 ) -> Result<bool, NativeError> {
-    if hold.take_keys_not_sent() {
+    if foreground && current.controller.input_ready() && hold.take_keys_not_sent(&current.session) {
         current.action_status.set(Some(KEYS_NOT_SENT));
     }
     current.poll(state, foreground, now)

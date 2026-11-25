@@ -479,9 +479,14 @@ fn a_key_held_back_by_the_scheduler_is_announced_as_not_sent() {
         }
         active.input("left", None, last, 1).unwrap();
         assert!(active.input.waiting());
-        super::blur(&mut std::collections::VecDeque::new(), Some(&mut active));
+        let mut hold = hold::Hold::default();
+        super::blur(
+            &mut std::collections::VecDeque::new(),
+            Some(&mut active),
+            &mut hold,
+        );
         active.input.focus_loss();
-        active.poll(&mut state, true, 2).unwrap();
+        super::poll(&mut active, &mut hold, &mut state, true, 2).unwrap();
         assert_eq!(state.status == NOTICE, notice, "{}", state.status);
         active.controller.retire();
         peer.join().unwrap();
@@ -710,7 +715,7 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
             super::stream_lost(&active, &mut pending, &mut hold, &state, 1, &lost());
         }
         assert_eq!(
-            hold.take_keys_not_sent(),
+            hold.take_keys_not_sent(&active.session),
             notice,
             "{outcome:?}, command failed {failed}"
         );

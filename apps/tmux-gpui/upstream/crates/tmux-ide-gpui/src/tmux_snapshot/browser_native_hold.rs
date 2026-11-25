@@ -28,9 +28,10 @@ pub(super) struct Hold {
     /// The last live frame the UI was shown. A catalog publication can replace the
     /// transport's state, frame included, in the same turn the stream fails.
     last: Option<Held>,
-    /// Keys dropped as the window left were not sent, and the stream that was
-    /// to say so once the window is back was lost (#875). The next stream does.
-    keys_not_sent: bool,
+    /// The session whose typed keys were dropped as the window left (#875),
+    /// until a stream of that session says so with the window back. It lives
+    /// here, not on the stream, so a stream retired meanwhile cannot lose it.
+    keys_not_sent: Option<String>,
 }
 impl Hold {
     /// `hold_frames` is false for the legacy pipe catalog: no held frames.
@@ -91,17 +92,20 @@ impl Hold {
     /// Navigation: the user moved on, so a carried "keys not sent" goes too.
     pub fn clear(&mut self) {
         self.held = None;
-        self.keys_not_sent = false;
+        self.keys_not_sent = None;
     }
-    /// The lost stream had not yet said that keys were not sent: the next one
-    /// polled says it.
-    pub fn carry_keys_not_sent(&mut self) {
-        self.keys_not_sent = true;
+    /// Keys typed into `session` were dropped and not sent: the window says
+    /// so once it is back on a stream of that session.
+    pub fn carry_keys_not_sent(&mut self, session: &str) {
+        self.keys_not_sent = Some(session.to_owned());
     }
-    /// Whether the next stream polled must say that keys were not sent.
-    /// True once per carry.
-    pub fn take_keys_not_sent(&mut self) -> bool {
-        std::mem::take(&mut self.keys_not_sent)
+    /// Whether a stream of `session` must now say that keys were not sent.
+    /// Asking ends the carry: one for another session is dropped, because the
+    /// user has moved on to that session.
+    pub fn take_keys_not_sent(&mut self, session: &str) -> bool {
+        self.keys_not_sent
+            .take()
+            .is_some_and(|carried| carried == session)
     }
     pub fn active(&self) -> bool {
         self.held.is_some()
