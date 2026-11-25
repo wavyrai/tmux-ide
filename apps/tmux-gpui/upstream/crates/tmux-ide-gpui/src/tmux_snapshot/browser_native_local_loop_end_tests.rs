@@ -512,6 +512,13 @@ fn a_panic_in_the_loop_is_restarted() {
         .commands
         .send(Command::Refresh { request: 66 })
         .unwrap();
+    // The window is told at once, so keys typed in the gap are not taken.
+    let told = until(&supervised.bridge.mailbox, "the window is told", |state| {
+        state.status == reconnect::RECONNECTING
+    });
+    assert_eq!(told.request, 7);
+    assert!(!told.input_ready);
+    assert_eq!(told.selected_session.as_deref(), Some("session-a"));
     let next = supervised.next_catalog();
     let seen = next.seen.unwrap();
     assert_eq!((seen.request, seen.presence), (7, (false, 5)));
@@ -631,4 +638,101 @@ fn a_restart_waits_for_the_old_catalog() {
     drop(finished);
     let next = supervised.next_catalog();
     assert!(next.started >= ended, "started before the old actor ended");
+}
+
+/// The app's UI task shows why the loop was given up on: the reason reaches
+/// the window through `run_browser`, not only through a direct call.
+#[gpui::test]
+fn the_window_says_why_the_loop_was_given_up_on(cx: &mut TestAppContext) {
+    let supervised = supervised(QUICK, Vec::new());
+    let mailbox = supervised.bridge.mailbox.clone();
+    let (view, cx) = window(cx, supervised.bridge.commands.clone());
+    cx.update(|window, cx| {
+        view.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |entity, cx| {
+                crate::tmux_snapshot::browser_tick::run_browser(entity, mailbox, cx).await
+            })
+            .detach();
+        })
+    });
+    for _ in 0..=QUICK.backoff.len() {
+        drop(supervised.next_catalog());
+    }
+    let deadline = Instant::now() + WAIT;
+    while supervised.bridge.mailbox.stopped().is_none() {
+        assert!(Instant::now() < deadline, "never given up on");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let deadline = Instant::now() + WAIT;
+    loop {
+        thread::sleep(Duration::from_millis(20));
+        cx.run_until_parked();
+        let status = cx.update(|_, cx| view.read(cx).browser_state.status.clone());
+        if status == format!("{LOST} The terminal stopped: its catalog closed.") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the window shows: {status}");
+    }
+    cx.update(|_, cx| assert!(view.read(cx).browser_commands.is_none()));
+}
+
+/// Off a workspace, a run keeps no session: a restart from Home (or from
+/// Home after adding a machine, which leaves `selected_session` set) does not
+/// reopen one.
+#[test]
+fn a_run_keeps_no_session_off_a_workspace() {
+    let mut seen = Seen::default();
+    let mut home = shown();
+    home.surface = Surface::Home;
+    home.request = 9;
+    seen.observe(&home, (false, 2));
+    assert_eq!(
+        seen,
+        Seen {
+            request: 9,
+            presence: (false, 2),
+            session: None,
+            pane: None,
+        }
+    );
+    seen.observe(&shown(), (true, 3));
+    assert_eq!(seen.session.as_deref(), Some("session-a"));
+    assert_eq!(seen.pane.as_deref(), Some("pane-a"));
+}
+
+/// A catalog that cannot start counts toward the restarts, and the loop is
+/// given up on with that reason; it is not taken for a closed window.
+#[test]
+fn a_catalog_that_cannot_start_is_retried_then_given_up_on() {
+    let (started, starts) = mpsc::channel();
+    let mut first = true;
+    let bridge = supervise_with(
+        QUICK,
+        Default::default(),
+        move |_: Option<&Seen>| {
+            started.send(Instant::now()).unwrap();
+            if !std::mem::take(&mut first) {
+                return Err(Error::Invalid("no catalog"));
+            }
+            // A catalog that ends at once.
+            let (_events, receiver) = mpsc::sync_channel(8);
+            let (_finished, done) = mpsc::channel();
+            Ok(Generation {
+                events: receiver,
+                output: Box::new(|_| Ok(())),
+                done,
+            })
+        },
+        || {},
+    );
+    while publication(&bridge.mailbox).is_some() {}
+    assert_eq!(
+        bridge.mailbox.stopped(),
+        Some("its catalog could not start")
+    );
+    let starts: Vec<_> = starts.try_iter().collect();
+    assert_eq!(starts.len(), 1 + QUICK.backoff.len());
+    for (pair, wait) in starts.windows(2).zip(QUICK.backoff) {
+        assert!(pair[1] - pair[0] >= *wait, "restarted before {wait:?}");
+    }
 }

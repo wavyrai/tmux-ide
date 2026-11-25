@@ -89,6 +89,8 @@ pub(super) fn supervise_with(
                         }
                         Err(_) => {
                             eprintln!("tmux-preview: terminal loop ended: {PANICKED}");
+                            // The run left no state: input off from what it saw.
+                            send_state(&incoming, &seen.reconnecting());
                             (PANICKED, Some(done))
                         }
                     }

@@ -184,10 +184,19 @@ fn restart(
     machine_label: &str,
     seen: Option<&Seen>,
 ) -> Result<supervise::Generation, Error> {
+    let (source, id, label) = restart_target(owner, machine_id, machine_label)?;
+    generation(owner, source, local_record.clone(), id, label, seen)
+}
+/// The source, machine id and label a restart starts on: the owner's
+/// current ones, or the first machine's when the window never switched.
+fn restart_target(
+    owner: &NativeOwner,
+    machine_id: &str,
+    machine_label: &str,
+) -> Result<(CatalogSource, String, String), Error> {
     let (id, label) =
         (owner.machine()?).unwrap_or_else(|| (machine_id.to_owned(), machine_label.to_owned()));
-    let source = owner.observation_source()?;
-    generation(owner, source, local_record.clone(), id, label, seen)
+    Ok((owner.observation_source()?, id, label))
 }
 /// One catalog actor, its event channel and its command sink. `seen` is what
 /// the window was shown when an earlier terminal loop ended.

@@ -119,3 +119,15 @@ fn a_restarted_catalog_that_cannot_open_shows_home() {
     assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(local.state.surface, Surface::Home);
 }
+
+/// After a machine switch, a restart starts on that machine's id and label,
+/// not the first machine's.
+#[test]
+fn a_restart_after_a_switch_takes_its_machine() {
+    let (mut local, _events) = fixture();
+    let (_, id, label) = restart_target(&local.sources, "native-ssh", "host").unwrap();
+    assert_eq!((id.as_str(), label.as_str()), ("native-ssh", "host"));
+    local.switch_local(1).unwrap();
+    let (_, id, label) = restart_target(&local.sources, "native-ssh", "host").unwrap();
+    assert_eq!((id.as_str(), label.as_str()), ("local", "Local"));
+}

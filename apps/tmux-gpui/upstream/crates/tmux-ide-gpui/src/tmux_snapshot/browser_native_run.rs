@@ -34,6 +34,24 @@ impl Default for Seen {
     }
 }
 impl Seen {
+    /// What the window is shown while a run that left nothing is replaced:
+    /// where it was, with no stream and no input.
+    pub(super) fn reconnecting(&self) -> State {
+        let workspace = self.session.is_some();
+        State {
+            request: self.request,
+            presence_revision: self.presence.1,
+            surface: if workspace {
+                Surface::Workspace
+            } else {
+                Surface::Home
+            },
+            selected_session: self.session.clone(),
+            selected_pane: self.pane.clone(),
+            status: "Connection lost. Reconnecting…".into(),
+            ..State::default()
+        }
+    }
     pub(super) fn observe(&mut self, shown: &State, presence: (bool, u64)) {
         self.request = shown.request;
         self.presence = presence;
