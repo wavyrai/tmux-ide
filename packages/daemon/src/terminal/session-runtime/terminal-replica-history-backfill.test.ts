@@ -27,7 +27,10 @@ import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import type { MirrorSubscribeRequest, MirrorSubscription } from "../mirror/mirror-service.ts";
 import type { MirrorPaneEvent } from "../mirror/events.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
-import type { TerminalInterpreterBackend } from "./terminal-interpreter-backend.ts";
+import {
+  DAEMON_HISTORY_ROW_CAP,
+  type TerminalInterpreterBackend,
+} from "./terminal-interpreter-backend.ts";
 import { TerminalReplicaInterpreter } from "./terminal-replica-interpreter.ts";
 import {
   BACKFILL_ALTERNATE_WAIT_MS,
@@ -127,12 +130,13 @@ type Backend = TerminalInterpreterBackend & {
   prependNativeHistory(piece: NativeHistoryPiece): boolean;
 };
 
-function seededBackend(capture: NativeGridCapture, limit = 2000): Backend {
+function seededBackend(capture: NativeGridCapture, limit = 2000, historyRowCap?: number): Backend {
   const backend = createXtermTerminalInterpreterBackend({
     cols: capture.cols,
     rows: capture.rows,
     scrollback: Math.max(limit, capture.history + (capture.omittedHistory ?? 0)),
     historyLimit: limit,
+    ...(historyRowCap !== undefined ? { historyRowCap } : {}),
   }) as Backend;
   expect(backend.importNativeGrid!(capture)).toBe(true);
   backend.startHistoryCollection?.();
@@ -575,7 +579,13 @@ type Timer = { task: () => void; delayMs: number; cancelled: boolean };
 
 /** An owner on a fake mirror whose native seeds leave out the oldest rows. */
 async function ownerRig(
-  options: { historyRows?: number; omitted?: number; cols?: number; accept?: boolean } = {},
+  options: {
+    historyRows?: number;
+    omitted?: number;
+    cols?: number;
+    accept?: boolean;
+    historyRowCap?: number;
+  } = {},
 ) {
   const cols = options.cols ?? COLS;
   const historyRows = options.historyRows ?? 15;
@@ -636,6 +646,7 @@ async function ownerRig(
   const owner = new SessionRuntimeTerminalReplicaOwner(generation, "w", "pane", mirror as never, {
     incarnation: `${generation}:0`,
     initialRevision: 0,
+    ...(options.historyRowCap !== undefined ? { historyRowCap: options.historyRowCap } : {}),
     scheduler: {
       nowMs: () => performance.now(),
       createId: () => "id",
@@ -711,7 +722,8 @@ describe("owner: the backfill (#873 point 3)", () => {
       await vi.waitFor(() => expect(r.requests).toHaveLength(1));
       expect(r.requests[0]).toEqual({
         endRow: 10,
-        rows: nativeHistoryPieceRows(COLS),
+        // One piece, or the room left under the cap if that is less.
+        rows: Math.min(nativeHistoryPieceRows(COLS), DAEMON_HISTORY_ROW_CAP - 5),
         historySize: 15,
       });
       r.answer(r.requests[0]!);
@@ -947,6 +959,78 @@ describe("owner: history size and native backing with rows left out (#873 point 
       const result = await r.owner.captureNativeBacking();
       expect(result.status).toBe("mismatch");
       expect(r.captureNativeBacking).not.toHaveBeenCalled();
+    } finally {
+      await r.owner.dispose();
+    }
+  });
+});
+
+describe("the daemon's cap on rows held per pane (#873, owner decision of 25 Nov)", () => {
+  const held = (backend: TerminalInterpreterBackend) => project(backend).history;
+
+  it("holds 10,000 history rows unless told otherwise", () => {
+    expect(DAEMON_HISTORY_ROW_CAP).toBe(10_000);
+    const backend = createXtermTerminalInterpreterBackend({ cols: 4, rows: 2, scrollback: 100 });
+    expect(backend.historyRowCap?.()).toBe(10_000);
+  });
+
+  it("keeps the newest rows of a seed over the cap and counts the rest as left out", () => {
+    const rows = tmuxRows(15);
+    const backend = seededBackend(tailCapture(rows, 0), 2000, 10);
+    expect(held(backend).map(text)).toEqual(Array.from({ length: 10 }, (_, n) => `R${n + 5}`));
+    expect(backend.omittedHistory()).toBe(5);
+  });
+
+  it("moves rows that live output pushes past the cap to the rows left out", async () => {
+    const backend = seededBackend(tailCapture(tmuxRows(15), 0), 2000, 10);
+    await backend.write(lines(0, 3));
+    const history = held(backend);
+    expect(history).toHaveLength(10);
+    expect(backend.omittedHistory()).toBe(8);
+    expect(text(history[0]!)).toBe("R8");
+  });
+
+  it("still collects at tmux's limit as tmux does, counting rows past the cap", async () => {
+    // tmux: 15 rows, limit 20; ten more lines leave it 19 (it drops 2 at 20).
+    const backend = seededBackend(tailCapture(tmuxRows(15), 0), 20, 10);
+    for (let n = 0; n < 10; n++) await backend.write(lines(n, 1));
+    const history = held(backend);
+    expect(history).toHaveLength(10);
+    expect(backend.omittedHistory() + history.length).toBe(19);
+  });
+
+  it("keeps a prepended piece within the cap", () => {
+    const rows = tmuxRows(15);
+    const backend = seededBackend(tailCapture(rows, 10), 2000, 10);
+    expect(backend.prependNativeHistory(piece(rows, 0, 10, 15))).toBe(true);
+    expect(held(backend).map(text)).toEqual(Array.from({ length: 10 }, (_, n) => `R${n + 5}`));
+    expect(backend.omittedHistory()).toBe(5);
+  });
+
+  it("asks only up to the cap, then never again, and its history check agrees with tmux", async () => {
+    const r = await ownerRig({ historyRows: 30, omitted: 25, historyRowCap: 10 });
+    try {
+      await vi.waitFor(() => expect(r.requests).toHaveLength(1));
+      expect(r.requests[0]).toEqual({ endRow: 25, rows: 5, historySize: 30 });
+      r.answer(r.requests[0]!);
+      await flush();
+      for (const delay of [250, 500, 1000, 4000]) r.fire(delay);
+      await flush();
+      expect(r.requests).toHaveLength(1);
+      const seen: CanonicalTerminalReplicaUpdate[] = [];
+      await r.owner.subscribe((u) => seen.push(u));
+      const snapshot = seen[0]!.type === "terminal.seed" ? seen[0]!.snapshot : null;
+      expect(snapshot!.history.map(text)).toEqual(
+        Array.from({ length: 10 }, (_, n) => `R${n + 20}`),
+      );
+      // tmux still holds 30: the 20 rows past the cap are left out, not missing.
+      r.setHistorySize(30);
+      r.event({ type: "delta", data: new TextEncoder().encode("") });
+      r.fire(250);
+      await vi.waitFor(() => expect(r.readHistorySize).toHaveBeenCalled());
+      await flush();
+      expect(r.reseedCalls).not.toHaveBeenCalled();
+      expect(r.requests).toHaveLength(1);
     } finally {
       await r.owner.dispose();
     }

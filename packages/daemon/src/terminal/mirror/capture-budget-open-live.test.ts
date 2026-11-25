@@ -10,6 +10,7 @@ import { MirrorControlChannel } from "./control-channel.ts";
 import { MirrorService } from "./mirror-service.ts";
 import { nativeSeedHistoryRows } from "./native-grid-capture.ts";
 import { SessionRuntimeTerminalReplicaOwner } from "../session-runtime/terminal-replica-owner.ts";
+import { DAEMON_HISTORY_ROW_CAP } from "../session-runtime/terminal-interpreter-backend.ts";
 
 /**
  * #873: on tmux-ide's own tmux a pane seeds its replica from a native grid
@@ -33,7 +34,9 @@ describe.each([
 ])(
   "first open of a $columns-column pane with a full $historyLimit-line history",
   ({ columns, historyLimit, printed }) => {
-    it("opens at once and then holds every history row tmux holds", async ({ skip }) => {
+    it("opens at once and then holds tmux's newest history rows up to the daemon's cap", async ({
+      skip,
+    }) => {
       const root = mkdtempSync("/tmp/cbo-");
       const socketPath = join(root, "t.sock");
       const env = { ...process.env, HOME: root, TMUX: "", LC_ALL: "en_US.UTF-8" };
@@ -161,11 +164,18 @@ describe.each([
         // The first open reads no more history than the seed budget allows.
         expect(firstSeedHistory!).toBeLessThanOrEqual(nativeSeedHistoryRows(columns, ROWS));
 
-        await vi.waitFor(() => expect(state!.snapshot!.history.length).toBe(history), {
+        // The daemon holds at most DAEMON_HISTORY_ROW_CAP rows; tmux keeps the rest.
+        const held = Math.min(history!, DAEMON_HISTORY_ROW_CAP);
+        await vi.waitFor(() => expect(state!.snapshot!.history.length).toBe(held), {
           timeout: 90_000,
           interval: 100,
         });
         const filledMs = performance.now() - startedAt;
+        // It then stops reading: nothing changes while the pane is idle.
+        const settled = state!.revision;
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        expect(state!.revision).toBe(settled);
+        expect(state!.snapshot!.history).toHaveLength(held);
         expect(rejected).toEqual([]);
         expect(faults).toEqual([]);
         // Same rows as tmux, joined at the same wraps.
@@ -174,7 +184,17 @@ describe.each([
           if (row.wrapped && logical.length > 0) logical[logical.length - 1] += text(row);
           else logical.push(text(row));
         }
-        const expected = tmux("capture-pane", "-p", "-J", "-S", "-", "-E", "-1", "-t", "long")
+        const expected = tmux(
+          "capture-pane",
+          "-p",
+          "-J",
+          "-S",
+          `-${held}`,
+          "-E",
+          "-1",
+          "-t",
+          "long",
+        )
           .replace(/\n$/u, "")
           .split("\n")
           .map((line) => line.trimEnd());
@@ -183,7 +203,7 @@ describe.each([
         console.info(
           `[capture-budget-open] ${tmux("display-message", "-p", "#{version}").trim()} ` +
             `${columns}x${ROWS}, history ${history}: first open ${openedMs!.toFixed(0)} ms ` +
-            `with ${firstSeedHistory} rows, every row after ${filledMs.toFixed(0)} ms`,
+            `with ${firstSeedHistory} rows, ${held} rows after ${filledMs.toFixed(0)} ms`,
         );
       } finally {
         await owner?.dispose().catch(() => undefined);

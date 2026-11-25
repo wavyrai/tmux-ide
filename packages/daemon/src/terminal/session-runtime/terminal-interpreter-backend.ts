@@ -38,6 +38,8 @@ export interface TerminalInterpreterBackend {
    * size is this plus the history rows held. Zero after any other start.
    */
   omittedHistory?(): number;
+  /** #873: the most history rows this parser holds (DAEMON_HISTORY_ROW_CAP unless set). */
+  historyRowCap?(): number;
   /**
    * #873: prepend the piece's rows that are older than the oldest row held.
    * Applies only on the normal screen, at the piece's width, when the piece
@@ -94,7 +96,15 @@ export interface TerminalInterpreterBackendFactoryOptions {
   readonly scrollback: number;
   /** Native collection policy; retained capacity can be larger after tmux reflow. */
   readonly historyLimit?: number;
+  /**
+   * #873: the most history rows the daemon holds for a pane, whatever tmux's
+   * history-limit. Older rows stay in tmux and count as left out.
+   */
+  readonly historyRowCap?: number;
 }
+
+/** #873, owner decision of 25 Nov 2026: the daemon holds at most this many history rows per pane. */
+export const DAEMON_HISTORY_ROW_CAP = 10_000;
 
 export type TerminalInterpreterBackendFactory = (
   options: TerminalInterpreterBackendFactoryOptions,

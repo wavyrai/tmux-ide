@@ -16,10 +16,11 @@ import type {
   TerminalReplicaSnapshot,
 } from "@tmux-ide/contracts";
 import { createProjectedTerminalReplicaRowBuilder } from "@tmux-ide/core";
-import type {
-  TerminalInterpreterBackend,
-  TerminalInterpreterBackendFactoryOptions,
-  TerminalInterpreterBackendProjection,
+import {
+  DAEMON_HISTORY_ROW_CAP,
+  type TerminalInterpreterBackend,
+  type TerminalInterpreterBackendFactoryOptions,
+  type TerminalInterpreterBackendProjection,
 } from "./terminal-interpreter-backend.ts";
 
 /** Pinned xterm 6 adapter and the rollback oracle for native backends. */
@@ -44,10 +45,13 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #scrollOnClear: boolean | undefined;
   /** #873: tmux history rows older than the oldest row held (see omittedHistory). */
   #omittedHistory = 0;
+  /** #873: the most history rows held; rows pushed past it count as left out. */
+  readonly #historyRowCap: number;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
     const historyLimit = options.historyLimit ?? options.scrollback;
     this.#historyLimit = historyLimit;
+    this.#historyRowCap = options.historyRowCap ?? DAEMON_HISTORY_ROW_CAP;
     this.#terminal = new Terminal({
       cols: options.cols,
       rows: options.rows,
@@ -122,7 +126,28 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
    */
   startHistoryCollection(): void {
     this.#collecting = true;
+    this.#enforceRowCap();
     this.#lastYbase = this.#normalBuffer()?.ybase ?? null;
+  }
+
+  historyRowCap(): number {
+    return this.#historyRowCap;
+  }
+
+  /**
+   * #873: hold at most #historyRowCap history rows. The oldest rows past it
+   * are dropped here and counted as left out, so tmux's history size is still
+   * the rows held plus the rows left out. tmux itself keeps them.
+   */
+  #enforceRowCap(): void {
+    const buffer = this.#normalBuffer();
+    if (!buffer || buffer.ybase <= this.#historyRowCap) return;
+    const extra = buffer.ybase - this.#historyRowCap;
+    buffer.lines.trimStart(extra);
+    buffer.ybase -= extra;
+    buffer.ydisp = Math.max(0, buffer.ydisp - extra);
+    this.#setOmittedHistory(this.#omittedHistory + extra);
+    this.#historyProjectionInvalidated = true;
   }
 
   #normalBuffer() {
@@ -192,6 +217,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
         buffer.ydisp = Math.max(0, buffer.ydisp - trim);
       }
     }
+    if (this.#collecting) this.#enforceRowCap();
     this.#lastYbase = buffer.ybase;
   }
 
@@ -358,6 +384,7 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     buffer.ydisp += count;
     if (this.#lastYbase !== null) this.#lastYbase += count;
     this.#setOmittedHistory(piece.firstRow);
+    this.#enforceRowCap();
     this.#historyProjectionInvalidated = true;
     return true;
   }

@@ -166,6 +166,8 @@ export class SessionRuntimeTerminalReplicaOwner {
       readonly scheduler?: SessionRuntimeScheduler;
       readonly observability?: SessionRuntimeObservability;
       readonly takeOutputTrace?: () => SessionRuntimeTraceContext | null;
+      /** #873: the most history rows held for this pane (DAEMON_HISTORY_ROW_CAP). */
+      readonly historyRowCap?: number;
     },
   ) {
     this.#onClosed = options.onClosed;
@@ -183,6 +185,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       rows: this.#rows,
       scheduler: options.scheduler,
       observability: options.observability,
+      ...(options.historyRowCap !== undefined ? { historyRowCap: options.historyRowCap } : {}),
       onNativeReseedRequired: () => {
         if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture) return;
         this.#waitingForGeometryCapture = true;
@@ -724,9 +727,13 @@ export class SessionRuntimeTerminalReplicaOwner {
       this.#retryBackfill(token, false);
       return;
     }
+    // #873: the daemon holds at most the cap; rows past it stay in tmux, left
+    // out for good, and are never asked for.
+    const room = this.#interpreter.historyRowCap() - snapshot.history.length;
+    if (room <= 0) return;
     const sent = upstream.requestNativeHistory({
       endRow: omitted,
-      rows: nativeHistoryPieceRows(snapshot.cols),
+      rows: Math.min(room, nativeHistoryPieceRows(snapshot.cols)),
       historySize: omitted + snapshot.history.length,
     });
     if (sent) this.#backfillAsked.push(token);

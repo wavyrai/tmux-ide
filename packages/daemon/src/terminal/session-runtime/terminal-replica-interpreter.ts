@@ -34,9 +34,10 @@ import {
   type SessionRuntimeObservability,
   type SessionRuntimeTraceContext,
 } from "./runtime-observability.ts";
-import type {
-  TerminalInterpreterBackend,
-  TerminalInterpreterBackendFactory,
+import {
+  DAEMON_HISTORY_ROW_CAP,
+  type TerminalInterpreterBackend,
+  type TerminalInterpreterBackendFactory,
 } from "./terminal-interpreter-backend.ts";
 import { createXtermTerminalInterpreterBackend } from "./xterm-terminal-interpreter-backend.ts";
 import {
@@ -148,6 +149,8 @@ export interface TerminalReplicaInterpreterOptions {
   readonly cols: number;
   readonly rows: number;
   readonly scrollback?: number;
+  /** #873: the most history rows held per pane; DAEMON_HISTORY_ROW_CAP by default. */
+  readonly historyRowCap?: number;
   readonly onUpdate?: (
     update: CanonicalTerminalReplicaUpdate,
     trace: SessionRuntimeTraceContext | null,
@@ -191,6 +194,7 @@ export class TerminalReplicaInterpreter {
   readonly #semanticPaneId: string;
   readonly #incarnation: string;
   #scrollback: number;
+  readonly #historyRowCap: number;
   readonly #listeners = new Set<
     (update: CanonicalTerminalReplicaUpdate, trace: SessionRuntimeTraceContext | null) => void
   >();
@@ -260,6 +264,7 @@ export class TerminalReplicaInterpreter {
     this.#incarnation = options.incarnation;
     this.#revision = options.initialRevision ?? 0;
     this.#scrollback = options.scrollback ?? 5000;
+    this.#historyRowCap = options.historyRowCap ?? DAEMON_HISTORY_ROW_CAP;
     this.#onRawCommit = options.onRawCommit;
     this.#onNativeReseedRequired = options.onNativeReseedRequired;
     this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
@@ -269,6 +274,7 @@ export class TerminalReplicaInterpreter {
       cols: options.cols,
       rows: options.rows,
       scrollback: this.#scrollback,
+      historyRowCap: this.#historyRowCap,
     });
     this.#backend.startHistoryCollection?.();
     this.#kitty = new KittyImageStore(
@@ -359,6 +365,11 @@ export class TerminalReplicaInterpreter {
    */
   omittedHistory(): number {
     return this.#backend.omittedHistory?.() ?? 0;
+  }
+
+  /** #873: the most history rows the replica holds; the backfill stops there. */
+  historyRowCap(): number {
+    return this.#historyRowCap;
   }
 
   whenIdle(): Promise<void> {
@@ -487,6 +498,7 @@ export class TerminalReplicaInterpreter {
         rows: nativeRows,
         scrollback,
         historyLimit: operation.historyLimit ?? scrollback,
+        historyRowCap: this.#historyRowCap,
       });
       try {
         if (operation.native && !replacement.importNativeGrid?.(operation.native))
