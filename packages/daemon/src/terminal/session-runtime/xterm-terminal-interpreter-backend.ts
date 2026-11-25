@@ -1,4 +1,9 @@
-import { isNativeBootstrapCapture, type NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import {
+  isNativeBootstrapCapture,
+  type NativeGridCapture,
+  type NativeGridCaptureRow,
+  type NativeHistoryPiece,
+} from "../mirror/native-grid-capture.ts";
 import { projectNativeGridRow } from "../mirror/native-grid-projection.ts";
 import type { MirrorObservedTerminalModes } from "../mirror/events.ts";
 import { Terminal } from "@tmux-ide/xterm-headless";
@@ -37,6 +42,8 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
   #nativeModesObserved = false;
   #historyProjectionInvalidated = false;
   #scrollOnClear: boolean | undefined;
+  /** #873: tmux history rows older than the oldest row held (see omittedHistory). */
+  #omittedHistory = 0;
 
   constructor(options: TerminalInterpreterBackendFactoryOptions) {
     const historyLimit = options.historyLimit ?? options.scrollback;
@@ -126,7 +133,13 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
             normal?: {
               ybase: number;
               ydisp: number;
-              lines: { trimStart(count: number): void };
+              lines: {
+                length: number;
+                maxLength: number;
+                trimStart(count: number): void;
+                get(index: number): { isWrapped: boolean } | undefined;
+                splice(start: number, deleteCount: number, ...items: NativeImportLine[]): void;
+              };
             };
           };
         };
@@ -134,26 +147,50 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     )._core?.buffers?.normal;
   }
 
+  omittedHistory(): number {
+    return this.#omittedHistory;
+  }
+
+  /**
+   * The parser's own erase-in-display collection counts only the rows held.
+   * While tmux holds older rows than these, turn it off: #collectHistory then
+   * collects after each of the erase's scrolls instead, which leaves the same
+   * rows as tmux's collection before it.
+   */
+  #setOmittedHistory(count: number): void {
+    this.#omittedHistory = count;
+    this.#terminal.options.tmuxHistoryLimit =
+      count > 0 ? Number.MAX_SAFE_INTEGER : this.#historyLimit;
+  }
+
   #collectHistory(): void {
     const buffer = this.#normalBuffer();
     if (!buffer) return;
     const before = this.#lastYbase;
     const limit = this.#historyLimit;
+    const omitted = this.#omittedHistory;
     // Only a plain one-row scroll from at or above the limit is collected
     // here. ED2 collects before its own scrolls (one-column.patch), and any
     // other change (reset, resize, a capped ring) is left alone: a history
     // that still differs from tmux is caught by the owner's size check.
+    // tmux's history size counts the rows a native seed left out, and its
+    // collection drops the oldest rows: those first, then rows held.
     if (
       this.#collecting &&
       limit > 0 &&
       before !== null &&
-      before >= limit &&
+      omitted + before >= limit &&
       buffer.ybase === before + 1
     ) {
-      const trim = Math.min(buffer.ybase, Math.max(1, Math.floor(limit / 10)));
-      buffer.lines.trimStart(trim);
-      buffer.ybase -= trim;
-      buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+      const collected = Math.min(omitted + buffer.ybase, Math.max(1, Math.floor(limit / 10)));
+      const fromOmitted = Math.min(omitted, collected);
+      if (fromOmitted > 0) this.#setOmittedHistory(omitted - fromOmitted);
+      const trim = collected - fromOmitted;
+      if (trim > 0) {
+        buffer.lines.trimStart(trim);
+        buffer.ybase -= trim;
+        buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+      }
     }
     this.#lastYbase = buffer.ybase;
   }
@@ -233,6 +270,8 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
     const cell = this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell;
     if (typeof cell.setFromCharData !== "function")
       throw new Error("Unsupported @tmux-ide/xterm-headless 6 native cell shape");
+    const omitted = snapshot.omittedHistory ?? 0;
+    if (!Number.isSafeInteger(omitted) || omitted < 0) return false;
     if (buffer.lines.maxLength < snapshot.grid.length) return false;
     buffer.lines.length = 0;
     for (let index = 0; index < snapshot.grid.length; index++) {
@@ -280,8 +319,63 @@ export class XtermTerminalInterpreterBackend implements TerminalInterpreterBacke
       1,
     )!.cells[0]!;
     [handler._curAttrData.fg, handler._curAttrData.bg] = nativeImportAttributes(current);
+    this.#setOmittedHistory(omitted);
     this.#historyProjectionInvalidated = true;
     return true;
+  }
+
+  prependNativeHistory(piece: NativeHistoryPiece): boolean {
+    const omitted = this.#omittedHistory;
+    const buffer = this.#normalBuffer();
+    if (
+      !buffer ||
+      omitted <= 0 ||
+      this.#terminal.buffer.active.type !== "normal" ||
+      piece.cols !== this.cols ||
+      piece.historySize !== omitted + buffer.ybase ||
+      !Number.isSafeInteger(piece.firstRow) ||
+      piece.firstRow < 0 ||
+      piece.firstRow >= omitted ||
+      piece.firstRow + piece.rows.length < omitted ||
+      !this.canImportNativeGrid()
+    )
+      return false;
+    // Rows numbered below the oldest row held; a piece can overlap rows held.
+    const count = omitted - piece.firstRow;
+    if (buffer.lines.length + count > buffer.lines.maxLength) return false;
+    const lines = piece.rows
+      .slice(0, count)
+      .map((row, index) =>
+        this.#nativeLine(row, index > 0 && (piece.rows[index - 1]!.flags & 1) !== 0),
+      );
+    // In slices: one call with every row as an argument can exceed the stack.
+    for (let offset = 0; offset < lines.length; offset += 4096)
+      buffer.lines.splice(offset, 0, ...lines.slice(offset, offset + 4096));
+    // The import marked the row that was oldest as unwrapped: it had no row before it.
+    const boundary = buffer.lines.get(count);
+    if (boundary) boundary.isWrapped = (piece.rows[count - 1]!.flags & 1) !== 0;
+    buffer.ybase += count;
+    buffer.ydisp += count;
+    if (this.#lastYbase !== null) this.#lastYbase += count;
+    this.#setOmittedHistory(piece.firstRow);
+    this.#historyProjectionInvalidated = true;
+    return true;
+  }
+
+  /** One native row as a parser line, as importNativeGrid writes it. */
+  #nativeLine(source: NativeGridCaptureRow, wrapped: boolean): NativeImportLine {
+    const buffer = (this.#terminal.buffer.active as unknown as { _buffer: NativeImportBuffer })
+      ._buffer;
+    const cell = this.#terminal.buffer.active.getNullCell() as unknown as NativeImportCell;
+    const row = projectNativeGridRow(source, this.cols, 0, wrapped)!;
+    const line = buffer.getBlankLine(undefined, row.wrapped);
+    for (let column = 0; column < row.cells.length; column++) {
+      const projected = row.cells[column]!;
+      cell.setFromCharData([0, projected.grapheme, projected.width, 0]);
+      [cell.fg, cell.bg] = nativeImportAttributes(projected);
+      line.setCell(column, cell);
+    }
+    return line;
   }
 
   prioritizeNextWrite(): void {
