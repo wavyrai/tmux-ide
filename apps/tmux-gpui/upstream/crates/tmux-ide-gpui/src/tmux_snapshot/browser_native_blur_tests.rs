@@ -825,3 +825,29 @@ fn keys_not_sent_in_one_session_are_not_announced_in_another() {
     }
     assert!(app.typed().is_empty(), "a key was sent");
 }
+
+/// A stream takes over "keys not sent" only with the window back and input
+/// in hand: in the background, or on a stream that cannot take input yet
+/// (it may still be retired), the loop keeps it.
+#[test]
+fn only_a_stream_with_input_and_the_window_back_takes_over_keys_not_sent() {
+    for (authority, foreground, taken) in [
+        (true, false, false),
+        (false, true, false),
+        (true, true, true),
+    ] {
+        let (mut active, mut state, _seen, peer) = selection_tests::fixture(authority);
+        let mut hold = hold::Hold::default();
+        hold.carry_keys_not_sent(&active.session);
+        let _ = super::poll(&mut active, &mut hold, &mut state, foreground, 2);
+        let label = format!("input {authority}, window back {foreground}");
+        assert_eq!(active.action_status.is(NOTICE), taken, "{label}");
+        assert_eq!(
+            hold.take_keys_not_sent(&active.session),
+            !taken,
+            "{label}: the loop no longer keeps it"
+        );
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}
