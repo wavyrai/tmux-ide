@@ -8,8 +8,8 @@
 //! online without it, or stayed away for [`AWAY_LIMIT`]), or on a stop no
 //! retry can pass
 //! ([`UPDATE_APP`], [`SSH_IDENTITY`]). A new daemon authorizes an old server generation only for
-//! the same local daemon record, or over SSH the same saved machine and remote
-//! environment, with the identical server and live session
+//! the same local daemon record, or over SSH the same saved machine (or
+//! started-for destination) and remote environment, with the identical server and live session
 //! (`reconnect_catalog`), so retrying through a daemon update can never bind
 //! the window to another session. An identity failure over SSH stops at once,
 //! and recovery never repeats owner mutations.
@@ -528,12 +528,20 @@ impl Local {
     /// The saved machine and remote environment the catalog came from, when
     /// both are known: an SSH profile, and a daemon that reports its
     /// environment id (minted once per state home, kept across restarts).
-    /// A selected profile is what makes the source remote, so a local record
-    /// never has one.
+    /// A window started for one SSH destination (`--tmux-native-ssh`) has no
+    /// saved machine: the destination it was started for stands in for one,
+    /// in its own namespace so it never equals a profile id (#870). A local
+    /// record never has either.
     fn current_remote(&self) -> Option<(String, String)> {
-        let profile = self.selected_profile.as_ref()?.id.clone();
+        let machine = match &self.selected_profile {
+            Some(profile) => profile.id.clone(),
+            None => format!(
+                "ssh:{}",
+                self.sources.observation_source().ok()?.ssh_target()?
+            ),
+        };
         let environment = self.catalog_identity.as_ref()?.environment_id.clone()?;
-        Some((profile, environment))
+        Some((machine, environment))
     }
     /// Select an exact generation/session match in the newly verified catalog. A
     /// restarted local daemon has a new generation; its live session id hashes the
@@ -545,8 +553,9 @@ impl Local {
         };
         let same_local_daemon =
             recovery.local_record.is_some() && recovery.local_record == self.current_local_record();
-        // Over SSH (owner, D): the same saved machine and the same remote
-        // environment, both known on both sides. Then the server id and the
+        // Over SSH (owner, D): the same saved machine (or the destination a
+        // window was started for) and the same remote environment, both known
+        // on both sides. Then the server id and the
         // live id (server pid, session id, creation time) decide, as locally.
         let same_remote_machine =
             recovery.remote.is_some() && recovery.remote == self.current_remote();

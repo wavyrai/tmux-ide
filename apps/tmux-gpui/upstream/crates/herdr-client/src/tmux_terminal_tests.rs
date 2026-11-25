@@ -384,3 +384,46 @@ fn connection_level_faults_fail_the_stream_without_a_nack() {
         Err(Error::Delivery(tmux_receiver::Error::Envelope(_)))
     ));
 }
+
+/// #585: the daemon opens a stream without a pane whose delivery still fails
+/// and announces that pane seconds later, after the layout snapshot.
+#[test]
+fn a_pane_announced_after_the_layout_is_accepted() {
+    let negotiate_pane = |pane: &str| Event::DeliveryReady {
+        pane: pane.into(),
+        negotiation: to_raw_value(&json!({"accepted":true,
+        "negotiated":{"protocolVersion":1,"encoding":"semantic-compact-v1","richPlacements":true,
+        "generation":"generation","deliveryNonce":"f8da3f73-66c3-4621-bf6f-547ee1d5fd1c"}}))
+        .unwrap(),
+    };
+    let mut s = TerminalState::new(
+        "generation".into(),
+        "workspace".into(),
+        vec!["pane.one".into(), "pane.two".into()],
+    )
+    .unwrap();
+    let ready = Event::Ready(
+        serde_json::from_value(json!({"type":"ready","protocolVersion":2,
+        "daemonInstanceId":"generation","requestId":"request","panes":["pane.one","pane.two"],
+        "effectiveViewerMode":"read-only"}))
+        .unwrap(),
+    );
+    assert!(matches!(s.apply(ready), Ok(Outcome::Ready(_))));
+    let layout = Event::Control(
+        to_raw_value(&json!({"type":"layout-snapshot","topologyEpoch":1,"layouts":[]})).unwrap(),
+    );
+    assert!(matches!(s.apply(layout), Ok(Outcome::Control(_))));
+    assert!(matches!(
+        s.apply(negotiate_pane("pane.one")),
+        Ok(Outcome::Pending)
+    ));
+    assert!(matches!(
+        s.apply(negotiate_pane("pane.two")),
+        Ok(Outcome::Pending)
+    ));
+    // Registered once: a second announcement is still refused.
+    assert!(matches!(
+        s.apply(negotiate_pane("pane.two")),
+        Err(Error::Identity)
+    ));
+}

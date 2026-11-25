@@ -677,6 +677,59 @@ describe("WorkspaceClient", () => {
     await client.dispose();
   });
 
+  it("does not retry a session over the pane limit, and reports it once (#585)", async () => {
+    // A 26-pane session was refused before the request left the app, and the
+    // refusal was retried for ever: the terminal stayed on "connecting".
+    const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
+    const clock = new FakeClock();
+    const inventories: string[][] = [];
+    const failures: unknown[] = [];
+    const client = createWorkspaceClient({
+      target: target("alpha"),
+      deferApplicationShell: true,
+      clock,
+      ports: {
+        shell: shell.transport,
+        connectRuntime: async (_current, inventory) => {
+          inventories.push([...inventory.semanticPaneIds]);
+          if (inventory.semanticPaneIds.includes("pane.a"))
+            throw Object.assign(new Error("session over the pane limit"), {
+              code: "pane-limit-exceeded",
+            });
+          return new FakeRuntime(ALPHA_DAEMON.instanceId);
+        },
+        didFailRuntime: (error) => failures.push(error),
+        actions,
+      },
+    });
+    client.adoptTerminalRuntimeInventory({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 1,
+      semanticPaneIds: ["pane.a"],
+    });
+    await settle();
+    for (let step = 0; step < 6; step += 1) {
+      clock.advance(60_000);
+      await settle();
+    }
+    expect(inventories).toEqual([["pane.a"]]);
+    expect(failures).toEqual([expect.objectContaining({ code: "pane-limit-exceeded" })]);
+
+    // Fewer panes: a new inventory connects as usual.
+    client.adoptTerminalRuntimeInventory({
+      workspaceName: "alpha",
+      workspaceId: "workspace.alpha",
+      sessionId: COHESION_FIXTURE_V1.workspace.session.id,
+      resourceRevision: 2,
+      semanticPaneIds: ["pane.b"],
+    });
+    await settle();
+    expect(inventories).toEqual([["pane.a"], ["pane.b"]]);
+    await client.dispose();
+  });
+
   it("bounds stale-topology refresh and reopens only the replacement inventory", async () => {
     const shell = shellBroker({ alpha: shellResource("alpha", ["pane.a"]) });
     const inventories: string[][] = [];

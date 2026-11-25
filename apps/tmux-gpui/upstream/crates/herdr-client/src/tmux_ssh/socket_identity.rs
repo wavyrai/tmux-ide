@@ -25,6 +25,26 @@ pub enum IdentityError {
     #[error("Remote socket identity response has unexpected trailing bytes")]
     Trailing,
 }
+impl IdentityError {
+    /// The check did not finish: the socket failed, the connection broke, or
+    /// the answer took longer than the deadline, as on a slow SSH link. No
+    /// peer answered as another machine, so the caller may try again on a new
+    /// socket, which is checked again. A wrong or malformed answer is not
+    /// inconclusive.
+    pub fn inconclusive(&self) -> bool {
+        match self {
+            Self::Io(_) => true,
+            Self::Http(error) => matches!(
+                error,
+                ureq::Error::Io(_)
+                    | ureq::Error::Timeout(_)
+                    | ureq::Error::ConnectionFailed
+                    | ureq::Error::BodyStalled
+            ),
+            Self::Mismatch | Self::Trailing => false,
+        }
+    }
+}
 #[derive(Debug)]
 struct PinnedConnector {
     socket: Mutex<Option<TcpStream>>,
