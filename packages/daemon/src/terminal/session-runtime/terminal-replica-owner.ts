@@ -4,7 +4,7 @@ import {
   type HistoryAnchorProof,
 } from "./history-anchor-owner.ts";
 import { layoutContentRows } from "../mirror/layout-content-rows.ts";
-import type { NativeGridCapture } from "../mirror/native-grid-capture.ts";
+import { nativeHistoryPieceRows, type NativeGridCapture } from "../mirror/native-grid-capture.ts";
 import type {
   CanonicalTerminalReplicaUpdate,
   CausalCellFailureReasonV1,
@@ -47,6 +47,20 @@ export type TerminalReplicaSourceSubscription = TerminalReplicaSubscription;
  * enough that switching away and back stays warm.
  */
 export const PARK_AFTER_MS = 10_000;
+/**
+ * #873 backfill: a native seed can leave out the oldest history rows; the
+ * owner then asks tmux for them piece by piece. A null answer (output crossed
+ * the read) or a piece that no longer fits is asked again after
+ * BACKFILL_FIRST_RETRY_MS, doubling up to BACKFILL_MAX_RETRY_MS. After
+ * BACKFILL_MAX_FAILURES in a row (about 48 s of a pane that never pauses) the
+ * owner stops until the next seed; the replica stays correct without the
+ * older rows, it only lacks them. While the alternate screen is active it
+ * checks again every BACKFILL_ALTERNATE_WAIT_MS without counting a failure.
+ */
+export const BACKFILL_FIRST_RETRY_MS = 250;
+export const BACKFILL_MAX_RETRY_MS = 4_000;
+export const BACKFILL_MAX_FAILURES = 16;
+export const BACKFILL_ALTERNATE_WAIT_MS = 1_000;
 
 export interface TerminalReplicaCommittedRaw {
   readonly baseRevision: number;
@@ -129,6 +143,14 @@ export class SessionRuntimeTerminalReplicaOwner {
   #historyChecking = false;
   #historyDirty = false;
   #reconstructedHistoryGap: { readonly seed: number; readonly gap: number } | null = null;
+  // #873 backfill. A new seed, resize, park or disposal starts a new token;
+  // anything from an older token is ignored.
+  #backfillToken = 0;
+  // The token of each history request sent and not yet answered, oldest first.
+  // Answers arrive in request order, so each one belongs to the first entry.
+  readonly #backfillAsked: number[] = [];
+  #backfillFailures = 0;
+  #backfillTimer: SessionRuntimeTimer | null = null;
 
   constructor(
     readonly generation: SessionRuntimeGeneration,
@@ -144,6 +166,8 @@ export class SessionRuntimeTerminalReplicaOwner {
       readonly scheduler?: SessionRuntimeScheduler;
       readonly observability?: SessionRuntimeObservability;
       readonly takeOutputTrace?: () => SessionRuntimeTraceContext | null;
+      /** #873: the most history rows held for this pane (DAEMON_HISTORY_ROW_CAP). */
+      readonly historyRowCap?: number;
     },
   ) {
     this.#onClosed = options.onClosed;
@@ -161,10 +185,12 @@ export class SessionRuntimeTerminalReplicaOwner {
       rows: this.#rows,
       scheduler: options.scheduler,
       observability: options.observability,
+      ...(options.historyRowCap !== undefined ? { historyRowCap: options.historyRowCap } : {}),
       onNativeReseedRequired: () => {
         if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture) return;
         this.#waitingForGeometryCapture = true;
         this.#historyAnchors.invalidate();
+        this.#cancelBackfill();
         this.#supervise(
           this.#start.then(() => {
             if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
@@ -301,6 +327,8 @@ export class SessionRuntimeTerminalReplicaOwner {
     const initial = this.#interpreter.currentSeed();
     if (!initial || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
       return { status: "changed" };
+    // #873: tmux holds older rows than the replica; its rows cannot line up.
+    if (this.#interpreter.omittedHistory() > 0) return { status: "mismatch" };
     const epoch = this.#subscriptionEpoch;
     const captured = await upstream.captureNativeBacking();
     if (captured.status !== "captured") return captured;
@@ -414,6 +442,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       if (this.#disposed || this.#parked || this.#listeners.size > 0 || !this.#upstream) return;
       this.#parked = true;
       this.#stale = true;
+      this.#cancelBackfill();
       this.#upstream.freeze();
     }, PARK_AFTER_MS);
   }
@@ -480,6 +509,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#historyTimer = null;
     this.#parkTimer?.cancel();
     this.#parkTimer = null;
+    this.#cancelBackfill();
     this.#subscriptionEpoch += 1;
     await this.#interpreter.enqueue({ type: "close", reason });
     await this.#start.catch(() => undefined);
@@ -522,6 +552,8 @@ export class SessionRuntimeTerminalReplicaOwner {
         return;
       const seed = this.#interpreter.currentSeed();
       if (!seed) return;
+      // A native seed can leave out tmux's oldest rows (#873): tmux then holds
+      // that many more than the replica, until the backfill prepends them.
       const gap = size - seed.snapshot.history.length;
       // A seed with reconstructed tabs can differ from tmux in row count, and
       // a new capture would paint the same rows again. Accept the difference
@@ -534,7 +566,7 @@ export class SessionRuntimeTerminalReplicaOwner {
           return;
         }
         if (this.#reconstructedHistoryGap.gap === gap) return;
-      } else if (gap === 0) return;
+      } else if (gap === this.#interpreter.omittedHistory()) return;
       upstream.reseed();
     } catch {
       // Unavailable metadata is not evidence that history disappeared.
@@ -545,6 +577,10 @@ export class SessionRuntimeTerminalReplicaOwner {
   }
 
   #observePane(event: MirrorPaneEvent): void {
+    if (event.type === "history") {
+      this.#observeHistoryPiece(event.piece);
+      return;
+    }
     if (event.type === "delta") {
       this.#historyDirty = true;
       this.#scheduleHistoryCheck();
@@ -554,6 +590,7 @@ export class SessionRuntimeTerminalReplicaOwner {
       // armed after reset belongs to the next post-capture delta, never to this
       // already-started reseed.
       this.#historyAnchors.invalidate();
+      this.#cancelBackfill();
       this.#reseed = {
         nativeCols: event.cols,
         nativeRows: event.rows,
@@ -591,35 +628,37 @@ export class SessionRuntimeTerminalReplicaOwner {
       const lease = reseed ? this.#qualifyReseed(reseed, event.x, event.y) : null;
       this.#supervise(
         reseed && lease
-          ? this.#interpreter.enqueue({
-              type: "reseed",
-              nativeCols: reseed.nativeCols,
-              nativeRows: reseed.nativeRows,
-              cols: reseed.nativeCols,
-              rows: reseed.nativeRows,
-              chunks: reseed.chunks,
-              captureChunks: reseed.captureChunks,
-              native: reseed.native,
-              historyLimit: event.historyLimit,
-              historySize: event.historySize,
-              trace: reseed.trace,
-              // tmux can retain an offscreen x after a non-reflow width shrink
-              // (screen_resize_cursor), as well as x === cols for wrap pending.
-              // Preserve wrap pending in the parser. The backend's canonical
-              // projection, not its input cursor, clamps to the final cell.
-              cursor: { x: event.x, y: event.y },
-              wraparound: event.wraparound,
-              observedModes: event.observedModes,
-              bootstrap: "painted-capture",
-              validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
-              onInvalidated: () =>
-                this.#retryReseedOrFault(
-                  "terminal reseed layout lease crossed",
-                  reseed,
-                  "before-commit",
-                  "lease-crossed",
-                ),
-            })
+          ? this.#interpreter
+              .enqueue({
+                type: "reseed",
+                nativeCols: reseed.nativeCols,
+                nativeRows: reseed.nativeRows,
+                cols: reseed.nativeCols,
+                rows: reseed.nativeRows,
+                chunks: reseed.chunks,
+                captureChunks: reseed.captureChunks,
+                native: reseed.native,
+                historyLimit: event.historyLimit,
+                historySize: event.historySize,
+                trace: reseed.trace,
+                // tmux can retain an offscreen x after a non-reflow width shrink
+                // (screen_resize_cursor), as well as x === cols for wrap pending.
+                // Preserve wrap pending in the parser. The backend's canonical
+                // projection, not its input cursor, clamps to the final cell.
+                cursor: { x: event.x, y: event.y },
+                wraparound: event.wraparound,
+                observedModes: event.observedModes,
+                bootstrap: "painted-capture",
+                validateBeforeCommit: () => this.#leaseIsCurrent(lease, reseed.subscriptionEpoch),
+                onInvalidated: () =>
+                  this.#retryReseedOrFault(
+                    "terminal reseed layout lease crossed",
+                    reseed,
+                    "before-commit",
+                    "lease-crossed",
+                  ),
+              })
+              .then(() => this.#startBackfill())
           : reseed
             ? (this.#retryReseedOrFault(
                 `terminal reseed geometry is incompatible: capture ${reseed.nativeCols}x${reseed.nativeRows}, layout ${reseed.layoutLease?.pane.width}x${reseed.layoutLease?.pane.height}, border ${reseed.layoutLease?.paneBorderStatus}`,
@@ -655,6 +694,89 @@ export class SessionRuntimeTerminalReplicaOwner {
     }
   }
 
+  #cancelBackfill(): void {
+    this.#backfillToken += 1;
+    this.#backfillFailures = 0;
+    this.#backfillTimer?.cancel();
+    this.#backfillTimer = null;
+  }
+
+  /** After a seed commits: ask for the rows it left out, if any. */
+  #startBackfill(): void {
+    this.#cancelBackfill();
+    void this.#askForHistory(this.#backfillToken);
+  }
+
+  async #askForHistory(token: number): Promise<void> {
+    await this.#interpreter.whenIdle();
+    if (
+      token !== this.#backfillToken ||
+      this.#disposed ||
+      this.#parked ||
+      this.#stale ||
+      this.#reseed ||
+      this.#waitingForGeometryCapture
+    )
+      return;
+    const omitted = this.#interpreter.omittedHistory();
+    const upstream = this.#upstream;
+    if (omitted <= 0 || !upstream?.requestNativeHistory) return;
+    const snapshot = this.#interpreter.currentSnapshot();
+    // tmux reads the normal screen's history; the piece is prepended there.
+    if (snapshot.modes.alternateScreen) {
+      this.#retryBackfill(token, false);
+      return;
+    }
+    // #873: the daemon holds at most the cap; rows past it stay in tmux, left
+    // out for good, and are never asked for.
+    const room = this.#interpreter.historyRowCap() - snapshot.history.length;
+    if (room <= 0) return;
+    const sent = upstream.requestNativeHistory({
+      endRow: omitted,
+      rows: Math.min(room, nativeHistoryPieceRows(snapshot.cols)),
+      historySize: omitted + snapshot.history.length,
+    });
+    if (sent) this.#backfillAsked.push(token);
+    else this.#retryBackfill(token, true);
+  }
+
+  #observeHistoryPiece(piece: Extract<MirrorPaneEvent, { type: "history" }>["piece"]): void {
+    const token = this.#backfillAsked.shift();
+    if (token === undefined || token !== this.#backfillToken || this.#disposed) return;
+    if (!piece) {
+      this.#retryBackfill(token, true);
+      return;
+    }
+    // Queued now, behind every delta tmux sent before it read the piece.
+    this.#supervise(
+      this.#interpreter.prependNativeHistory(piece).then((applied) => {
+        if (token !== this.#backfillToken) return;
+        if (applied) {
+          this.#backfillFailures = 0;
+          void this.#askForHistory(token);
+        } else this.#retryBackfill(token, true);
+      }),
+    );
+  }
+
+  #retryBackfill(token: number, failed: boolean): void {
+    if (token !== this.#backfillToken || this.#disposed) return;
+    let delay = BACKFILL_ALTERNATE_WAIT_MS;
+    if (failed) {
+      this.#backfillFailures += 1;
+      if (this.#backfillFailures >= BACKFILL_MAX_FAILURES) return;
+      delay = Math.min(
+        BACKFILL_MAX_RETRY_MS,
+        BACKFILL_FIRST_RETRY_MS * 2 ** (this.#backfillFailures - 1),
+      );
+    }
+    this.#backfillTimer?.cancel();
+    this.#backfillTimer = this.#scheduler.timer(() => {
+      this.#backfillTimer = null;
+      void this.#askForHistory(token);
+    }, delay);
+  }
+
   #observeLayout(event: MirrorLayoutEvent): void {
     const observed = this.#readLayoutLease(event);
     if (observed.kind === "irrelevant") return;
@@ -678,6 +800,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     // One outstanding capture also coalesces geometry bursts; crossed leases
     // request the latest capture through the normal qualification retry path.
     this.#reseedRetryCount = 0;
+    this.#cancelBackfill();
     if (!this.#bootstrapped || this.#reseed || this.#waitingForGeometryCapture) return;
     this.#waitingForGeometryCapture = true;
     this.#historyAnchors.invalidate();
@@ -810,6 +933,7 @@ export class SessionRuntimeTerminalReplicaOwner {
     this.#noteLifecycle("reseed-retry", diagnostic);
     this.#reseedRetryCount += 1;
     this.#waitingForGeometryCapture = true;
+    this.#cancelBackfill();
     this.#historyAnchors.invalidate();
     void this.#start.then(() => {
       if (!this.#disposed) this.#upstream?.reseed();

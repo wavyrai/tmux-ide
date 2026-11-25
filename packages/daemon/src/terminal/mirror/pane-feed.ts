@@ -93,6 +93,11 @@ export class PaneFeed {
     return this.state;
   }
 
+  /** Changes with every `beginReseed`; a reply read under another value is stale. */
+  reseedEpoch(): number {
+    return this.epoch;
+  }
+
   /** Arm a reseed. Returns the epoch token the two reply hooks must present;
    *  an in-flight older reseed is invalidated wholesale. */
   beginReseed(): number {
