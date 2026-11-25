@@ -4422,6 +4422,20 @@ describe("native capture-resume recovery", () => {
       }
     },
   );
+  it.each([false, true])(
+    "asks the owned snapshot for the newest history that fits the seed budget (#873, dual=%s)",
+    async (dual) => {
+      const s = await setup(dual, false, dual);
+      try {
+        s.rig.sim.feedLines("%pause %1");
+        const command = s.adapter.tryDispatch.mock.calls.at(-1)![1].commands[0]!;
+        expect(command).toContain("-Q");
+        expect(command.slice(-4)).toEqual(["-S", "-2571", "-t", "%1"]);
+      } finally {
+        await s.rig.channel.dispose();
+      }
+    },
+  );
   it("publishes one atomic grid synchronously and admits following output without continue debt", async () => {
     const s = await setup();
     try {
@@ -4745,6 +4759,18 @@ describe("bounded native first open and history pieces (#873)", () => {
     try {
       expect(hookBody(rig)).toContain("capture-pane -p -R -S -2571 -t %1");
       expect(nativeSeedHistoryRows(100, 50)).toBe(2571);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
+  it("never reads more history than the channel's own history limit", async () => {
+    const rig = await startedRig({ historyLines: 100 });
+    const events = collect();
+    try {
+      rig.channel.subscribePane("pane.alpha", events.onEvent, undefined, true);
+      completeSeed(rig, tailSeed(), "0 0 100 50");
+      expect(hookBody(rig)).toContain("capture-pane -p -R -S -100 -t %1");
     } finally {
       await rig.channel.dispose();
     }
