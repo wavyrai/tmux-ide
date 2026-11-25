@@ -4880,6 +4880,22 @@ describe("bounded native first open and history pieces (#873)", () => {
     }
   });
 
+  it("answers null when the viewer froze while the read was in flight", async () => {
+    const { rig, events, handle } = await seeded();
+    try {
+      events.events.length = 0;
+      handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 });
+      handle.freeze();
+      rig.sim.reply([header(10), row(6)]);
+      expect(events.events.filter((event) => event.type === "history")).toEqual([
+        { type: "history", piece: null },
+      ]);
+      expect(handle.requestNativeHistory({ endRow: 7, rows: 1, historySize: 10 })).toBe(false);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("answers null when a reseed began while the read was in flight", async () => {
     const { rig, events, handle } = await seeded();
     try {

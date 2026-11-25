@@ -342,6 +342,12 @@ describe("bounded first open and history pieces (#873)", () => {
     ]);
   });
 
+  it("takes a piece that ends at tmux's newest history row", () => {
+    const piece = decodeNativeHistoryPiece(encode([header(9, 3), row(7, "g"), row(8, "h")]))!;
+    expect(piece.firstRow).toBe(7);
+    expect(piece.rows).toHaveLength(2);
+  });
+
   it("refuses a piece that is empty, holds a screen row, skips a row or is malformed", () => {
     for (const broken of [
       [header(9)],
