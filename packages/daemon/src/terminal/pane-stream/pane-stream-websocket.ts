@@ -481,7 +481,7 @@ function sendControl(socket: DirectTerminalSocket, frame: Readonly<Record<string
 /**
  * The hold to close with when every pane that failed to open was held (#872):
  * the longest wait, and too large if any held pane was. Null when any failure
- * was something else, or nothing failed.
+ * was something else.
  */
 function heldOnly(
   settled: readonly PromiseSettledResult<{
@@ -500,7 +500,8 @@ function heldOnly(
     retryInMs = Math.max(retryInMs, reason.hold.retryInMs);
     tooLarge ||= reason.hold.why === "too-large";
   }
-  return retryInMs > 0 ? { retryInMs, why: tooLarge ? "too-large" : "failed" } : null;
+  // Called only when a pane did not open, so at least one was held here.
+  return { retryInMs, why: tooLarge ? "too-large" : "failed" };
 }
 
 function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
