@@ -166,21 +166,28 @@ fn start_source(
     )?;
     let owner = sources.clone();
     let mut first = Some(first);
-    // A restart (#878) starts on the source and machine the window was on.
     let start = move |seen: Option<&Seen>| match first.take() {
         Some(first) => Ok(first),
-        None => {
-            let (id, label) =
-                (owner.machine()?).unwrap_or_else(|| (machine_id.clone(), machine_label.clone()));
-            let source = owner.observation_source()?;
-            generation(&owner, source, local_record.clone(), id, label, seen)
-        }
+        None => restart(&owner, &local_record, &machine_id, &machine_label, seen),
     };
     let cleanup = sources.clone();
     let bridge = supervise::supervise(kitty, start, move || {
         let _ = cleanup.shutdown();
     });
     Ok((bridge, sources))
+}
+/// A restart (#878) starts on the source and machine the window was on.
+fn restart(
+    owner: &NativeOwner,
+    local_record: &Option<PathBuf>,
+    machine_id: &str,
+    machine_label: &str,
+    seen: Option<&Seen>,
+) -> Result<supervise::Generation, Error> {
+    let (id, label) =
+        (owner.machine()?).unwrap_or_else(|| (machine_id.to_owned(), machine_label.to_owned()));
+    let source = owner.observation_source()?;
+    generation(owner, source, local_record.clone(), id, label, seen)
 }
 /// One catalog actor, its event channel and its command sink. `seen` is what
 /// the window was shown when an earlier terminal loop ended.

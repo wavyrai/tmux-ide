@@ -103,3 +103,19 @@ fn a_machine_switch_is_where_a_restart_starts() {
         Some(("local".into(), "Local".into()))
     );
 }
+
+/// A session that cannot be opened now (Home is still reconnecting) leaves
+/// the window on Home, not on a workspace with nothing coming.
+#[test]
+fn a_restarted_catalog_that_cannot_open_shows_home() {
+    let (mut local, _events) = fixture();
+    local.resume_from(&seen("beta"));
+    local
+        .home_catalog_failed(herdr_client::tmux_daemon::Error::RecordChanged)
+        .unwrap();
+    assert!(local.home.active());
+    assert!(local.resume.is_some());
+    local.receive_catalog(catalog(), true).unwrap();
+    assert!(!matches!(local.stage, Some(Stage::Open { .. })));
+    assert_eq!(local.state.surface, Surface::Home);
+}

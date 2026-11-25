@@ -604,3 +604,31 @@ fn a_new_generation_starts_where_the_window_was() {
         "the actor shut the owner"
     );
 }
+
+/// A restart starts on the owner's source, and not once the owner is shut.
+#[test]
+fn a_restart_takes_the_owners_source() {
+    let record = PathBuf::from("/nonexistent-native-catalog-test/daemon.json");
+    let owner = NativeOwner::new(CatalogSource::Local(record.clone()));
+    let restarted = restart(&owner, &Some(record.clone()), "local", "Local", None);
+    assert!(restarted.is_ok());
+    drop(restarted);
+    owner.shutdown().unwrap();
+    assert!(restart(&owner, &Some(record), "local", "Local", None).is_err());
+}
+
+/// A restart waits for the old catalog actor to end before it starts the
+/// next one, so the two never share the owner.
+#[test]
+fn a_restart_waits_for_the_old_catalog() {
+    let supervised = supervised(QUICK, Vec::new());
+    let Catalog {
+        events, finished, ..
+    } = first_catalog(&supervised);
+    drop(events);
+    thread::sleep(Duration::from_millis(400));
+    let ended = Instant::now();
+    drop(finished);
+    let next = supervised.next_catalog();
+    assert!(next.started >= ended, "started before the old actor ended");
+}
