@@ -91,3 +91,15 @@ fn a_restart_from_home_keeps_home() {
     assert!(!matches!(local.stage, Some(Stage::Open { .. })));
     assert_eq!(local.state.request, 7);
 }
+
+/// A restart starts on the machine the window switched to.
+#[test]
+fn a_machine_switch_is_where_a_restart_starts() {
+    let (mut local, _events) = fixture();
+    assert_eq!(local.sources.machine().unwrap(), None);
+    local.switch_local(1).unwrap();
+    assert_eq!(
+        local.sources.machine().unwrap(),
+        Some(("local".into(), "Local".into()))
+    );
+}

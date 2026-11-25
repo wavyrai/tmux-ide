@@ -98,12 +98,12 @@ pub(super) fn supervise_with(
                     (NOT_STARTED, None)
                 }
             };
-            if reason == WINDOW {
-                break None;
-            }
             if let Some(done) = done {
                 // Its channels are closed: it ends on its next turn.
                 let _ = done.recv_timeout(ACTOR_END);
+            }
+            if reason == WINDOW {
+                break None;
             }
             if began.elapsed() >= policy.settled {
                 short = 0;

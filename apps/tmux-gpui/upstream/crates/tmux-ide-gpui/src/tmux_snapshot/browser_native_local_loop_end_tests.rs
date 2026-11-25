@@ -496,3 +496,87 @@ fn a_panic_in_the_loop_is_restarted() {
     let next = supervised.next_catalog();
     assert_eq!(next.seen.map(|seen| seen.request), Some(7));
 }
+
+/// The focus a window gave one run carries over more than one restart.
+#[test]
+fn the_focus_carries_over_more_than_one_restart() {
+    let supervised = supervised(QUICK, Vec::new());
+    let first = first_catalog(&supervised);
+    supervised
+        .bridge
+        .commands
+        .send(Command::Presence {
+            active: false,
+            revision: 4,
+        })
+        .unwrap();
+    let deadline = Instant::now() + WAIT;
+    while !matches!(
+        first.out.recv_timeout(Duration::from_millis(20)),
+        Ok(Command::Presence { active: false, .. })
+    ) {
+        assert!(Instant::now() < deadline, "the focus change never arrived");
+    }
+    drop(first);
+    let second = supervised.next_catalog();
+    assert_eq!(
+        second.seen.as_ref().map(|seen| seen.presence),
+        Some((false, 4))
+    );
+    second
+        .events
+        .send(Incoming::Catalog(Box::new(shown())))
+        .unwrap();
+    until(
+        &supervised.bridge.mailbox,
+        "the second run publishes",
+        |state| state.status == "Terminal ready",
+    );
+    drop(second);
+    let third = supervised.next_catalog();
+    assert_eq!(third.seen.map(|seen| seen.presence), Some((false, 4)));
+}
+
+/// The app's own generation: a real catalog actor starts where the window
+/// was, and ends with its channels without shutting the owner down.
+#[test]
+fn a_new_generation_starts_where_the_window_was() {
+    let record = PathBuf::from("/nonexistent-native-catalog-test/daemon.json");
+    let owner = NativeOwner::new(CatalogSource::Local(record.clone()));
+    let seen = Seen {
+        request: 7,
+        presence: (false, 3),
+        session: Some("live-session.aaaaaaaaaaaaaaaaaaaa".into()),
+        pane: Some("%2".into()),
+    };
+    let Generation {
+        events,
+        output,
+        done,
+    } = generation(
+        &owner,
+        CatalogSource::Local(record.clone()),
+        Some(record),
+        "local".into(),
+        "Local".into(),
+        Some(&seen),
+    )
+    .unwrap();
+    let Ok(Incoming::Catalog(state)) = events.recv_timeout(WAIT) else {
+        panic!("the catalog published nothing");
+    };
+    assert_eq!(state.request, 7);
+    assert_eq!(state.presence_revision, 3);
+    assert_eq!(state.surface, Surface::Workspace);
+    assert_eq!(state.selected_session, seen.session);
+    assert_eq!(state.status, reconnect::RECONNECTING);
+    drop((events, output));
+    assert!(matches!(
+        done.recv_timeout(WAIT),
+        Err(mpsc::RecvTimeoutError::Disconnected)
+    ));
+    assert!(
+        owner.observation_source().is_ok(),
+        "the actor shut the owner"
+    );
+}
