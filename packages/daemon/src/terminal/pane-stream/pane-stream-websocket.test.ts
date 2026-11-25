@@ -57,6 +57,7 @@ import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { logger } from "../../lib/log.ts";
 import { createPaneStreamRuntime } from "./runtime.ts";
 import {
+  PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS,
   PANE_STREAM_OWNER_RETIRED_CLOSE,
   PANE_STREAM_TOPOLOGY_SETTLE_MS,
   PaneStreamAdmissionCoordinator,
@@ -477,6 +478,8 @@ function harness(
     withoutGrantAmendment?: boolean;
     openRetryDelaysMs?: readonly number[];
     deferredPaneRetryDelaysMs?: readonly number[];
+    /** Build the coordinator without the option, so production's delays apply. */
+    productionDeferredDelays?: boolean;
     graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
@@ -546,7 +549,9 @@ function harness(
   const coordinator = new PaneStreamAdmissionCoordinator({
     // Existing tests fail a step once and expect the close; retries are opt-in here.
     openRetryDelaysMs: options.openRetryDelaysMs ?? [],
-    deferredPaneRetryDelaysMs: options.deferredPaneRetryDelaysMs ?? [],
+    deferredPaneRetryDelaysMs: options.productionDeferredDelays
+      ? undefined
+      : (options.deferredPaneRetryDelaysMs ?? []),
     nativeSurfaces: options.nativeSurfaces,
     localImages: options.localImages,
     daemonInstanceId: INSTANCE,
@@ -2671,6 +2676,174 @@ describe("PaneStreamAdmissionCoordinator", () => {
     };
     const types = (socket: FakeSocket, from: number) =>
       socket.frames.slice(from).map((frame) => (frame as { type: string }).type);
+
+    // Review of #585, round 1: a deferred pane must stop once its stream or
+    // its pane is gone, and a refusal must still close with deferral on.
+    describe("a pane left out of the opening (#585)", () => {
+      const accepted = {
+        accepted: true as const,
+        negotiated: {
+          protocolVersion: 1 as const,
+          encoding: "semantic-v1" as const,
+          richPlacements: false,
+          generation: INSTANCE,
+          deliveryNonce: "00000000-0000-4000-8000-000000000098",
+        },
+      };
+      type Open = (pane: string, attempt: number) => Promise<void> | void;
+      function deferring(panes: string[], deferred: readonly number[] | null, open: Open) {
+        const attempts = new Map<string, number>();
+        const closedDeliveries: string[] = [];
+        const negotiations = new Map<string, unknown>();
+        const h = harness({
+          panes,
+          openRetryDelaysMs: [1, 1],
+          ...(deferred === null
+            ? { productionDeferredDelays: true }
+            : { deferredPaneRetryDelaysMs: deferred }),
+          openTerminalDelivery: async (pane, _offer, onMessage) => {
+            const attempt = (attempts.get(pane) ?? 0) + 1;
+            attempts.set(pane, attempt);
+            await open(pane, attempt);
+            h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+            return {
+              negotiation: (negotiations.get(pane) ?? accepted) as typeof accepted,
+              ack: vi.fn(),
+              nack: vi.fn(),
+              setVisibility: vi.fn(),
+              close: async () => {
+                closedDeliveries.push(pane);
+              },
+            };
+          },
+        });
+        return { h, attempts, closedDeliveries, negotiations };
+      }
+      const failsFirst =
+        (pane: string, count: number): Open =>
+        (candidate, attempt) => {
+          if (candidate === pane && attempt <= count) throw new Error("tmux timed out");
+        };
+      const readyPanes = (socket: FakeSocket) =>
+        socket
+          .framesOfType("terminal-delivery-ready")
+          .map((frame) => (frame as { pane: string }).pane);
+      const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+      const connectBoth = (h: ReturnType<typeof harness>, panes = ["pane.one", "pane.two"]) =>
+        connect(h, {
+          panes,
+          semanticDelivery: true,
+          protocolVersions: IN_PLACE,
+          allowStartupClose: true,
+        });
+
+      it("waits 1 s, 2 s and 4 s in production", async () => {
+        expect(PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS).toEqual([1_000, 2_000, 4_000]);
+        // Without the option the coordinator defers: the stream stays open and
+        // the pane arrives on the first deferred try, about a second later.
+        const { h, attempts } = deferring(
+          ["pane.one", "pane.two"],
+          null,
+          failsFirst("pane.two", 3),
+        );
+        const started = Date.now();
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(readyPanes(socket)).toEqual(["pane.one"]));
+        await wait(300);
+        expect(socket.closed).toBeNull();
+        expect(attempts.get("pane.two")).toBe(3);
+        await vi.waitFor(() => expect(readyPanes(socket)).toEqual(["pane.one", "pane.two"]), {
+          timeout: 3_000,
+        });
+        expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+        expect(attempts.get("pane.two")).toBe(4);
+        socket.close();
+      });
+
+      it("stops when the client closes the stream while the pane waits", async () => {
+        const { h, attempts } = deferring(
+          ["pane.one", "pane.two"],
+          [300],
+          failsFirst("pane.two", 3),
+        );
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(readyPanes(socket)).toEqual(["pane.one"]));
+        socket.close();
+        const after = socket.frames.length;
+        await wait(400);
+        expect(attempts.get("pane.two")).toBe(3);
+        expect(socket.frames.length).toBe(after);
+      });
+
+      it("stops when the pane is removed in place while it waits", async () => {
+        const { h, attempts } = deferring(
+          ["pane.one", "pane.two"],
+          [300],
+          failsFirst("pane.two", 3),
+        );
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(readyPanes(socket)).toEqual(["pane.one"]));
+        change(h, ["pane.one"]);
+        await vi.waitFor(() => expect(socket.framesOfType("topology")).toHaveLength(1));
+        await wait(400);
+        expect(attempts.get("pane.two")).toBe(3);
+        expect(readyPanes(socket)).toEqual(["pane.one"]);
+        expect(socket.closed).toBeNull();
+      });
+
+      it("does not close the stream for a pane removed while its last try was failing", async () => {
+        let removeDuring: (() => void) | null = null;
+        const { h, attempts } = deferring(["pane.one", "pane.two"], [1], async (pane, attempt) => {
+          if (pane !== "pane.two") return;
+          if (attempt <= 3) throw new Error("tmux timed out");
+          removeDuring?.();
+          await wait(80);
+          throw new Error("tmux timed out");
+        });
+        removeDuring = () => change(h, ["pane.one"]);
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(attempts.get("pane.two")).toBe(4));
+        await wait(200);
+        expect(socket.closed).toBeNull();
+        expect(readyPanes(socket)).toEqual(["pane.one"]);
+      });
+
+      it("still closes at once when another pane's offer was not accepted", async () => {
+        const { h, negotiations } = deferring(
+          ["pane.one", "pane.two"],
+          [300],
+          failsFirst("pane.two", 99),
+        );
+        negotiations.set("pane.one", { accepted: false, reason: "unsupported" });
+        const started = Date.now();
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+        );
+        expect(Date.now() - started).toBeLessThan(250);
+        expect(socket.framesOfType("layout-snapshot")).toEqual([]);
+      });
+
+      it("still closes at once when one of several failed panes was refused authority", async () => {
+        const { h, attempts } = deferring(["pane.one", "pane.two", "pane.three"], [300], (pane) => {
+          if (pane === "pane.two")
+            throw new SessionRuntimeControllerLeaseError(
+              "invalid-source-pane-binding",
+              "outside the grant",
+            );
+          if (pane === "pane.three") throw new Error("tmux timed out");
+        });
+        const started = Date.now();
+        const { socket } = await connectBoth(h, ["pane.one", "pane.two", "pane.three"]);
+        await vi.waitFor(() =>
+          expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+        );
+        expect(Date.now() - started).toBeLessThan(250);
+        expect(socket.framesOfType("layout-snapshot")).toEqual([]);
+        await wait(400);
+        expect(attempts.get("pane.three")).toBe(3);
+      });
+    });
 
     it("says so in the ready frame only to a client that offered the capability", async () => {
       const { h } = topologyHarness(["pane.one", "pane.two"]);

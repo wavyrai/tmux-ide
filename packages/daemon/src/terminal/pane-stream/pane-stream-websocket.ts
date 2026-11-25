@@ -1354,6 +1354,8 @@ export class PaneStreamLiveConnection {
   readonly #ledger: PaneStreamWireLedger;
   readonly #drainTickMs: number;
   readonly #openRetryDelaysMs: readonly number[];
+  /** Waits of `#deferPane`; a close ends them at once (#585). */
+  readonly #deferralWaits = new Set<{ timer: ReturnType<typeof setTimeout>; wake: () => void }>();
   readonly #deferredPaneRetryDelaysMs: readonly number[];
   readonly #ownershipWaitMs: number;
   readonly #maxSocketBufferedBytes: number;
@@ -1618,6 +1620,11 @@ export class PaneStreamLiveConnection {
         : {}),
     });
     this.#closed = true;
+    for (const { timer, wake } of this.#deferralWaits) {
+      clearTimeout(timer);
+      wake();
+    }
+    this.#deferralWaits.clear();
     this.#ownershipHeld.length = 0;
     this.#ownershipWake?.();
     for (const demand of this.#surfaceDemands.values()) demand.close();
@@ -2004,6 +2011,7 @@ export class PaneStreamLiveConnection {
       this.#closed || channel.closed || this.#panes.get(channel.semanticPaneId) !== channel;
     let error = firstError;
     for (const [index, delayMs] of this.#deferredPaneRetryDelaysMs.entries()) {
+      if (gone()) return;
       logger.info("pane-stream", "pane delivery deferred", {
         session: this.#descriptor.sessionName,
         clientId: this.#clientId,
@@ -2011,7 +2019,17 @@ export class PaneStreamLiveConnection {
         attempt: index + 1,
         error: errorText(error),
       });
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs).unref?.());
+      await new Promise<void>((resolve) => {
+        const wait = {
+          timer: setTimeout(() => {
+            this.#deferralWaits.delete(wait);
+            resolve();
+          }, delayMs),
+          wake: resolve,
+        };
+        wait.timer.unref?.();
+        this.#deferralWaits.add(wait);
+      });
       if (gone()) return;
       let entry: OpenedPaneDelivery;
       try {
