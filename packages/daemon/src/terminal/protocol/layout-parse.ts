@@ -38,7 +38,51 @@ export interface ParsedLayout {
   /** The root cell's WxH — the authoritative window size. */
   width: number;
   height: number;
+  /** The tiled panes only. */
   leaves: LayoutLeaf[];
+  /**
+   * #882: floating panes, listed but not placed in the tiled tree. Present
+   * only when tmux-ide's bundled tmux (3.7c) sends its `<…>` section; stock
+   * tmux 3.8 leaves floating panes out of a control client's layout.
+   */
+  floating?: LayoutLeaf[];
+}
+
+/**
+ * #882: the bundled build appends `<cell,cell…>`, one leaf cell per floating
+ * pane, and also lists each one as an extra child of the root split, where it
+ * overlaps the tiled panes. Split the string into the tiled part and the
+ * floating leaves; each floating id must occur exactly once in the tiled part
+ * and once in the section. Null when the section is malformed.
+ */
+function splitFloating(s: string): { tiled: string; floating: LayoutLeaf[] } | null {
+  if (!s.endsWith(">")) return { tiled: s, floating: [] };
+  const open = s.lastIndexOf("<");
+  if (open <= 0) return null;
+  const section = s.slice(open + 1, -1);
+  const floating: LayoutLeaf[] = [];
+  let pos = 0;
+  while (pos < section.length) {
+    const dims = readDims(section, pos);
+    if (!dims || section[dims.pos] !== ",") return null;
+    const id = readInt(section, dims.pos + 1);
+    if (!id) return null;
+    floating.push({
+      id: `%${id.value}`,
+      left: dims.left,
+      top: dims.top,
+      width: dims.width,
+      height: dims.height,
+    });
+    pos = id.pos;
+    if (pos === section.length) break;
+    if (section[pos] !== ",") return null;
+    pos += 1;
+    if (pos === section.length) return null;
+  }
+  if (floating.length === 0) return null;
+  if (new Set(floating.map((leaf) => leaf.id)).size !== floating.length) return null;
+  return { tiled: s.slice(0, open), floating };
 }
 
 /** Opt-in validated ancestry. Runtime pane IDs are not semantic pane identities. */
@@ -67,22 +111,50 @@ interface TreeContext {
  */
 export function parseLayoutTree(layout: string): LayoutTreeNode | null {
   if (layout.length > 64 * 1024 || !/^[0-9a-fA-F]{4},/.test(layout)) return null;
-  const s = layout.slice(5);
-  const root = parseCell(s, 0, [], { nodes: 0, ids: new Set() });
-  if (!root?.node || root.pos !== s.length || root.node.left !== 0 || root.node.top !== 0)
+  const split = splitFloating(layout.slice(5));
+  if (!split) return null;
+  const s = split.tiled;
+  const skip = floatingIds(split.floating);
+  const root = parseCell(s, 0, [], { nodes: 0, ids: new Set() }, 1, skip);
+  if (
+    !root?.node ||
+    root.pos !== s.length ||
+    root.node.left !== 0 ||
+    root.node.top !== 0 ||
+    !skip.allSeenOnce()
+  )
     return null;
   return root.node;
 }
+
+/** The floating ids to leave out of the tiled tree, each to be seen once. */
+function floatingIds(floating: readonly LayoutLeaf[]) {
+  const seen = new Map(floating.map((leaf) => [leaf.id, 0]));
+  return {
+    has: (id: string) => seen.has(id),
+    see: (id: string) => seen.set(id, (seen.get(id) ?? 0) + 1),
+    allSeenOnce: () => [...seen.values()].every((count) => count === 1),
+  };
+}
+type FloatingIds = ReturnType<typeof floatingIds>;
 
 /** Parse a tmux layout string (`csum,WxH,X,Y…`). Null on any malformed input
  *  (the caller falls back to the slow list-panes path — never throw here). */
 export function parseLayout(layout: string): ParsedLayout | null {
   if (!/^[0-9a-fA-F]{4},/.test(layout)) return null;
-  const s = layout.slice(5);
+  const split = splitFloating(layout.slice(5));
+  if (!split) return null;
+  const s = split.tiled;
+  const skip = floatingIds(split.floating);
   const leaves: LayoutLeaf[] = [];
-  const root = parseCell(s, 0, leaves);
-  if (!root || root.pos !== s.length) return null;
-  return { width: root.width, height: root.height, leaves };
+  const root = parseCell(s, 0, leaves, undefined, 1, skip);
+  if (!root || root.pos !== s.length || !skip.allSeenOnce() || leaves.length === 0) return null;
+  return {
+    width: root.width,
+    height: root.height,
+    leaves,
+    ...(split.floating.length > 0 ? { floating: split.floating } : {}),
+  };
 }
 
 /** Recursive-descent cell parse from `pos`; appends leaves in layout order. */
@@ -92,7 +164,15 @@ function parseCell(
   leaves: LayoutLeaf[],
   tree?: TreeContext,
   depth = 1,
-): { width: number; height: number; pos: number; node?: LayoutTreeNode } | null {
+  skip?: FloatingIds,
+): {
+  width: number;
+  height: number;
+  pos: number;
+  node?: LayoutTreeNode;
+  /** #882: a floating pane's copy inside the tiled part; its parent drops it. */
+  floating?: true;
+} | null {
   if (tree && (depth > 64 || ++tree.nodes > MAX_TREE_LEAVES * 2 - 1)) return null;
   const dims = readDims(s, pos);
   if (!dims) return null;
@@ -113,6 +193,10 @@ function parseCell(
     const id = readInt(s, pos + 1);
     if (!id) return null;
     const leaf = { id: `%${id.value}`, left, top, width, height };
+    if (skip?.has(leaf.id)) {
+      skip.see(leaf.id);
+      return { width, height, pos: id.pos, floating: true };
+    }
     if (tree) {
       if (
         !Number.isSafeInteger(id.value) ||
@@ -133,11 +217,13 @@ function parseCell(
   if (ch === "{" || ch === "[") {
     const close = ch === "{" ? "}" : "]";
     const children: LayoutTreeNode[] = [];
+    let droppedFloating = 0;
     pos++;
     for (;;) {
-      const child = parseCell(s, pos, leaves, tree, depth + 1);
+      const child = parseCell(s, pos, leaves, tree, depth + 1, skip);
       if (!child) return null;
-      if (tree && child.node) children.push(child.node);
+      if (child.floating) droppedFloating += 1;
+      else if (tree && child.node) children.push(child.node);
       pos = child.pos;
       if (s[pos] === ",") {
         pos++;
@@ -145,6 +231,10 @@ function parseCell(
       }
       if (s[pos] === close) {
         if (!tree) return { width, height, pos: pos + 1 };
+        // A split left with one tiled child once its floats are dropped is
+        // that child (the bundled build wraps a lone pane and its floats).
+        if (droppedFloating > 0 && children.length === 1)
+          return { width, height, pos: pos + 1, node: children[0] };
         const axis = ch === "{" ? "cols" : "rows";
         const node: LayoutTreeNode = { kind: "split", axis, left, top, width, height, children };
         if (!tilesParent(node)) return null;

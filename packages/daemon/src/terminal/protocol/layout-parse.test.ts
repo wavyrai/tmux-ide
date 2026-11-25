@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseLayout,
+  parseLayoutTree,
   parseLayoutChange,
   parseWindowPaneChanged,
   parseSessionWindowChanged,
@@ -120,5 +121,95 @@ describe("parseMouseSubscription", () => {
   it("ignores other subscription names and off shapes", () => {
     expect(parseMouseSubscription("other $353 @387 0 %445 : 1")).toBeNull();
     expect(parseMouseSubscription("mouse $353 @387 0")).toBeNull();
+  });
+});
+
+// #882: tmux-ide's bundled tmux (3.7c) reports a floating pane twice: as an
+// extra, overlapping child of the root split and in a trailing `<…>` section.
+// Captured from the bundled build on 25 Nov 2026.
+describe("floating panes in the bundled build's layout (#882)", () => {
+  const twoTiledOneFloat = "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5,3>";
+  const oneTiledOneFloat = "41f0,100x30,0,0[100x30,0,0,0,20x5,3,2,1]<20x5,3,2,1>";
+  const nestedTwoFloats =
+    "b05a,100x30,0,0[100x15,0,0,0,100x14,0,16,3,20x5,3,2,1,20x5,40,10,2]<20x5,40,10,2,20x5,3,2,1>";
+
+  it("places only the tiled panes and lists the floating ones apart", () => {
+    expect(parseLayout(twoTiledOneFloat)).toEqual({
+      width: 120,
+      height: 40,
+      leaves: [
+        { id: "%0", left: 0, top: 0, width: 60, height: 40 },
+        { id: "%2", left: 61, top: 0, width: 59, height: 40 },
+      ],
+      floating: [{ id: "%3", left: 10, top: 5, width: 40, height: 10 }],
+    });
+    expect(parseLayout(nestedTwoFloats)).toMatchObject({
+      leaves: [
+        { id: "%0", left: 0, top: 0, width: 100, height: 15 },
+        { id: "%3", left: 0, top: 16, width: 100, height: 14 },
+      ],
+      floating: [
+        { id: "%2", left: 40, top: 10, width: 20, height: 5 },
+        { id: "%1", left: 3, top: 2, width: 20, height: 5 },
+      ],
+    });
+  });
+
+  it("validates the tiled tree without the floats, a lone tiled pane included", () => {
+    expect(parseLayoutTree(twoTiledOneFloat)).toMatchObject({
+      kind: "split",
+      axis: "cols",
+      children: [
+        { kind: "leaf", id: "%0" },
+        { kind: "leaf", id: "%2" },
+      ],
+    });
+    expect(parseLayout(oneTiledOneFloat)).toMatchObject({
+      leaves: [{ id: "%0", left: 0, top: 0, width: 100, height: 30 }],
+      floating: [{ id: "%1" }],
+    });
+    expect(parseLayoutTree(oneTiledOneFloat)).toEqual({
+      kind: "leaf",
+      id: "%0",
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 30,
+    });
+    expect(parseLayoutTree(nestedTwoFloats)).toMatchObject({
+      kind: "split",
+      axis: "rows",
+      children: [{ id: "%0" }, { id: "%3" }],
+    });
+  });
+
+  it("refuses a floating section that names a pane the layout does not hold, or is malformed", () => {
+    for (const layout of [
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2}<40x10,10,5,3>",
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5,3",
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<>",
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5>",
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5,3,40x10,10,5,3>",
+      "b975,120x40,0,0{60x40,0,0,0,40x10,10,5,3}<40x10,10,5,3,60x40,0,0,0>",
+    ]) {
+      expect(parseLayout(layout), layout).toBeNull();
+      expect(parseLayoutTree(layout), layout).toBeNull();
+    }
+  });
+
+  it("leaves a layout without floats exactly as before", () => {
+    const zoomedFull = "d7cb,100x30,0,0[100x15,0,0,0,100x14,0,16,3,20x5,3,2,1,20x5,40,10,2]";
+    expect(parseLayout(zoomedFull)!.leaves.map((leaf) => leaf.id)).toEqual([
+      "%0",
+      "%3",
+      "%1",
+      "%2",
+    ]);
+    expect(parseLayout(zoomedFull)).not.toHaveProperty("floating");
+    expect(parseLayout("aafd,120x40,0,0,0")).toEqual({
+      width: 120,
+      height: 40,
+      leaves: [{ id: "%0", left: 0, top: 0, width: 120, height: 40 }],
+    });
   });
 });
