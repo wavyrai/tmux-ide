@@ -47,7 +47,7 @@ struct Script {
 fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: Script) {
     let (stream, _) = listener.accept().unwrap();
     stream
-        .set_read_timeout(Some(Duration::from_millis(20)))
+        .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     #[allow(clippy::result_large_err)]
     let mut socket = tungstenite::accept_hdr(
@@ -96,6 +96,11 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: Script) {
         json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":4,"height":2,"active":false}]}),
     );
     let mut revision = 1;
+    // From here a read gives up after 20 ms, so held answers go out on time.
+    socket
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_millis(20)))
+        .unwrap();
     let mut unanswered: Vec<Value> = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
