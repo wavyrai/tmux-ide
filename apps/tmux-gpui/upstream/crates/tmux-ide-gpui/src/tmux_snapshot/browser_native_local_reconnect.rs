@@ -58,6 +58,10 @@ pub(super) struct Recovery {
     /// The wake and network epoch the last try saw (`network_watch`): a
     /// newer one means the Mac woke or the network is back, so try now.
     network: u64,
+    /// #872: the daemon's last close was a hold. Any other close ends it.
+    held: Option<PaneHeld>,
+    /// #872: a person's "Retry now" hurried the next try: its lease says so.
+    asked_by_person: bool,
 }
 /// A daemon record's modification time and size. A restarted daemon writes a
 /// new record, so a change means the next try need not wait out its backoff.
@@ -136,6 +140,8 @@ impl Recovery {
             identity_retried: false,
             fleet_refreshed: false,
             network: crate::tmux_snapshot::connection::network_watch::epoch(),
+            held: None,
+            asked_by_person: false,
         }
     }
     pub(super) fn waiting(&self) -> bool {
@@ -144,6 +150,10 @@ impl Recovery {
     /// Shown as the attempt count beside the Reconnecting badge.
     pub(super) fn attempt(&self) -> u32 {
         self.attempts.max(1)
+    }
+    /// The daemon's hold, when its last close of the stream was one (#872).
+    pub(super) fn held(&self) -> Option<PaneHeld> {
+        self.held
     }
     /// The tries so far, for [`Flap`].
     pub(super) fn attempts(&self) -> u32 {
@@ -283,12 +293,25 @@ impl Local {
             identity_retried: false,
             fleet_refreshed: false,
             network: crate::tmux_snapshot::connection::network_watch::epoch(),
+            held: None,
+            asked_by_person: false,
         });
         if fresh {
             // A new episode: the backoff and the one fleet retry start over.
             recovery.attempts = 0;
             recovery.fleet_refreshed = false;
         }
+        recovery.held = match cause {
+            Cause::Held {
+                retry_in,
+                too_large,
+            } => Some(PaneHeld {
+                since: Instant::now(),
+                retry_in,
+                too_large,
+            }),
+            _ => None,
+        };
         match cause {
             // The generation is gone with the retired owner, and a restarting
             // daemon comes back with a new one: a lease for the old one can
@@ -306,7 +329,9 @@ impl Local {
             // went away: the first try proves the route (or replaces it)
             // instead of waiting on it.
             Cause::Silent => recovery.rediscover_owner = true,
-            Cause::Identity | Cause::Closed | Cause::Lost => {}
+            // A held pane: the daemon refuses it without asking tmux until
+            // the hold ends, so tries cost nothing; reconnect as for a close.
+            Cause::Identity | Cause::Closed | Cause::Held { .. } | Cause::Lost => {}
         }
         // A drop, not navigation: agents and the catalog stay on screen. An
         // action in flight is cancelled, never replayed; a session creation
@@ -344,6 +369,8 @@ impl Local {
             identity_retried: false,
             fleet_refreshed: false,
             network: crate::tmux_snapshot::connection::network_watch::epoch(),
+            held: None,
+            asked_by_person: false,
         });
         self.reconnect_retry(failure)
     }
@@ -369,6 +396,10 @@ impl Local {
         if failure == Failure::Incompatible {
             return self.unavailable(UPDATE_APP);
         }
+        // #872: a try that failed without the daemon's held close means the
+        // daemon is not holding anything now (it stopped or went away). The
+        // session reads as any other drop until a new held close comes.
+        recovery.held = None;
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
             // Not the daemon or session the stream came from: look it up again,
             // now. The daemon answered, so this is news, not a failure to wait
@@ -428,6 +459,7 @@ impl Local {
             && recovery.due.is_some()
         {
             recovery.due = Some(Instant::now());
+            recovery.asked_by_person = true;
         }
         self.home.retry_now(Instant::now());
         Ok(())
@@ -458,6 +490,8 @@ impl Local {
         }
         recovery.attempts = recovery.attempts.saturating_add(1);
         recovery.due = None;
+        // Only the try a click hurried is the person's.
+        let asked_by_person = std::mem::take(&mut recovery.asked_by_person);
         recovery.record = stamp;
         if let Some(rebind) = recovery.rebind.clone() {
             // Same daemon: one lease request for the same session, no Home reset.
@@ -470,6 +504,7 @@ impl Local {
                 panes: rebind.panes,
                 selected: rebind.selected,
                 window: rebind.window,
+                retry_asked_by_person: asked_by_person,
             });
             self.submitted = false;
             self.recovery = Some(recovery);

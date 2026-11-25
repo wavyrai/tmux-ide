@@ -264,6 +264,39 @@ function compactPlacementsPatch(
   return { envelope, chunks: splitTerminalDeliveryChunks(transactionId, bytes) };
 }
 
+// Main-thread CPU milliseconds since `since`. Time the host spends running
+// other processes is wall time, not CPU time, so it never counts here.
+function threadCpuMsSince(since: NodeJS.CpuUsage): number {
+  const now = process.threadCpuUsage();
+  return (now.user - since.user + now.system - since.system) / 1_000;
+}
+
+// The longest stretch of work that kept a 1 ms timer from running, in
+// main-thread CPU time (#867). A wall-clock gap also counts the time a busy CI
+// runner deschedules this process; a synchronous decode or a GC pause on this
+// thread burns CPU time and still counts in full.
+function startBlockedLoopCpuMonitor(): { stop(): number } {
+  let active = true;
+  let maxCpuMs = 0;
+  let since = process.threadCpuUsage();
+  const sample = (): void => {
+    maxCpuMs = Math.max(maxCpuMs, threadCpuMsSince(since));
+    since = process.threadCpuUsage();
+  };
+  let timer = setTimeout(function beat() {
+    sample();
+    if (active) timer = setTimeout(beat, 1);
+  }, 1);
+  return {
+    stop() {
+      active = false;
+      clearTimeout(timer);
+      sample();
+      return maxCpuMs;
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
   const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
@@ -520,6 +553,7 @@ if (workloadMode) {
   await new Promise((resolve) => setTimeout(resolve, 50));
   const eventLoopDelay = monitorEventLoopDelay({ resolution: 1 });
   eventLoopDelay.enable();
+  const blockedBeforeCollection = startBlockedLoopCpuMonitor();
   let peakRssBytes = 0;
   let peakHeapBytes = 0;
   deliver(semanticPaneId, patchEnvelope);
@@ -573,9 +607,11 @@ if (workloadMode) {
   // Collections bracket the responsiveness window; none run inside that lane.
   await new Promise<void>((resolve) => setImmediate(resolve));
   eventLoopDelay.disable();
+  const maxBlockedCpuBeforeCollectionMs = blockedBeforeCollection.stop();
   globalThis.gc!();
   const retainedMemoryBefore = process.memoryUsage();
   eventLoopDelay.enable();
+  const blockedDuringCycles = startBlockedLoopCpuMonitor();
   for (let cycle = 1; cycle <= 24; cycle += 1) {
     let workload: ReturnType<typeof retargetCompactHistoryPatchInPlace> | null =
       retargetCompactHistoryPatchInPlace(
@@ -607,6 +643,7 @@ if (workloadMode) {
     }
   }
   eventLoopDelay.disable();
+  const maxBlockedLoopCpuMs = Math.max(maxBlockedCpuBeforeCollectionMs, blockedDuringCycles.stop());
   const maxHeartbeatDelayMs = Number(eventLoopDelay.max) / 1_000_000;
   await new Promise<void>((resolve) => setImmediate(resolve));
   globalThis.gc!();
@@ -646,6 +683,7 @@ if (workloadMode) {
       retainedHeapAfterBytes: retainedMemoryAfter.heapUsed,
       naturalHeapGrowthBytes: Math.max(0, measuredHeapBytes.at(-1)! - measuredHeapBytes[0]!),
       maxHeartbeatDelayMs,
+      maxBlockedLoopCpuMs,
       p99HeartbeatDelayMs: Number(eventLoopDelay.percentile(99)) / 1_000_000,
       peakRssBytes,
       peakHeapBytes,
@@ -700,14 +738,18 @@ if (workloadMode) {
 
   let heartbeatActive = true;
   let heartbeatAt = performance.now();
+  let heartbeatCpuAt = process.threadCpuUsage();
   let maxHeartbeatDelayMs = 0;
+  let maxBlockedLoopCpuMs = 0;
   let nextResourceSampleAt = heartbeatAt;
   let peakRssBytes = 0;
   let peakHeapBytes = 0;
   const heartbeat = (): void => {
     const now = performance.now();
     maxHeartbeatDelayMs = Math.max(maxHeartbeatDelayMs, now - heartbeatAt);
+    maxBlockedLoopCpuMs = Math.max(maxBlockedLoopCpuMs, threadCpuMsSince(heartbeatCpuAt));
     heartbeatAt = now;
+    heartbeatCpuAt = process.threadCpuUsage();
     if (now >= nextResourceSampleAt) {
       const memory = process.memoryUsage();
       peakRssBytes = Math.max(peakRssBytes, memory.rss);
@@ -756,6 +798,7 @@ if (workloadMode) {
       placementSeedBytes: placementSeed.envelope.representationBytes,
       placementPatchBytes: placementPatch.envelope.representationBytes,
       maxHeartbeatDelayMs,
+      maxBlockedLoopCpuMs,
       peakRssBytes,
       peakHeapBytes,
       deliveryCount,

@@ -8,6 +8,8 @@ mod home_recovery;
 mod pane_limit;
 #[path = "browser_native_local_presence_tests.rs"]
 mod presence;
+#[path = "browser_native_local_resume_tests.rs"]
+mod resume;
 fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
     let path = PathBuf::from("/nonexistent-native-catalog-test/daemon.json");
     let (events, receiver) = mpsc::sync_channel(8);
@@ -51,6 +53,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             local_record: Some(path.clone()),
             sources: NativeOwner::new(CatalogSource::Local(path.clone())),
             selected_profile: None,
+            resume: None,
         },
         receiver,
     )

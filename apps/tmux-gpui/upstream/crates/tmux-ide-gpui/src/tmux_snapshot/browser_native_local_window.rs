@@ -120,6 +120,7 @@ impl Local {
             panes,
             selected,
             window,
+            retry_asked_by_person: false,
         });
         Ok(())
     }

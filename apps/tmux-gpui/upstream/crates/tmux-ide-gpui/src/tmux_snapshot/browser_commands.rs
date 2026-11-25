@@ -22,13 +22,33 @@ pub(in crate::tmux_snapshot) enum Cause {
     Identity,
     /// The daemon advertised a heartbeat and then sent nothing for its limit.
     Silent,
+    /// "pane-held:<ms>:<why>" (#872, a 2.9.28 daemon): the daemon holds back
+    /// a pane of the stream for `retry_in`, after its opens failed in a row;
+    /// `too_large` when the last failure was a capture over its size cap.
+    /// Reconnects as [`Self::Closed`] does.
+    Held {
+        retry_in: std::time::Duration,
+        too_large: bool,
+    },
+}
+/// The daemon's last close of the stream was a hold (#872): when it came,
+/// the wait it named, and why. Read-only for the view's countdown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tmux_snapshot) struct PaneHeld {
+    pub since: std::time::Instant,
+    pub retry_in: std::time::Duration,
+    pub too_large: bool,
 }
 impl Cause {
     /// The daemon sent a close frame, so it was reachable a moment ago.
     pub(in crate::tmux_snapshot) fn daemon_spoke(self) -> bool {
         matches!(
             self,
-            Self::Closed | Self::ServerRetired | Self::DaemonRestarting | Self::PanesClosed
+            Self::Closed
+                | Self::Held { .. }
+                | Self::ServerRetired
+                | Self::DaemonRestarting
+                | Self::PanesClosed
         )
     }
 }

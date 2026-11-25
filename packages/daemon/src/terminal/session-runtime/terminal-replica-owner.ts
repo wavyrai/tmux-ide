@@ -1,3 +1,4 @@
+import { MirrorPaneHeldError } from "../mirror/pane-hold.ts";
 import {
   HistoryAnchorOwner,
   type HistoryAnchorIdentity,
@@ -677,7 +678,9 @@ export class SessionRuntimeTerminalReplicaOwner {
       );
     } else if (event.type === "fault") {
       this.#noteLifecycle("upstream-fault");
-      const error = new Error("Native terminal recovery failed");
+      const error = event.hold
+        ? new MirrorPaneHeldError(event.hold)
+        : new Error("Native terminal recovery failed");
       this.#interpreter.abort(error);
       this.#onFault?.(error);
     } else if (event.type === "closed") {

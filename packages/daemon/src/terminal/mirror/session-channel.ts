@@ -105,6 +105,8 @@ import type {
   MirrorLayoutAuthoritySnapshot,
   MirrorLayoutEvent,
   MirrorPaneEvent,
+  MirrorPaneHold,
+  MirrorPaneHoldWhy,
   MirrorSessionDescription,
 } from "./events.ts";
 import { liveSessionIdForNativeIdentity } from "../protocol/live-session-identity.ts";
@@ -369,6 +371,8 @@ interface PaneRecord {
   failedRecoveries: number;
   /** Until this monotonic time a new recovery fails without asking tmux. */
   recoveryHoldUntilMs: number;
+  /** Why the last counted failure failed, for a refusal to say (#872). */
+  heldWhy: MirrorPaneHoldWhy;
 }
 
 interface SnapshotLease {
@@ -1171,6 +1175,16 @@ export class SessionChannel {
         this.layoutTopologyEpoch === topologyEpoch &&
         this.windowAuthorityOrdinal === authorityOrdinal,
     );
+  }
+
+  /**
+   * A person asked to retry (#872): the pane's next recovery asks tmux even
+   * inside its hold. The failure count is kept, so a failure holds it for the
+   * next, longer time. Nothing for a pane that is not held or not known.
+   */
+  liftRecoveryHold(semanticPaneId: string): void {
+    const pane = this.panesBySemantic.get(semanticPaneId);
+    if (pane) pane.recoveryHoldUntilMs = 0;
   }
 
   subscribePane(
@@ -2995,6 +3009,8 @@ export class SessionChannel {
     // A refusal is not another failure: it must not lengthen its own hold.
     if (failureReason !== "held-after-failures") {
       pane.failedRecoveries += 1;
+      pane.heldWhy =
+        recovery.collectorFailureReason === "capture-byte-cap" ? "too-large" : "failed";
       const repeats = pane.failedRecoveries - RECOVERY_HOLD_AFTER_FAILURES;
       if (repeats >= 0)
         pane.recoveryHoldUntilMs =
@@ -3016,11 +3032,25 @@ export class SessionChannel {
     recovery.atomicCollectorNonce = null;
     if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
     this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+    // A refusal says so, with the time left and the last failure's cause, so
+    // the client can tell it from a try and say why the pane does not open.
+    const hold: MirrorPaneHold | null =
+      failureReason === "held-after-failures"
+        ? {
+            // Positive: a refusal starts before the hold ends.
+            retryInMs: Math.ceil(pane.recoveryHoldUntilMs - this.recoveryNowMs()),
+            why: pane.heldWhy,
+          }
+        : null;
     for (const sub of pane.subs) {
       sub.cancelCapture?.();
       if (sub.closed || sub.frozen) continue;
       try {
-        sub.onEvent({ type: "fault", reason: "native-recovery-failed" });
+        sub.onEvent(
+          hold
+            ? { type: "fault", reason: "native-recovery-failed", hold }
+            : { type: "fault", reason: "native-recovery-failed" },
+        );
       } catch {
         // A consumer must not prevent sibling subscribers from retiring.
       }
@@ -3119,6 +3149,13 @@ export class SessionChannel {
         if (pane && Number.isSafeInteger(size)) {
           const cleared = size === 0 && (pane.historySize ?? 0) > 0;
           pane.historySize = size;
+          // A cleared history is a new pane to capture: what made its
+          // recoveries fail may be gone, so it is asked again at once (#872).
+          // tmux trimming a full history drops only a tenth and keeps the hold.
+          if (cleared) {
+            pane.failedRecoveries = 0;
+            pane.recoveryHoldUntilMs = 0;
+          }
           // A quiet native clear writes no PTY bytes. Reuse the ordered seed path.
           if (cleared && !this.recoveries.has(pane.runtimeId)) {
             for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
@@ -4322,6 +4359,7 @@ export class SessionChannel {
         snapshotLayoutGeneration: 0,
         failedRecoveries: 0,
         recoveryHoldUntilMs: 0,
+        heldWhy: "failed",
       };
       this.panesByRuntime.set(record.runtimeId, record);
       this.panesBySemantic.set(record.semanticId, record);

@@ -9,6 +9,8 @@ mod setup;
 pub(in crate::tmux_snapshot) struct Owner(Arc<Mutex<Owned>>);
 struct Owned {
     source: CatalogSource,
+    /// The machine id and label of a source chosen after the start (#878).
+    machine: Option<(String, String)>,
     stopped: bool,
     catalog: catalog::Gate,
     setup: setup::Gate,
@@ -31,6 +33,7 @@ impl Owner {
     pub(super) fn new(source: CatalogSource) -> Self {
         Self(Arc::new(Mutex::new(Owned {
             source,
+            machine: None,
             stopped: false,
             catalog: Default::default(),
             setup: Default::default(),
@@ -38,6 +41,19 @@ impl Owner {
             #[cfg(unix)]
             fleet: None,
         })))
+    }
+    /// The machine a restarted catalog starts on; `None` for the first one.
+    pub(super) fn machine(&self) -> Result<Option<(String, String)>, Error> {
+        let owned = self
+            .0
+            .lock()
+            .map_err(|_| Error::Invalid("native owner closed"))?;
+        Ok(owned.machine.clone())
+    }
+    fn set_machine(&self, id: &str, label: &str) {
+        if let Ok(mut owned) = self.0.lock() {
+            owned.machine = Some((id.to_owned(), label.to_owned()));
+        }
     }
     pub(super) fn start_watch(&self, record: Option<PathBuf>) -> Result<(), Error> {
         let Some(record) = record else {
@@ -157,6 +173,8 @@ impl Local {
         self.split = split;
         self.machine_id = id;
         self.machine_label = label;
+        self.sources
+            .set_machine(&self.machine_id, &self.machine_label);
         self.selected_profile = profile;
         self.fleet_resync()?;
         // A saved profile reaches this boundary only after its registry reread.

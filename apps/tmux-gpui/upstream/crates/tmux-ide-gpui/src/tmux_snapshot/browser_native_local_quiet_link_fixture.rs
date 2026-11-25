@@ -80,6 +80,7 @@ pub(in crate::tmux_snapshot) fn window(session: bool) -> (Local, mpsc::Receiver<
         local_record: Some(path.clone()),
         sources: NativeOwner::new(CatalogSource::Local(path)),
         selected_profile: None,
+        resume: None,
     };
     (local, receiver)
 }

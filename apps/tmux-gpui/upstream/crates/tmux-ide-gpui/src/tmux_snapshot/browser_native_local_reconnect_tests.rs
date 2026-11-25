@@ -60,6 +60,7 @@ fn fixture() -> (Local, mpsc::Receiver<Incoming>) {
             local_record: Some(path.clone()),
             sources: NativeOwner::new(CatalogSource::Local(path.clone())),
             selected_profile: None,
+            resume: None,
         },
         receiver,
     )
@@ -396,6 +397,8 @@ fn stale_ready_does_not_clear_recovery() {
         identity_retried: false,
         fleet_refreshed: false,
         network: 0,
+        held: None,
+        asked_by_person: false,
     });
     local
         .command(Command::NativeTerminalReady {
@@ -947,6 +950,8 @@ fn retry_during_an_attempt_in_flight_changes_nothing() {
 mod always;
 #[path = "browser_native_local_reconnect_cause_tests.rs"]
 mod cause;
+#[path = "browser_native_local_reconnect_held_tests.rs"]
+mod held;
 #[path = "browser_native_local_reconnect_selection_tests.rs"]
 mod selection;
 #[path = "browser_native_local_update_tests.rs"]

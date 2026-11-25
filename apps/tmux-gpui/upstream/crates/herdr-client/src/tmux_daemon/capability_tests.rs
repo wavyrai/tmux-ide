@@ -303,7 +303,7 @@ fn the_browser_kind_is_offered_only_to_a_daemon_that_knows_it() {
 #[test]
 fn window_selection_is_sent_only_to_a_daemon_that_knows_it() {
     let body = |selection: &TerminalSelection, version: Option<&str>| {
-        issue_body("request", "generation", selection, &[118], version)
+        issue_body("request", "generation", selection, &[118], version, false)
             .map(|body| serde_json::from_str::<serde_json::Value>(&body).unwrap())
     };
     let mut windowed = selection();
@@ -419,4 +419,47 @@ fn the_issue_offer_carries_browser_kind_then_history_on_demand() {
         full("2.9.27"),
         [1, 101, 114, 120, 103, 104, 116, 105, 106, 123, 122, 124]
     );
+}
+/// #872: a retry a person asked for says so, inside `stream`, only to a
+/// daemon that knows the field (2.9.28): a released daemon refuses an
+/// unknown stream field. An automatic try never carries it.
+#[test]
+fn a_person_s_retry_is_named_only_to_a_daemon_that_knows_it() {
+    let body = |asked: bool, version: Option<&str>| {
+        let body = issue_body(
+            "request",
+            "generation",
+            &selection(),
+            &[118],
+            version,
+            asked,
+        );
+        serde_json::from_str::<serde_json::Value>(&body.unwrap()).unwrap()
+    };
+    for knowing in ["2.9.28", "2.9.100", "2.10.0", "3.0.0"] {
+        let sent = body(true, Some(knowing));
+        assert_eq!(sent["stream"]["retryAskedByPerson"], true, "{knowing}");
+        assert!(sent.get("retryAskedByPerson").is_none());
+        assert!(
+            body(false, Some(knowing))["stream"]
+                .get("retryAskedByPerson")
+                .is_none(),
+            "{knowing}"
+        );
+    }
+    for older in [
+        Some("2.9.27"),
+        Some("2.9.28-rc.1"),
+        Some("2.8.99"),
+        Some("bad"),
+        None,
+    ] {
+        let sent = body(true, older);
+        assert!(
+            sent["stream"].get("retryAskedByPerson").is_none(),
+            "{older:?}"
+        );
+        // Nothing else changes for an older daemon.
+        assert_eq!(sent, body(false, older), "{older:?}");
+    }
 }

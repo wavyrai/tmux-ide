@@ -72,6 +72,7 @@ fn fixture() -> Local {
         local_record: Some(path.clone()),
         sources: NativeOwner::new(CatalogSource::Local(path)),
         selected_profile: None,
+        resume: None,
     }
 }
 fn observed(revision: u64) -> BrowserState {

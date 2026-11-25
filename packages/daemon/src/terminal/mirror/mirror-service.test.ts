@@ -909,3 +909,62 @@ it("retires the adapter when channel construction fails", async () => {
   expect(dispose).toHaveBeenCalledOnce();
   await service.dispose();
 });
+
+describe("a held pane (#872)", () => {
+  type HoldRecord = { failedRecoveries: number; recoveryHoldUntilMs: number };
+  /** The channel's own pane record: the hold lives there. */
+  const recordOf = (service: MirrorService, session: string, pane: string): HoldRecord =>
+    (
+      service as unknown as {
+        channels: Map<string, { channel: { panesBySemantic: Map<string, HoldRecord> } }>;
+      }
+    ).channels
+      .get(session)!
+      .channel.panesBySemantic.get(pane)!;
+
+  it("lifts the holds a person's retry names, on that session's channel only", async () => {
+    const { service } = rig();
+    const subscription = await subscribed(service, FIXTURE.session, "pane.alpha");
+    try {
+      const alpha = recordOf(service, FIXTURE.session, "pane.alpha");
+      const beta = recordOf(service, FIXTURE.session, "pane.beta");
+      alpha.recoveryHoldUntilMs = beta.recoveryHoldUntilMs = Number.MAX_SAFE_INTEGER;
+      alpha.failedRecoveries = 3;
+      service.liftRecoveryHolds("another-session", ["pane.alpha"]);
+      expect(alpha.recoveryHoldUntilMs).toBe(Number.MAX_SAFE_INTEGER);
+      service.liftRecoveryHolds(FIXTURE.session, ["pane.alpha", "pane.unknown"]);
+      expect(alpha.recoveryHoldUntilMs).toBe(0);
+      // The count stays: a failure after the retry holds for the next, longer time.
+      expect(alpha.failedRecoveries).toBe(3);
+      expect(beta.recoveryHoldUntilMs).toBe(Number.MAX_SAFE_INTEGER);
+    } finally {
+      await subscription.close();
+    }
+  });
+
+  it("starts a new channel, as for a new tmux server, with no hold", async () => {
+    const { service } = rig();
+    const first = await subscribed(service, FIXTURE.session, "pane.alpha");
+    const held = recordOf(service, FIXTURE.session, "pane.alpha");
+    held.failedRecoveries = 6;
+    held.recoveryHoldUntilMs = Number.MAX_SAFE_INTEGER;
+    await first.close();
+    await vi.waitFor(() => expect(service.activeChannelCount()).toBe(0));
+    const faults: unknown[] = [];
+    const second = await service.subscribe({
+      session: FIXTURE.session,
+      semanticPaneId: "pane.alpha",
+      onEvent: (event) => {
+        if (event.type === "fault") faults.push(event);
+      },
+    });
+    try {
+      const fresh = recordOf(service, FIXTURE.session, "pane.alpha");
+      expect(fresh).not.toBe(held);
+      expect(fresh).toMatchObject({ failedRecoveries: 0, recoveryHoldUntilMs: 0 });
+      expect(faults).toEqual([]);
+    } finally {
+      await second.close();
+    }
+  });
+});

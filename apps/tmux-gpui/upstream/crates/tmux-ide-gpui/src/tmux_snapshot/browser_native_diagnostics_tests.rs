@@ -238,6 +238,71 @@ fn the_close_reason_names_the_cause_and_an_unknown_one_is_a_plain_close() {
     }
 }
 
+/// #872: a 2.9.28 daemon closes the stream of a pane it holds back with
+/// "pane-held:<ms>:<why>". The reason decides, not the code; a malformed one
+/// is a plain close.
+#[test]
+fn a_held_pane_close_reads_its_wait_and_why_and_a_malformed_one_is_a_plain_close() {
+    use super::super::Cause;
+    use std::time::Duration;
+    let closed = |code: u16, reason: &str| {
+        let close = tmux_stream::Close {
+            code,
+            reason: Some(reason.to_owned()),
+        };
+        [
+            NativeError::Controller(tmux_controller::Error::Transport(
+                tmux_stream::Error::Closed(close.clone()),
+            )),
+            NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+                tmux_native_session::Error::Transport(tmux_stream::Error::Closed(close)),
+            ))),
+        ]
+    };
+    let held = |ms: u64, too_large: bool| Cause::Held {
+        retry_in: Duration::from_millis(ms),
+        too_large,
+    };
+    for (code, reason, expected) in [
+        (1013, "pane-held:12000:too-large", held(12000, true)),
+        (1013, "pane-held:2000:failed", held(2000, false)),
+        (1013, "pane-held:1:failed", held(1, false)),
+        (1013, "pane-held:30000:too-large", held(30000, true)),
+        (1013, "pane-held:600000:failed", held(600_000, false)),
+        // A why this app does not know reads as a failure.
+        (1013, "pane-held:5000:a-newer-why", held(5000, false)),
+        (1013, "pane-held:5000:too-large:x", held(5000, false)),
+        // The reason decides, whatever the code.
+        (1011, "pane-held:7000:too-large", held(7000, true)),
+        (1013, "pane-held:600001:failed", Cause::Closed),
+        (1013, "pane-held:0:failed", Cause::Closed),
+        (1013, "pane-held:0012:failed", Cause::Closed),
+        (1013, "pane-held::failed", Cause::Closed),
+        (1013, "pane-held:12a:failed", Cause::Closed),
+        (1013, "pane-held:-5:failed", Cause::Closed),
+        (1013, "pane-held:+5000:failed", Cause::Closed),
+        (
+            1013,
+            "pane-held:99999999999999999999999:failed",
+            Cause::Closed,
+        ),
+        (1013, "pane-held:5000:", Cause::Closed),
+        (1013, "pane-held:5000", Cause::Closed),
+        (1013, "pane-held:", Cause::Closed),
+        (1013, "pane-held", Cause::Closed),
+        (1013, "pane-helds:5000:failed", Cause::Closed),
+        (1013, "xpane-held:5000:failed", Cause::Closed),
+        (1013, "output-backpressure", Cause::Closed),
+    ] {
+        for error in closed(code, reason) {
+            assert_eq!(cause(&error), expected, "{code} {reason}");
+            assert!(Stop::new(&error, 4, None).is_none(), "{reason} stopped");
+        }
+    }
+    assert!(held(2000, true).daemon_spoke());
+    assert!(held(2000, false).daemon_spoke());
+}
+
 /// #870: a link slowed to 1,000 ms each way made the SSH identity check of a
 /// new stream miss its 2 s deadline, and the window stopped on "Couldn't
 /// reconnect" for good, also after the link was back. A check that did not

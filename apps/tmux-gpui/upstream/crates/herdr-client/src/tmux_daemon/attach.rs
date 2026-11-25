@@ -91,6 +91,7 @@ impl ServerClient {
             &unchosen,
             &prelude.versions,
             prelude.daemon_version.as_deref(),
+            false,
         )?)
         .map_err(|_| Error::ResourceFormat)?;
         if let Some(stream) = issue["stream"].as_object_mut() {

@@ -20,6 +20,7 @@ import {
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamServerFrameSchemaZ,
+  readPaneHeldCloseReason,
 } from "@tmux-ide/contracts";
 import type {
   MirrorLayoutEvent,
@@ -52,6 +53,7 @@ import {
   SessionRuntimeRegistry,
 } from "../session-runtime/registry.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
+import { MirrorPaneHeldError } from "../mirror/pane-hold.ts";
 import { fixtureAutoReply, fixtureState, FIXTURE } from "../mirror/__tests__/simulated-channel.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { logger } from "../../lib/log.ts";
@@ -278,6 +280,8 @@ class FakeMirror implements PaneStreamMirror {
   describeFailure = false;
   /** Errors the next layout subscriptions throw, one each, before any works. */
   layoutFailures: Error[] = [];
+  /** #872: set by a test that watches a person's retry lift the holds. */
+  liftRecoveryHolds?: (session: string, semanticPaneIds: readonly string[]) => void;
 
   /** A pane's window when it is not the default one (#806 window-scoped streams). */
   windowOf = new Map<string, string>();
@@ -673,6 +677,7 @@ async function connect(
     allowStartupClose?: boolean;
     diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
     semanticWindowId?: string;
+    retryAskedByPerson?: boolean;
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -683,6 +688,7 @@ async function connect(
       panes: options.panes ?? ["pane.editor", "pane.shell"],
       viewerMode: options.viewerMode ?? "read-only",
       ...(options.semanticWindowId ? { semanticWindowId: options.semanticWindowId } : {}),
+      ...(options.retryAskedByPerson ? { retryAskedByPerson: true as const } : {}),
       ...(options.semanticDelivery
         ? {
             terminalDelivery: {
@@ -2799,6 +2805,23 @@ describe("PaneStreamAdmissionCoordinator", () => {
           removeDuring?.();
           await wait(80);
           throw new Error("tmux timed out");
+        });
+        removeDuring = () => change(h, ["pane.one"]);
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(attempts.get("pane.two")).toBe(4));
+        await wait(200);
+        expect(socket.closed).toBeNull();
+        expect(readyPanes(socket)).toEqual(["pane.one"]);
+      });
+
+      it("does not close the stream for a pane removed while a held try was in flight (#872)", async () => {
+        let removeDuring: (() => void) | null = null;
+        const { h, attempts } = deferring(["pane.one", "pane.two"], [1], async (pane, attempt) => {
+          if (pane !== "pane.two") return;
+          if (attempt <= 3) throw new Error("tmux timed out");
+          removeDuring?.();
+          await wait(80);
+          throw new MirrorPaneHeldError({ retryInMs: 4_000, why: "failed" });
         });
         removeDuring = () => change(h, ["pane.one"]);
         const { socket } = await connectBoth(h);
@@ -5779,6 +5802,73 @@ describe("a step of the opening that fails", () => {
     expect(socket.framesOfType("layout-snapshot")).toEqual([]);
   });
 
+  // #872: a held pane is refused until its hold ends; deferred tries would
+  // only repeat the refusal, so the stream closes at once with the hold.
+  it("closes at once with the hold for a pane held at the first open, even with deferred tries", async () => {
+    const { h, attempts } = flaky(
+      99,
+      () => new MirrorPaneHeldError({ retryInMs: 12_000, why: "too-large" }),
+      [1, 1],
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:12000:too-large" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+    expect(socket.framesOfType("layout-snapshot")).toEqual([]);
+  });
+
+  it("closes with the hold, naming the pane, when a deferred try finds the pane held", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    let tries = 0;
+    const closedDeliveries: string[] = [];
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      deferredPaneRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane, _offer, onMessage) => {
+        if (pane === "pane.two") {
+          tries += 1;
+          // The opening's three tries fail; by the first deferred try the
+          // daemon holds the pane.
+          if (tries <= 3) throw new Error("tmux timed out");
+          throw new MirrorPaneHeldError({ retryInMs: 4_000, why: "failed" });
+        }
+        h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+        return {
+          negotiation,
+          ack: vi.fn(),
+          nack: vi.fn(),
+          setVisibility: vi.fn(),
+          close: async () => {
+            closedDeliveries.push(pane);
+          },
+        };
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:4000:failed" }),
+    );
+    // The second deferred try is not made: the first found the hold.
+    expect(tries).toBe(4);
+    expect(closedDeliveries).toContain("pane.one");
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ code: 1013, cause: "pane-held", pane: "pane.two" }),
+    );
+  });
+
   it("closes as a topology change when a late pane comes from another daemon generation", async () => {
     let tries = 0;
     const h = harness({
@@ -5936,6 +6026,144 @@ describe("a step of the opening that fails", () => {
       expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
     );
     expect(attempts.get("pane.two")).toBe(1);
+  });
+
+  // #872: a refusal inside a hold closed like a try that failed, and was tried
+  // twice more inside the same hold.
+  it("closes a held pane's stream with the time left and why, without trying again", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(
+      99,
+      () => new MirrorPaneHeldError({ retryInMs: 12_000, why: "too-large" }),
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:12000:too-large" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+    // What a client reads from the close.
+    expect(readPaneHeldCloseReason(socket.closed!.reason)).toEqual({
+      retryInMs: 12_000,
+      why: "too-large",
+    });
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ code: 1013, cause: "pane-held" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("names the longest hold, and too large if any held pane is", async () => {
+    const holds: Record<string, MirrorPaneHeldError> = {
+      "pane.one": new MirrorPaneHeldError({ retryInMs: 30_000, why: "too-large" }),
+      "pane.two": new MirrorPaneHeldError({ retryInMs: 4_000, why: "failed" }),
+    };
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane) => {
+        throw holds[pane]!;
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:30000:too-large" }),
+    );
+  });
+
+  it("closes as before when one pane is held and another failed", async () => {
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane) => {
+        throw pane === "pane.one"
+          ? new MirrorPaneHeldError({ retryInMs: 2_000, why: "failed" })
+          : new Error("tmux timed out");
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+  });
+
+  it.each([true, false])(
+    "closes as before when a pane's offer was refused (another pane held: %s)",
+    async (otherHeld) => {
+      const h = harness({
+        panes: ["pane.one", "pane.two"],
+        openRetryDelaysMs: [1, 1],
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          if (pane === "pane.one" && otherHeld)
+            throw new MirrorPaneHeldError({ retryInMs: 2_000, why: "failed" });
+          h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation: pane === "pane.two" ? { accepted: false as const } : negotiation,
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close: async () => undefined,
+          } as never;
+        },
+      });
+      const { socket } = await connect(h, {
+        panes: ["pane.one", "pane.two"],
+        semanticDelivery: true,
+        allowStartupClose: true,
+      });
+      await vi.waitFor(() =>
+        expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+      );
+    },
+  );
+
+  it("lifts the holds of the stream's panes before it opens them, for a person's retry only", async () => {
+    for (const retryAskedByPerson of [false, true]) {
+      const order: string[] = [];
+      const h = harness({
+        panes: ["pane.one", "pane.two"],
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          order.push(`open ${pane}`);
+          h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation,
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close: async () => undefined,
+          };
+        },
+      });
+      h.mirror.liftRecoveryHolds = (session, panes) =>
+        void order.push(`lift ${session} ${panes.join(",")}`);
+      const { socket } = await connect(h, {
+        panes: ["pane.one", "pane.two"],
+        semanticDelivery: true,
+        retryAskedByPerson,
+      });
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2),
+      );
+      expect(order).toEqual(
+        retryAskedByPerson
+          ? [`lift ${SESSION} pane.one,pane.two`, "open pane.one", "open pane.two"]
+          : ["open pane.one", "open pane.two"],
+      );
+      socket.close();
+    }
   });
 
   it("logs why an issue was refused when the session could not be described (#585)", async () => {

@@ -199,6 +199,9 @@ pub(super) struct State {
     /// `Some(attempt)` while the stream is being re-established; the last frame
     /// stays on screen, read-only, with the attempt count and a Retry button.
     pub reconnect_attempt: Option<u32>,
+    /// #872: the daemon's last close of the stream was a hold, while
+    /// reconnecting. Read-only for the view's countdown.
+    pub pane_held: Option<PaneHeld>,
     /// Keys typed just before the drop were not delivered. Keys typed after
     /// them are then refused, never held: they must not run alone.
     pub reconnect_keys_lost: bool,
@@ -343,7 +346,7 @@ struct Publication {
 }
 #[path = "browser_commands.rs"]
 mod commands;
-pub(super) use commands::{Cause, Command};
+pub(super) use commands::{Cause, Command, PaneHeld};
 #[path = "browser_mailbox.rs"]
 mod mailbox;
 pub(super) use mailbox::{MailboxSlot, tick_or_publication};
@@ -674,6 +677,7 @@ impl Reader {
             input_ready: p.input_ready,
             retained_preview,
             reconnect_attempt: None,
+            pane_held: None,
             reconnect_keys_lost: false,
             reveal_hold: false,
             link_probe: false,
