@@ -6,6 +6,11 @@ import {
   NATIVE_BOOTSTRAP_PROBE_FLAGS,
   NATIVE_BOOTSTRAP_PROBE_LIMITS,
   readNativeBootstrapProbe,
+  decodeNativeHistoryPiece,
+  nativeHistoryPieceRows,
+  nativeSeedHistoryRows,
+  NATIVE_HISTORY_PIECE_CELL_BUDGET,
+  NATIVE_SEED_CELL_BUDGET,
 } from "./native-grid-capture.ts";
 
 function records() {
@@ -252,5 +257,104 @@ describe("native bootstrap probe (#869)", () => {
     ["a row without its header", true, [row]],
   ])("leaves %s unknown", (_name, ok, lines) => {
     expect(readNativeBootstrapProbe(ok, lines)).toBe("unknown");
+  });
+});
+
+describe("bounded first open and history pieces (#873)", () => {
+  const cell = (char: string) => [0, 1, Buffer.from(char).toString("hex"), 0, 8, 8, 8, 0, 0];
+  const header = (history: number, rows = 1) => ({
+    version: 2,
+    currentAttributes: [0, 8, 8, 8],
+    cols: 4,
+    rows,
+    history,
+    hscrolled: 0,
+    limit: 2000,
+    cursor: [0, 0],
+  });
+  const row = (index: number, text: string, flags = 0) => ({
+    row: index,
+    flags,
+    used: text.length,
+    cells: [...text].map(cell),
+  });
+
+  it("sizes a seed and a piece by cells, never below zero rows or one row", () => {
+    expect(NATIVE_SEED_CELL_BUDGET).toBe(262_144);
+    expect(NATIVE_HISTORY_PIECE_CELL_BUDGET).toBe(262_144);
+    expect(nativeSeedHistoryRows(120, 40)).toBe(2_144);
+    expect(nativeSeedHistoryRows(200, 40)).toBe(1_270);
+    expect(nativeSeedHistoryRows(262_144, 40)).toBe(0);
+    expect(nativeSeedHistoryRows(0, 40)).toBe(0);
+    expect(nativeSeedHistoryRows(120, 0)).toBe(0);
+    expect(nativeHistoryPieceRows(120)).toBe(2_184);
+    expect(nativeHistoryPieceRows(200)).toBe(1_310);
+    expect(nativeHistoryPieceRows(1_000_000)).toBe(1);
+    expect(nativeHistoryPieceRows(0)).toBe(1);
+  });
+
+  it("decodes a tail capture only when asked, and counts the rows it left out", () => {
+    // tmux holds 5 history rows; the capture starts at its row 3.
+    const tail = encode([header(5), row(3, "d"), row(4, "e"), row(5, "s")]);
+    expect(decodeNativeGridCapture(tail)).toBeNull();
+    const decoded = decodeNativeGridCapture(tail, { tail: true })!;
+    expect(decoded.history).toBe(2);
+    expect(decoded.omittedHistory).toBe(2 + 1);
+    expect(decoded.grid.map((r) => r.cells.map((c) => c.text).join(""))).toEqual(["d", "e", "s"]);
+    expect(isNativeBootstrapCapture(decoded)).toBe(true);
+    // A whole capture read as a tail leaves nothing out.
+    const whole = decodeNativeGridCapture(encode([header(1), row(0, "a"), row(1, "s")]), {
+      tail: true,
+    })!;
+    expect(whole.history).toBe(1);
+    expect("omittedHistory" in whole).toBe(false);
+    // Rows must still be contiguous and end at the screen's last row.
+    for (const broken of [
+      [header(5), row(3, "d"), row(5, "s")],
+      [header(5), row(3, "d"), row(4, "e")],
+      [header(5), row(6, "x")],
+    ])
+      expect(decodeNativeGridCapture(encode(broken), { tail: true })).toBeNull();
+  });
+
+  it("decodes a tail of a history longer than one whole capture may hold", () => {
+    const decoded = decodeNativeGridCapture(
+      encode([header(400_000), row(399_999, "h"), row(400_000, "s")]),
+      { tail: true },
+    )!;
+    expect(decoded).toMatchObject({ history: 1, omittedHistory: 399_999 });
+    expect(
+      decodeNativeGridCapture(encode([header(400_000), row(0, "h")]), { tail: true }),
+    ).toBeNull();
+  });
+
+  it("decodes a piece of history rows with tmux's numbers and wrap flags", () => {
+    const piece = decodeNativeHistoryPiece(
+      encode([header(9, 3), row(2, "ab", 1), row(3, "c"), row(4, "")]),
+    )!;
+    expect(piece.cols).toBe(4);
+    expect(piece.historySize).toBe(9);
+    expect(piece.firstRow).toBe(2);
+    expect(piece.rows.map((r) => [r.flags, r.cells.map((c) => c.text).join("")])).toEqual([
+      [1, "ab"],
+      [0, "c"],
+      [0, ""],
+    ]);
+  });
+
+  it("refuses a piece that is empty, holds a screen row, skips a row or is malformed", () => {
+    for (const broken of [
+      [header(9)],
+      [header(9), row(8, "a"), row(9, "s")],
+      [header(9), row(9, "s")],
+      [header(9), row(2, "a"), row(4, "b")],
+      [header(9), row(3, "a"), row(2, "b")],
+      [{ ...header(9), version: 1 }, row(2, "a")],
+      [header(9), { ...row(2, "a"), used: 5 }],
+      [header(9), { ...row(2, "a"), cells: [[0, 1, "zz", 0, 8, 8, 8, 0, 0]] }],
+    ])
+      expect(decodeNativeHistoryPiece(encode(broken))).toBeNull();
+    expect(decodeNativeHistoryPiece("not json\n")).toBeNull();
+    expect(decodeNativeHistoryPiece("")).toBeNull();
   });
 });

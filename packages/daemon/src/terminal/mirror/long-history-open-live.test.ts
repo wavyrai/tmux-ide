@@ -26,7 +26,7 @@ describe.each([
   { name: "a full default history", historyLimit: 2_000, printed: 3_000 },
   { name: "a full 50,000-line history", historyLimit: 50_000, printed: 52_000 },
 ])("first open of a pane with $name", ({ historyLimit, printed }) => {
-  it("seeds the pane without a fault, and a second open seeds it again", async ({ skip }) => {
+  it("seeds the pane without a fault, and a second open seeds it again", async () => {
     const root = mkdtempSync("/tmp/lho-");
     const socketPath = join(root, "t.sock");
     const env = { ...process.env, HOME: root, TMUX: "", LC_ALL: "en_US.UTF-8" };
@@ -79,19 +79,6 @@ describe.each([
       // tmux drops a tenth of the history each time the limit is reached, so
       // a full history holds between 90% and 100% of it.
       expect(history).toBeGreaterThanOrEqual(historyLimit * 0.9 - ROWS);
-      // tmux-ide's own tmux seeds a replica from a native grid capture, which
-      // has a budget of 1,000,000 cells. A pane beyond it cannot open on that
-      // build today. That is a separate defect from the probe this test pins;
-      // see the PR for the follow-up.
-      const nativeServer =
-        spawnSync(
-          binary,
-          ["-S", socketPath, "capture-pane", "-p", "-V", "-R", "-S", "0", "-E", "0", "-t", "long"],
-          { env, encoding: "utf8", timeout: 10_000 },
-        ).status === 0;
-      if (nativeServer && COLUMNS * (history! + ROWS) > 1_000_000)
-        skip("tmux-ide's tmux: this history is over the native capture's cell budget");
-
       mirror = new MirrorService({
         executable: binary,
         socketPath,

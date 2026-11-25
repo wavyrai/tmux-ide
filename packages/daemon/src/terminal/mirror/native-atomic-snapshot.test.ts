@@ -133,3 +133,32 @@ it("requires a single exact terminal inline continue after the full snapshot", (
   ])
     expect(decodeNativeAtomicSnapshot({ ok: true, lines }, target).status).toBe("unknown");
 });
+it("reads only the newest history rows a bounded first open asks for (#873)", () => {
+  const plan = nativeAtomicSnapshotPlan(target, undefined, 2_144);
+  expect(plan.commands[0]!.slice(-4)).toEqual(["-S", "-2144", "-t", "%0"]);
+  expect(nativeAtomicSnapshotPlan(target, undefined, 0).commands[0]!.slice(-4)).toEqual([
+    "-S",
+    "-0",
+    "-t",
+    "%0",
+  ]);
+  for (const rows of [-1, 1.5, 1_000_001, Number.NaN])
+    expect(() => nativeAtomicSnapshotPlan(target, undefined, rows)).toThrow(TypeError);
+});
+it("decodes a tail capture when the cursor's history size counts the rows left out (#873)", () => {
+  // tmux holds 3 history rows; the capture read the newest one (row 2).
+  const tail = (historySize: number) => {
+    const fields = modes.split(" ");
+    fields[14] = String(historySize);
+    const value = records();
+    value[0] = { ...target, snapshotVersion: 1, cursor: fields.join(" "), resumed: true };
+    value[1] = { ...(value[1] as object), history: 3 };
+    value[2] = { row: 2, flags: 0, used: 1, cells: [[0, 1, "41", 0, 8, 8, 8, 0, 0]] };
+    value.push({ row: 3, flags: 0, used: 1, cells: [[0, 1, "42", 0, 8, 8, 8, 0, 0]] });
+    return reply(value);
+  };
+  const decoded = decodeNativeAtomicSnapshot(tail(3), target);
+  expect(decoded).toMatchObject({ status: "ok", capture: { history: 1, omittedHistory: 2 } });
+  // A history size that does not count the left-out rows is not this capture.
+  expect(decodeNativeAtomicSnapshot(tail(1), target)).toEqual({ status: "unknown" });
+});
