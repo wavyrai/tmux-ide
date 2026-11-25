@@ -2811,7 +2811,7 @@ describe("PaneStreamAdmissionCoordinator", () => {
       it("still closes at once when another pane's offer was not accepted", async () => {
         const { h, negotiations } = deferring(
           ["pane.one", "pane.two"],
-          [300],
+          [2_000],
           failsFirst("pane.two", 99),
         );
         negotiations.set("pane.one", { accepted: false, reason: "unsupported" });
@@ -2820,25 +2820,29 @@ describe("PaneStreamAdmissionCoordinator", () => {
         await vi.waitFor(() =>
           expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
         );
-        expect(Date.now() - started).toBeLessThan(250);
+        expect(Date.now() - started).toBeLessThan(1_500);
         expect(socket.framesOfType("layout-snapshot")).toEqual([]);
       });
 
       it("still closes at once when one of several failed panes was refused authority", async () => {
-        const { h, attempts } = deferring(["pane.one", "pane.two", "pane.three"], [300], (pane) => {
-          if (pane === "pane.two")
-            throw new SessionRuntimeControllerLeaseError(
-              "invalid-source-pane-binding",
-              "outside the grant",
-            );
-          if (pane === "pane.three") throw new Error("tmux timed out");
-        });
+        const { h, attempts } = deferring(
+          ["pane.one", "pane.two", "pane.three"],
+          [2_000],
+          (pane) => {
+            if (pane === "pane.two")
+              throw new SessionRuntimeControllerLeaseError(
+                "invalid-source-pane-binding",
+                "outside the grant",
+              );
+            if (pane === "pane.three") throw new Error("tmux timed out");
+          },
+        );
         const started = Date.now();
         const { socket } = await connectBoth(h, ["pane.one", "pane.two", "pane.three"]);
         await vi.waitFor(() =>
           expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
         );
-        expect(Date.now() - started).toBeLessThan(250);
+        expect(Date.now() - started).toBeLessThan(1_500);
         expect(socket.framesOfType("layout-snapshot")).toEqual([]);
         await wait(400);
         expect(attempts.get("pane.three")).toBe(3);
