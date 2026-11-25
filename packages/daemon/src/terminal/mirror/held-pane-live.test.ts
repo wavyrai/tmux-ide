@@ -15,7 +15,8 @@ import { SessionRuntimeTerminalReplicaOwner } from "../session-runtime/terminal-
  * the time left and "too-large"). A person's retry asks tmux inside the hold,
  * and `clear-history` ends even a long hold within about a second, which is
  * when tmux reports the pane's new history size. Runs against
- * TMUX_IDE_BOUNDARY_TEST_BINARY when set, else the tmux on PATH.
+ * TMUX_IDE_BOUNDARY_TEST_BINARY when set, else the tmux on PATH; skipped on
+ * tmux-ide's own tmux, which opens such a pane (#873).
  */
 const binary = process.env.TMUX_IDE_BOUNDARY_TEST_BINARY ?? resolveTmuxExecutable();
 const COLUMNS = 1_000;
@@ -66,8 +67,8 @@ describe("a pane whose capture is over the size cap", () => {
         Number(tmux("display-message", "-p", "-t", "wide", "#{history_size}")),
       ).toBeGreaterThan(PRINTED - ROWS - 10);
 
-      // tmux-ide's own tmux seeds from a native grid capture with a budget of
-      // 1,000,000 cells, and a pane beyond it fails another way today (#873).
+      // tmux-ide's own tmux seeds a pane over the native capture's budget from
+      // its newest rows (#873), so this pane opens there: no hold to test.
       const nativeServer =
         spawnSync(
           binary,
@@ -75,7 +76,7 @@ describe("a pane whose capture is over the size cap", () => {
           { env, encoding: "utf8", timeout: 10_000 },
         ).status === 0;
       if (nativeServer)
-        skip("tmux-ide's tmux: this pane is over the native capture's cell budget (#873)");
+        skip("tmux-ide's tmux opens this pane from its newest rows (#873): nothing is held");
 
       const service = new MirrorService({
         executable: binary,
