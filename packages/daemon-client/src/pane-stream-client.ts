@@ -477,7 +477,9 @@ export async function connectIssuedPaneStreamRuntimeClient(
   socket.binaryType = "arraybuffer";
   options.onConnectionDiagnostic?.("socket-created", { requestId: descriptor.requestId });
   const releaseSocketResource = acquireRuntimeResource("pane-stream-socket");
-  const releaseSocketListenerResources = acquireRuntimeResource("socket-listener", 4);
+  const releaseSocketListenerResources = acquireRuntimeResource("socket-listener", 3);
+  const releaseErrorListenerResource = acquireRuntimeResource("socket-listener");
+  let releaseCloseWatchResource: (() => void) | null = null;
   let pendingDiagnosticTurns: Set<() => void> | null = null;
   const cancelDiagnosticTurns = (): void => {
     if (!pendingDiagnosticTurns) return;
@@ -530,14 +532,28 @@ export async function connectIssuedPaneStreamRuntimeClient(
     abortListenerAttached = false;
     options.signal?.removeEventListener("abort", onAbort);
   };
-  const detachSocketListeners = (): void => {
+  const dropErrorListener = (): void => {
+    socket.removeEventListener?.("error", onError);
+    socket.removeEventListener?.("close", dropErrorListener);
+    releaseErrorListenerResource();
+    releaseCloseWatchResource?.();
+  };
+  // The 'error' listener (inert once `closed`) stays until the socket reports
+  // 'close'. A `ws` socket closed while still connecting emits 'error' after
+  // close(), and an 'error' with no listener is an uncaught exception (#868).
+  const detachSocketListeners = (socketClosed = false): void => {
     if (!listenersAttached) return;
     listenersAttached = false;
     socket.removeEventListener?.("open", onOpen);
     socket.removeEventListener?.("message", onMessage);
     socket.removeEventListener?.("close", onClose);
-    socket.removeEventListener?.("error", onClose);
     releaseSocketListenerResources();
+    if (socketClosed) {
+      dropErrorListener();
+      return;
+    }
+    releaseCloseWatchResource = acquireRuntimeResource("socket-listener");
+    socket.addEventListener("close", dropErrorListener);
   };
   const closeSocketOnce = (code: number, reason: string): void => {
     if (socketCloseRequested) return;
@@ -1624,13 +1640,13 @@ export async function connectIssuedPaneStreamRuntimeClient(
     }
     routeFrame(options, frame, fail);
   };
-  const onClose: SocketListener = (event) => {
+  const settleClosed = (event: Parameters<SocketListener>[0], socketClosed: boolean): void => {
     if (closed) return;
     closed = true;
     clearReadyTimer();
     cancelDiagnosticTurns();
     detachAbortListener();
-    detachSocketListeners();
+    detachSocketListeners(socketClosed);
     releaseSocketResource();
     const reason =
       typeof event.reason === "string"
@@ -1646,6 +1662,8 @@ export async function connectIssuedPaneStreamRuntimeClient(
     rejectReady(error);
     options.onFault?.(error);
   };
+  const onClose: SocketListener = (event) => settleClosed(event, true);
+  const onError: SocketListener = (event) => settleClosed(event, false);
   const onAbort = (): void => {
     const reason = options.signal?.reason;
     fail(reason instanceof Error ? reason : new Error("Pane-stream runtime connection aborted"));
@@ -1653,7 +1671,7 @@ export async function connectIssuedPaneStreamRuntimeClient(
   socket.addEventListener("open", onOpen);
   socket.addEventListener("message", onMessage);
   socket.addEventListener("close", onClose);
-  socket.addEventListener("error", onClose);
+  socket.addEventListener("error", onError);
   listenersAttached = true;
   if (options.signal) {
     abortListenerAttached = true;
