@@ -301,6 +301,11 @@ impl Controller {
         self.send(command)?;
         Ok(Some(sequence))
     }
+    /// Whether the paste under way has chunks not yet sent. A focus loss
+    /// drops them.
+    pub fn paste_unsent(&self) -> bool {
+        self.policy.paste_unsent()
+    }
     pub fn next_paste(&mut self, now: u64) -> Result<Option<u32>, Error> {
         if !self.actionable || !self.owns(Authority::Input) {
             self.policy.cancel_paste();

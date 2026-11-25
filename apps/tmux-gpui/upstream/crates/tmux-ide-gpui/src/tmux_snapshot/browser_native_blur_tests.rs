@@ -314,7 +314,7 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
             super::stream_lost(&active, &mut pending, &mut hold, &state, 1, &lost());
         }
         assert_eq!(
-            hold.take_keys_not_sent(&active.session),
+            hold.take_keys_not_sent(&active.session).is_some(),
             notice,
             "{outcome:?}, command failed {failed}"
         );
@@ -437,12 +437,12 @@ fn only_a_stream_with_input_and_the_window_back_takes_over_keys_not_sent() {
     ] {
         let (mut active, mut state, _seen, peer) = selection_tests::fixture(authority);
         let mut hold = hold::Hold::default();
-        hold.carry_keys_not_sent(&active.session);
+        hold.carry_keys_not_sent(&active.session, super::KEYS_NOT_SENT);
         let _ = super::poll(&mut active, &mut hold, &mut state, foreground, 2);
         let label = format!("input {authority}, window back {foreground}");
         assert_eq!(active.action_status.is(NOTICE), taken, "{label}");
         assert_eq!(
-            hold.take_keys_not_sent(&active.session),
+            hold.take_keys_not_sent(&active.session).is_some(),
             !taken,
             "{label}: the loop no longer keeps it"
         );

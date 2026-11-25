@@ -543,13 +543,11 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             // before replying. Preserve correlation, not terminal IO.
                             current.stream_interrupted = true;
                             current.controller.retire();
-                            current.input.focus_loss();
-                            pending.retain(|command| !matches!(command, Command::Input { .. }));
+                            loss::retired(current, &mut pending, &mut hold);
                             revoke(&mut None, &mut state);
                         } else if structural {
                             current.reissue = true;
-                            current.input.focus_loss();
-                            pending.retain(|command| !matches!(command, Command::Input { .. }));
+                            loss::retired(current, &mut pending, &mut hold);
                             revoke(&mut None, &mut state);
                         } else {
                             // Keep the last frame on screen, read-only, while the
