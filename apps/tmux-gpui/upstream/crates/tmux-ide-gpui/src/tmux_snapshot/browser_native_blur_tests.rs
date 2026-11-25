@@ -39,6 +39,10 @@ struct Script {
     /// While set, inputs are not answered: a link's round trip, so the input
     /// scheduler holds a ninth key back. Answered once cleared.
     hold_acks: Arc<AtomicBool>,
+    /// Once set, the stream closes: a link that dies while the loop is busy.
+    close_now: Arc<AtomicBool>,
+    /// Set by the daemon once it has closed the stream.
+    closed: Arc<AtomicBool>,
 }
 
 /// A daemon's pane stream: two panes, input granted on every request and
@@ -104,6 +108,12 @@ fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: Script) {
     let mut unanswered: Vec<Value> = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
+        if script.close_now.load(Ordering::SeqCst) {
+            let _ = socket.close(None);
+            let _ = socket.flush();
+            script.closed.store(true, Ordering::SeqCst);
+            return;
+        }
         if !script.hold_acks.load(Ordering::SeqCst) {
             for (pane, seq) in unanswered
                 .drain(..)
@@ -680,4 +690,47 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
         active.controller.retire();
         peer.join().unwrap();
     }
+}
+
+/// Review N3 on card #871: the stream is already dead when the window leaves,
+/// and the loop has not seen it yet. The line and the focus loss drain in the
+/// same turn as before; the loop then finds the stream dead and re-issues it.
+/// The window, back on the new stream, still says the line was not sent, and
+/// the line is never sent.
+#[test]
+fn a_line_dropped_as_the_window_leaves_a_dead_stream_is_announced_on_the_next_one() {
+    let script = Script::default();
+    let mut app = Loop::start_with(script.clone());
+    app.gate.store(true, Ordering::SeqCst);
+    app.send(focus(true, 0));
+    let mut commands = line(4402);
+    commands.push(focus(false, 1));
+    for command in commands {
+        app.send(command);
+    }
+    // The loop is held inside this turn; the link dies before it goes on.
+    script.close_now.store(true, Ordering::SeqCst);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !script.closed.load(Ordering::SeqCst) {
+        assert!(Instant::now() < deadline, "the stream did not close");
+        thread::sleep(Duration::from_millis(2));
+    }
+    thread::sleep(Duration::from_millis(50));
+    app.open.send(()).unwrap();
+    app.until("the dead stream found", |state| {
+        state.reconnect_attempt.is_some()
+    });
+    app.reopen(4);
+    app.until("the new stream in the background", |state| {
+        state.request == 4 && state.frame.is_some() && !state.retained_preview
+    });
+    app.send(focus(true, 2));
+    noticed(
+        &mut app,
+        4,
+        2,
+        "line 4402, dropped as the window left a dead stream, announced",
+    );
+    thread::sleep(Duration::from_millis(100));
+    assert!(app.typed().is_empty(), "a key was sent");
 }
