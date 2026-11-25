@@ -110,4 +110,7 @@ fn every_pushing_machine_replaces_the_agent_timer() {
         gate.due.is_some(),
         "a saved machine without push lost its re-read"
     );
+    let mut empty = Gate::default();
+    empty.pushed(&both, false);
+    assert!(!empty.pushed, "no rows count as pushed");
 }

@@ -185,7 +185,9 @@ impl Gate {
     /// sent a notice. Push replaces the 5 s re-read only when every observed
     /// session's machine pushes; a notice re-reads now.
     pub(super) fn pushed(&mut self, pushing: &std::collections::BTreeSet<String>, notified: bool) {
-        self.pushed = self.contexts.iter().all(|c| pushing.contains(&c.machine));
+        // No rows: nothing is pushed, nothing to read (review N2).
+        self.pushed =
+            !self.contexts.is_empty() && self.contexts.iter().all(|c| pushing.contains(&c.machine));
         if notified && self.enabled && !self.cycle && self.due.is_none() {
             self.due = Some(Instant::now());
         }

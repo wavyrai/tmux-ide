@@ -258,3 +258,18 @@ fn the_selected_machine_pushes_only_through_its_own_lane() {
     );
     handle.lock().unwrap().invalidate().unwrap();
 }
+
+/// Leaving the session while its lane waits for a retry (Home, or another
+/// session opening) ends that retry and resumes the kept lane, so Home is
+/// never left with a lane that waits for a retry nobody runs.
+#[test]
+fn leaving_the_session_resumes_the_kept_lane() {
+    let (mut local, _events) = session();
+    drop_lane(&mut local, lost());
+    assert!(local.sources.test_held());
+    local.active = None;
+    local.state.surface = Surface::Home;
+    local.home_recovery_tick().unwrap();
+    assert!(!local.sources.test_held(), "the kept lane waits for nobody");
+    assert!(local.home_recovery_wait().is_none());
+}
