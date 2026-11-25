@@ -1381,6 +1381,23 @@ describe("semantic pane-stream runtime client", () => {
     expect(socket.closeCalls).toBe(0);
   });
 
+  it("drops every socket listener at once when the socket reports close", async () => {
+    const baseline = runtimeResourceSnapshot();
+    const socket = new FakeSocket();
+    acceptInteractiveHandshake(socket);
+    const client = await openPaneStreamRuntimeClient(
+      options(socket, { requestInitialInputAuthority: false }),
+    );
+    expect(client.requestId).toBe(REQUEST);
+    expect(socket.listeners.get("error")?.size).toBe(1);
+    socket.emit("close");
+    expect(socket.closeCalls).toBe(0);
+    expect([...socket.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
+    expect(runtimeResourceSnapshot()["socket-listener"].active).toBe(
+      baseline["socket-listener"].active,
+    );
+  });
+
   it("rejects direct readiness when initial input authority is denied", async () => {
     const baseline = runtimeResourceSnapshot();
     const socket = new FakeSocket();
@@ -1421,6 +1438,13 @@ describe("semantic pane-stream runtime client", () => {
       "input authority was denied",
     );
     expect(socket.closeCalls).toBe(1);
+    // Only the inert 'error' listener and its 'close' watch wait for the socket.
+    expect(socket.listeners.get("error")?.size).toBe(1);
+    expect(socket.listeners.get("close")?.size).toBe(1);
+    expect(runtimeResourceSnapshot()["socket-listener"].active).toBe(
+      baseline["socket-listener"].active + 2,
+    );
+    socket.emit("close");
     expect([...socket.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
     const settled = runtimeResourceSnapshot();
     expect(settled["pane-stream-socket"].active).toBe(baseline["pane-stream-socket"].active);
@@ -1501,6 +1525,13 @@ describe("semantic pane-stream runtime client", () => {
     client.close();
     client.close();
     expect(socket.closeCalls).toBe(1);
+    // Only the inert 'error' listener and its 'close' watch wait for the socket.
+    expect(socket.listeners.get("error")?.size).toBe(1);
+    expect(socket.listeners.get("close")?.size).toBe(1);
+    expect(runtimeResourceSnapshot()["socket-listener"].active).toBe(
+      baseline["socket-listener"].active + 2,
+    );
+    socket.emit("close");
     expect([...socket.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
     const settled = runtimeResourceSnapshot();
     expect(settled["pane-stream-socket"].active).toBe(baseline["pane-stream-socket"].active);
