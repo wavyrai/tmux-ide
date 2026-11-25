@@ -837,6 +837,9 @@ mod old_daemon_live_tests;
 #[path = "browser_native_local_open_live_tests.rs"]
 mod open_live_tests;
 #[cfg(test)]
+#[path = "browser_native_local_loop_end_tests.rs"]
+mod loop_end_tests;
+#[cfg(test)]
 #[path = "browser_native_local_reconnect_live_tests.rs"]
 mod reconnect_live_tests;
 #[cfg(test)]
