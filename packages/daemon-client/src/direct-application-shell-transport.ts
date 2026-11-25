@@ -849,7 +849,9 @@ export function createDirectLoopbackDaemonTransport(
             socket.removeEventListener?.("open", onOpen);
             socket.removeEventListener?.("message", onMessage);
             socket.removeEventListener?.("close", onClose);
-            socket.removeEventListener?.("error", onError);
+            // Keep onError (inert once closed): a `ws` socket emits 'error'
+            // when the peer sends a bad frame after this close, and an
+            // 'error' with no listener is an uncaught exception (#868).
             handlers.onPeerMismatch(reason);
             socket.close(clientInitiatedWebSocketCloseCode(1008), "Daemon identity mismatch");
             return;
@@ -990,7 +992,9 @@ export function createDirectLoopbackDaemonTransport(
           socket.removeEventListener?.("open", onOpen);
           socket.removeEventListener?.("message", onMessage);
           socket.removeEventListener?.("close", onClose);
-          socket.removeEventListener?.("error", onError);
+          // Keep onError (inert once closed): closing a `ws` socket that is
+          // still connecting emits 'error', and an 'error' with no listener
+          // is an uncaught exception in the host process (#868).
           socket.close(1000, "Desktop resource store disposed");
         },
       };
