@@ -1,6 +1,6 @@
 //! #872: a person's retry reaches the issue request the worker sends, and
 //! only for a daemon that knows the field.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use super::*;
 use std::{
     io::{Read, Write},

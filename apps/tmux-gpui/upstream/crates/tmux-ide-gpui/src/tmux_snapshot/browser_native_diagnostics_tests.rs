@@ -280,6 +280,7 @@ fn a_held_pane_close_reads_its_wait_and_why_and_a_malformed_one_is_a_plain_close
         (1013, "pane-held::failed", Cause::Closed),
         (1013, "pane-held:12a:failed", Cause::Closed),
         (1013, "pane-held:-5:failed", Cause::Closed),
+        (1013, "pane-held:+5000:failed", Cause::Closed),
         (
             1013,
             "pane-held:99999999999999999999999:failed",
