@@ -215,9 +215,9 @@ fn carry(current: &Active, hold: &mut Hold) {
         hold.carry_keys_not_sent(&current.session);
     }
 }
-/// Polls the stream. With the window back and the stream taking input, it
-/// first takes over a "keys not sent" for its session, which it then shows
-/// until the next command.
+/// Polls the stream. Once the window is back and the stream takes input, it
+/// takes over a "keys not sent" for its session and shows it in the same
+/// publication, until the next command.
 pub(super) fn poll(
     current: &mut Active,
     hold: &mut Hold,
@@ -225,10 +225,13 @@ pub(super) fn poll(
     foreground: bool,
     now: u64,
 ) -> Result<bool, NativeError> {
+    let dirty = current.poll(state, foreground, now)?;
     if foreground && current.controller.input_ready() && hold.take_keys_not_sent(&current.session) {
         current.action_status.set(Some(KEYS_NOT_SENT));
+        current.action_status.publish(&mut state.status);
+        return Ok(true);
     }
-    current.poll(state, foreground, now)
+    Ok(dirty)
 }
 
 #[cfg(test)]

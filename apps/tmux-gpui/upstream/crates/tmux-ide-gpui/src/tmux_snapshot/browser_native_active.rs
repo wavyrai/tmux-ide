@@ -25,7 +25,7 @@ impl Outcome {
     /// one or an earlier one). A connection state (connecting, an inactive
     /// window, restoring history) comes first, and the outcome returns once
     /// it clears.
-    fn publish(&mut self, status: &mut String) {
+    pub(super) fn publish(&mut self, status: &mut String) {
         if let Some(outcome) = self.current
             && (status == "Connected" || self.shown.is_some_and(|shown| status == shown))
         {
