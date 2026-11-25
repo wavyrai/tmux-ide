@@ -4218,6 +4218,28 @@ describe("hold after repeated failed recoveries (#869)", () => {
     }
   });
 
+  it("keeps the hold of a pane with no history when tmux reports 0 again (#872)", async () => {
+    const rig = await startedRig();
+    const history = (size: number) =>
+      rig.sim.feedLines(`%subscription-changed tmux-ide-pane-history $1 @1 0 %1 : ${size}`);
+    try {
+      history(0);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(true);
+      expect(failOpen(rig)).toBe(false);
+      // Nothing was cleared: the history was already empty.
+      history(0);
+      expect(failOpen(rig)).toBe(false);
+      // Lines arrive, then a clear: that one ends the hold.
+      history(5);
+      expect(failOpen(rig)).toBe(false);
+      history(0);
+      expect(failOpen(rig)).toBe(true);
+    } finally {
+      await rig.channel.dispose();
+    }
+  });
+
   it("asks tmux at once for a person's retry inside the hold, and holds longer if it fails (#872)", async () => {
     const rig = await startedRig();
     try {

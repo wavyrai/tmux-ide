@@ -162,3 +162,37 @@ fn a_person_s_retry_after_a_plain_drop_is_marked_too() {
     local.reconnect_now(local.state.request).unwrap();
     assert!(next_issue(&mut local));
 }
+
+/// Round 2 of #872's review: a try that fails without the daemon's held close
+/// (the daemon stopped, crashed or went away) ends the hold, so the session
+/// reads as any other drop and can reach "Offline". A new held close sets it
+/// again while the daemon is up.
+#[test]
+fn a_try_that_fails_without_a_held_close_ends_the_hold() {
+    for failure in [
+        Failure::Unreachable,
+        Failure::Away,
+        Failure::Missing,
+        Failure::Identity,
+        Failure::Other,
+    ] {
+        let (mut local, events) = attached();
+        local.command(interrupted(held(2000, true))).unwrap();
+        assert!(local.recovery.as_ref().unwrap().held().is_some());
+        local.reconnect_retry(failure).unwrap();
+        assert_eq!(local.recovery.as_ref().unwrap().held(), None, "{failure:?}");
+        let published = last_catalog(&events);
+        assert_eq!(published.pane_held, None, "{failure:?}");
+        assert!(published.reconnect_attempt.is_some(), "{failure:?}");
+    }
+    // The daemon is back and still holds the pane: the hold shows again.
+    let (mut local, _events) = attached();
+    local.command(interrupted(held(2000, true))).unwrap();
+    local.reconnect_retry(Failure::Unreachable).unwrap();
+    leased(&mut local);
+    local.command(interrupted(held(4000, true))).unwrap();
+    assert_eq!(
+        local.recovery.as_ref().unwrap().held().map(|h| h.retry_in),
+        Some(Duration::from_secs(4))
+    );
+}

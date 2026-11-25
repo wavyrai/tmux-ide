@@ -396,6 +396,10 @@ impl Local {
         if failure == Failure::Incompatible {
             return self.unavailable(UPDATE_APP);
         }
+        // #872: a try that failed without the daemon's held close means the
+        // daemon is not holding anything now (it stopped or went away). The
+        // session reads as any other drop until a new held close comes.
+        recovery.held = None;
         if recovery.rebind.is_some() && failure != Failure::Unreachable {
             // Not the daemon or session the stream came from: look it up again,
             // now. The daemon answered, so this is news, not a failure to wait

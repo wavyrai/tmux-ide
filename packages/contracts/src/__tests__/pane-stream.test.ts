@@ -784,6 +784,9 @@ describe("a held pane's close (#872)", () => {
       "pane-held:5:",
       "pane-held:600001:failed",
       "xpane-held:5:failed",
+      "pane-held:5:Failed",
+      "pane-held:5:too_large",
+      "pane-held:5:failed:more",
     ])
       expect(readPaneHeldCloseReason(reason), reason).toBeNull();
     expect(readPaneHeldCloseReason("pane-held:600000:failed")).toEqual({

@@ -101,6 +101,22 @@ fn a_held_session_says_so_at_once_in_the_card_and_the_slot(cx: &mut TestAppConte
     let (view, cx, _receiver) = open(cx, session_held(held(start, 12_000, true)), clock);
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("tmux-reconnect-card").is_some());
+    // The footer slot keeps its own pace: quiet, then the spinner, then words.
+    assert_eq!(
+        view.read_with(cx, |view, _| view.connection_stage()),
+        Stage::Quiet
+    );
+    at.set(S(2_000));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.connection_stage()),
+        Stage::Spinner
+    );
+    at.set(S(8_000));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.connection_stage()),
+        Stage::Words
+    );
+    at.set(S(0));
     // The countdown repaints by itself.
     assert!(view.read_with(cx, |view, _| view.connection._held_wake.is_some()));
     let card = view.read_with(cx, |view, _| view.reconnect_card()).unwrap();

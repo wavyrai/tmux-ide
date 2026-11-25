@@ -2814,6 +2814,23 @@ describe("PaneStreamAdmissionCoordinator", () => {
         expect(readyPanes(socket)).toEqual(["pane.one"]);
       });
 
+      it("does not close the stream for a pane removed while a held try was in flight (#872)", async () => {
+        let removeDuring: (() => void) | null = null;
+        const { h, attempts } = deferring(["pane.one", "pane.two"], [1], async (pane, attempt) => {
+          if (pane !== "pane.two") return;
+          if (attempt <= 3) throw new Error("tmux timed out");
+          removeDuring?.();
+          await wait(80);
+          throw new MirrorPaneHeldError({ retryInMs: 4_000, why: "failed" });
+        });
+        removeDuring = () => change(h, ["pane.one"]);
+        const { socket } = await connectBoth(h);
+        await vi.waitFor(() => expect(attempts.get("pane.two")).toBe(4));
+        await wait(200);
+        expect(socket.closed).toBeNull();
+        expect(readyPanes(socket)).toEqual(["pane.one"]);
+      });
+
       it("still closes at once when another pane's offer was not accepted", async () => {
         const { h, negotiations } = deferring(
           ["pane.one", "pane.two"],
