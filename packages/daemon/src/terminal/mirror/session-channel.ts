@@ -2929,7 +2929,8 @@ export class SessionChannel {
     const hold: MirrorPaneHold | null =
       failureReason === "held-after-failures"
         ? {
-            retryInMs: Math.max(1, Math.ceil(pane.recoveryHoldUntilMs - this.recoveryNowMs())),
+            // Positive: a refusal starts before the hold ends.
+            retryInMs: Math.ceil(pane.recoveryHoldUntilMs - this.recoveryNowMs()),
             why: pane.heldWhy,
           }
         : null;

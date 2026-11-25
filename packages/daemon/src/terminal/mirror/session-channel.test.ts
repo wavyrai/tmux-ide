@@ -4151,9 +4151,12 @@ describe("hold after repeated failed recoveries (#869)", () => {
       ]);
       advanceRecoveryClock(rig, 1_250);
       expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 750, why: "failed" });
+      // The clock has fractions of a millisecond: what is left rounds up.
+      advanceRecoveryClock(rig, 0.5);
+      expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 750, why: "failed" });
       advanceRecoveryClock(rig, 749);
       expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 1, why: "failed" });
-      advanceRecoveryClock(rig, 1);
+      advanceRecoveryClock(rig, 0.5);
       // The hold ended: a real try, whose failure starts the next hold.
       expect(faultsOfOpen(rig)).toEqual([{ type: "fault", reason: "native-recovery-failed" }]);
       expect(faultsOfOpen(rig)[0]?.hold).toEqual({ retryInMs: 4_000, why: "failed" });
