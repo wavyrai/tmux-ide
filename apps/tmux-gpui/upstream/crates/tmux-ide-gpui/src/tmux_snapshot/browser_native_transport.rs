@@ -41,6 +41,14 @@ use super::super::browser_native_transition as transition;
 mod hold;
 #[path = "browser_native_loss.rs"]
 mod loss;
+#[path = "browser_native_open.rs"]
+mod open;
+/// Why the loop ended, for its last log line. Each one is the loop's owner
+/// going away or breaking the order of its events, never a terminal stream.
+const CLOSED: &str = "its catalog closed";
+const WINDOW: &str = "its window closed";
+const REFUSED: &str = "its catalog took no command";
+const STALE: &str = "an open older than its catalog";
 enum Incoming {
     NativeOwner(Box<browser_native_owner::Response>),
     Catalog(Box<State>),
@@ -306,17 +314,17 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut pending = std::collections::VecDeque::new();
         let start = Instant::now();
         let mut output = output();
-        'worker: loop {
+        let ended = 'worker: loop {
             let now = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
             let mut changed = false;
             loop {
                 let event = match rx.try_recv() {
                     Ok(event) => event,
                     Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => break 'worker,
+                    Err(mpsc::TryRecvError::Disconnected) => break 'worker CLOSED,
                 };
                 match event {
-                    Incoming::Closed => break 'worker,
+                    Incoming::Closed => break 'worker CLOSED,
                     Incoming::NativeOwner(response) => {
                         if let Some(current) = active
                             .as_mut()
@@ -423,94 +431,32 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     Incoming::Handoff(Event::Open {
                         id,
                         request,
-                        live_session_id,
+                        live_session_id: session,
                         capability,
                         ..
                     }) => {
-                        if active.is_some() || request < state.request {
-                            break 'worker;
+                        if request < state.request {
+                            break 'worker STALE;
                         }
-                        let workspace = capability.workspace_name.clone();
-                        let catalog_only = capability.catalog_only;
-                        let daemon_version = capability.daemon_version.clone();
+                        // The catalog owns routes: one its close missed is retired here.
+                        if active.is_some() {
+                            revoke_connection(&mut active, &mut state, &mut output);
+                        }
                         stopped = None;
-                        let generation = capability.descriptor.daemon_instance_id.clone();
-                        let history = History::new(
-                            capability
-                                .server_scope
-                                .as_ref()
-                                .map(|s| (s.server_id.clone(), s.generation.clone())),
-                            workspace.clone(),
-                            live_session_id.clone(),
-                            capability.selected_pane.clone(),
-                            history_cache.clone(),
-                        );
-                        #[cfg(target_os = "macos")]
-                        let (controller_result, surface_inbox) = if capability.native_surfaces {
-                            let Ok(generation_id) = uuid::Uuid::parse_str(&generation) else {
-                                break 'worker;
-                            };
-                            let (driver, inbox) =
-                                crate::tmux_native_surface::driver::Driver::new(generation_id);
-                            (
-                                Controller::spawn_with_surfaces(*capability, Box::new(driver)),
-                                Some(inbox),
-                            )
-                        } else {
-                            (Controller::spawn(*capability), None)
-                        };
-                        #[cfg(not(target_os = "macos"))]
-                        let controller_result = Controller::spawn(*capability);
-                        let Ok(mut controller) = controller_result else {
-                            break 'worker;
-                        };
-                        if controller.presence(presence.0, presence.1, now).is_err() {
-                            break 'worker;
-                        }
-                        let Ok(owner) = Owner::new(
-                            id.clone(),
-                            request,
-                            workspace.clone(),
-                            live_session_id.clone(),
-                            generation.clone(),
-                        ) else {
-                            break 'worker;
-                        };
-                        active = Some(Active {
-                            presentation: NativePresentation::new(&id, &workspace),
-                            graphics: Graphics::new(kitty.clone()),
-                            #[cfg(target_os = "macos")]
-                            surfaces: super::super::browser_native_surfaces::Scene::new(
-                                surface_inbox,
-                            ),
+                        let issued = open::Issued {
                             id,
                             request,
-                            input_epoch: request,
-                            session: live_session_id,
-                            controller,
-                            input: InputOwner::default(),
-                            selection_notice: None,
-                            history,
-                            editor: Editor::default(),
-                            editor_notice: None,
-                            history_notice: None,
-                            actions: ActionOwner::default(),
-                            divider: DividerOwner::default(),
-                            split_notice: None,
-                            reissue: false,
-                            preferred_pane: None,
-                            owner,
-                            stream_interrupted: false,
-                            owner_notice: None,
-                            action_status: Default::default(),
-                            catalog_only,
-                            daemon_version,
-                            generation,
-                            topology_notice: None,
-                            topology_sent: Default::default(),
-                            metadata_notice: None,
-                            metadata_sent: None,
-                        });
+                            session,
+                            capability: *capability,
+                        };
+                        match open::open(issued, &kitty, &history_cache, presence, now) {
+                            Ok(route) => active = Some(route),
+                            Err(lost) => {
+                                if output(*lost).is_err() {
+                                    break 'worker REFUSED;
+                                }
+                            }
+                        }
                         changed = true;
                     }
                 }
@@ -530,7 +476,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 if let Some(value) = current.editor.cancel()
                                     && output(Command::NativeEditorCancel { value }).is_err()
                                 {
-                                    break 'worker;
+                                    break 'worker REFUSED;
                                 }
                                 current.input.focus_loss();
                                 current.actions.focus_loss();
@@ -538,15 +484,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                                 current.owner.cancel_waiting();
                             }
                         }
-                        if let Some(current) = active.as_mut()
-                            && !current.reissue
-                            && !current.stream_interrupted
-                            && current
-                                .controller
-                                .presence(foreground, revision, now)
-                                .is_err()
-                        {
-                            break 'worker;
+                        if let Some(current) = active.as_mut() {
+                            loss::presence(current, foreground, revision, now);
                         }
                         if output(Command::Presence {
                             active: foreground,
@@ -554,7 +493,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         })
                         .is_err()
                         {
-                            break 'worker;
+                            break 'worker REFUSED;
                         }
                         changed = true;
                     }
@@ -572,7 +511,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             changed = true;
                         }
                     }
-                    Err(mpsc::TryRecvError::Disconnected) => break 'worker,
+                    Err(mpsc::TryRecvError::Disconnected) => break 'worker WINDOW,
                     Err(mpsc::TryRecvError::Empty) => break,
                 }
             }
@@ -625,7 +564,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             );
                             revoke_connection(&mut active, &mut state, &mut output);
                             if output(notice).is_err() {
-                                break 'worker;
+                                break 'worker REFUSED;
                             }
                         }
                         state.status = stop.as_ref().map_or_else(
@@ -643,38 +582,38 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             if let Some(command) = active.as_mut().and_then(|a| a.editor_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.selection_notice.take()) {
                 if output(command).is_err() {
-                    break 'worker;
+                    break 'worker REFUSED;
                 }
                 changed = true;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.split_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.owner_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.topology_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.metadata_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             if let Some(command) = active.as_mut().and_then(|a| a.history_notice.take())
                 && output(command).is_err()
             {
-                break 'worker;
+                break 'worker REFUSED;
             }
             // The legacy broker admits refresh only in the foreground: wait for focus so
             // the request is not lost. The native catalog recovers an inactive window too.
@@ -687,7 +626,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         preferred_pane: current.preferred_pane.clone(),
                     };
                     if output(command).is_err() {
-                        break 'worker;
+                        break 'worker REFUSED;
                     }
                 }
                 revoke_connection(&mut active, &mut state, &mut output);
@@ -757,7 +696,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     && let Some(value) = active.as_mut().and_then(|a| a.editor.cancel())
                     && output(Command::NativeEditorCancel { value }).is_err()
                 {
-                    break 'worker;
+                    break 'worker REFUSED;
                 }
                 let failed_input = loss::key(&command, active.as_ref(), &mut hold, &mut changed);
                 let result = match command {
@@ -779,7 +718,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             )
                         {
                             if output(Command::NativeEditorOpen { value }).is_err() {
-                                break 'worker;
+                                break 'worker REFUSED;
                             }
                             current
                                 .action_status
@@ -880,7 +819,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                         })
                         .is_err()
                         {
-                            break 'worker;
+                            break 'worker REFUSED;
                         }
                         result
                     }
@@ -896,7 +835,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                             changed = true;
                         }
                         if output(other).is_err() {
-                            break 'worker;
+                            break 'worker REFUSED;
                         }
                         Ok(())
                     }
@@ -918,7 +857,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     if let Some(notice) = notice
                         && output(notice).is_err()
                     {
-                        break 'worker;
+                        break 'worker REFUSED;
                     }
                     state.status = "Terminal connection interrupted — recovering".into();
                     state.input_target_rejected = !hold.active();
@@ -939,7 +878,7 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                     })
                     .is_err()
                     {
-                        break 'worker;
+                        break 'worker REFUSED;
                     }
                 }
                 browser_read_at = now.saturating_add(750);
@@ -970,7 +909,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
             if !changed && !admitted {
                 Active::idle(active.as_ref());
             }
-        }
+        };
+        eprintln!("tmux-preview: terminal loop ended: {ended}");
         revoke_connection(&mut active, &mut state, &mut output);
         previews.clear(&mut state);
         if let Ok(mut slot) = incoming.lock() {
