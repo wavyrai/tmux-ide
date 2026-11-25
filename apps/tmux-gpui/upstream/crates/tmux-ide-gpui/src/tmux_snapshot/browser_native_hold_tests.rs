@@ -271,7 +271,7 @@ fn a_key_dropped_during_the_hold_is_reported_from_then_on() {
 #[test]
 fn keys_not_sent_is_carried_once_and_dropped_by_navigation() {
     let mut hold = Hold::default();
-    assert!(!hold.take_keys_not_sent("s").is_some());
+    assert!(hold.take_keys_not_sent("s").is_none());
     hold.begin(&live(7), false);
     hold.carry_keys_not_sent("s", "n");
     let _ = hold.publication(&live(8));
@@ -280,7 +280,7 @@ fn keys_not_sent_is_carried_once_and_dropped_by_navigation() {
         hold.take_keys_not_sent("s").is_some(),
         "the next stream says it"
     );
-    assert!(!hold.take_keys_not_sent("s").is_some(), "said twice");
+    assert!(hold.take_keys_not_sent("s").is_none(), "said twice");
     hold.begin(&live(7), false);
     hold.carry_keys_not_sent("s", "n");
     let _ = hold.publication(&live(7));
@@ -292,16 +292,16 @@ fn keys_not_sent_is_carried_once_and_dropped_by_navigation() {
     hold.carry_keys_not_sent("s", "n");
     hold.clear();
     assert!(
-        !hold.take_keys_not_sent("s").is_some(),
+        hold.take_keys_not_sent("s").is_none(),
         "kept past navigation"
     );
     hold.carry_keys_not_sent("s", "n");
     assert!(
-        !hold.take_keys_not_sent("other").is_some(),
+        hold.take_keys_not_sent("other").is_none(),
         "shown on another session"
     );
     assert!(
-        !hold.take_keys_not_sent("s").is_some(),
+        hold.take_keys_not_sent("s").is_none(),
         "kept past another session"
     );
 }
