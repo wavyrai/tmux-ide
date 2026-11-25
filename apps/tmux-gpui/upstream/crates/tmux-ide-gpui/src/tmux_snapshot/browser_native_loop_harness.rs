@@ -43,6 +43,11 @@ pub(super) struct Script {
     pub(super) close_now: Arc<AtomicBool>,
     /// Set by the daemon once it has closed the stream.
     pub(super) closed: Arc<AtomicBool>,
+    /// Geometry is granted too, as for an owner operation (a new window).
+    pub(super) grant_geometry: bool,
+    /// Once set, another client splits a pane in now (the route is re-leased);
+    /// cleared by the daemon once the layout is out.
+    pub(super) add_pane_now: Arc<AtomicBool>,
 }
 
 /// A daemon's pane stream: two panes, input granted on every request and
@@ -100,6 +105,7 @@ pub(super) fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: S
         json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":4,"height":2,"active":false}]}),
     );
     let mut revision = 1;
+    let (mut input, mut geometry) = (false, false);
     // From here a read gives up after 20 ms, so held answers go out on time.
     socket
         .get_ref()
@@ -113,6 +119,10 @@ pub(super) fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: S
             let _ = socket.flush();
             script.closed.store(true, Ordering::SeqCst);
             return;
+        }
+        if script.add_pane_now.load(Ordering::SeqCst) {
+            send(&mut socket, split_in());
+            script.add_pane_now.store(false, Ordering::SeqCst);
         }
         if !script.hold_acks.load(Ordering::SeqCst) {
             for (pane, seq) in unanswered
@@ -145,26 +155,32 @@ pub(super) fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: S
         };
         let value: Value = serde_json::from_str(&text).unwrap();
         let kind = value["type"].as_str().unwrap_or_default();
-        let granted = kind == "authority-request" && value["authority"] == "input";
+        let authority = value["authority"].as_str().unwrap_or_default().to_owned();
+        let granted = kind == "authority-request"
+            && (authority == "input" || (authority == "geometry" && script.grant_geometry));
         if granted || kind == "authority-release" {
             revision += 1;
-            let owner = if granted {
-                json!("native.test")
+            if authority == "geometry" {
+                geometry = granted;
             } else {
-                Value::Null
+                input = granted;
+            }
+            let owner = |held: bool| {
+                if held {
+                    json!("native.test")
+                } else {
+                    Value::Null
+                }
             };
-            let snapshot = json!({"generation":GEN,"session":"workspace","revision":revision,"owners":{"input":owner,"focus":null,"geometry":null},"nativeGeometryYieldUntilMs":0,"clients":[]});
+            let snapshot = json!({"generation":GEN,"session":"workspace","revision":revision,"owners":{"input":owner(input),"focus":null,"geometry":owner(geometry)},"nativeGeometryYieldUntilMs":0,"clients":[]});
             let receipt = if granted {
-                json!({"type":"authority-receipt","requestId":value["requestId"],"authority":"input","status":"granted","lease":{"generation":GEN,"session":"workspace","clientId":"native.test","authority":"input","token":NONCE,"revision":revision},"snapshot":snapshot})
+                json!({"type":"authority-receipt","requestId":value["requestId"],"authority":authority,"status":"granted","lease":{"generation":GEN,"session":"workspace","clientId":"native.test","authority":authority,"token":NONCE,"revision":revision},"snapshot":snapshot})
             } else {
                 json!({"type":"authority-receipt","requestId":value["requestId"],"authority":value["authority"],"status":"released","snapshot":snapshot})
             };
             send(&mut socket, receipt);
             if script.add_pane_on_release && !granted && value["authority"] == "input" {
-                send(
-                    &mut socket,
-                    json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":2,"height":2,"active":false},{"pane":"extra","left":8,"top":0,"width":1,"height":2,"active":false}]}),
-                );
+                send(&mut socket, split_in());
             }
             if script.close_on_release && !granted && value["authority"] == "input" {
                 let _ = seen.send(value);
@@ -178,6 +194,12 @@ pub(super) fn daemon(listener: TcpListener, seen: mpsc::Sender<Value>, script: S
         }
         let _ = seen.send(value);
     }
+}
+
+/// The layout once another client has split pane `extra` in: a pane the
+/// stream's lease lacks.
+fn split_in() -> Value {
+    json!({"type":"layout","semanticWindowId":"window","currentWindow":true,"cols":9,"rows":2,"zoomed":false,"paneBorderStatus":"off","panes":[{"pane":"left","left":0,"top":0,"width":4,"height":2,"active":true},{"pane":"right","left":5,"top":0,"width":2,"height":2,"active":false},{"pane":"extra","left":8,"top":0,"width":1,"height":2,"active":false}]})
 }
 
 pub(super) fn handoff(port: u16) -> Handoff {
@@ -206,6 +228,8 @@ pub(super) struct Loop {
     pub(super) passed_on: Arc<AtomicU64>,
     /// How many times the loop asked the catalog to re-issue its route.
     pub(super) refreshes: Arc<AtomicU64>,
+    /// How many owner operations (a new window, a new agent) the loop sent.
+    pub(super) owner_actions: Arc<AtomicU64>,
 }
 /// A scripted daemon on a fresh loopback port.
 pub(super) fn listen(seen: &mpsc::Sender<Value>, script: Script) -> u16 {
@@ -259,10 +283,15 @@ impl Loop {
         let presence = passed_on.clone();
         let refreshes = Arc::new(AtomicU64::new(0));
         let refreshed = refreshes.clone();
+        let owner_actions = Arc::new(AtomicU64::new(0));
+        let owned = owner_actions.clone();
         let bridge = start_events(Default::default(), receiver, true, move || {
             move |command| {
                 if matches!(command, Command::NativeTerminalRefresh { .. }) {
                     refreshed.fetch_add(1, Ordering::SeqCst);
+                }
+                if matches!(command, Command::NativeOwnerAction { .. }) {
+                    owned.fetch_add(1, Ordering::SeqCst);
                 }
                 if let Command::Presence { revision, .. } = command {
                     presence.store(revision, Ordering::SeqCst);
@@ -283,6 +312,7 @@ impl Loop {
             seen_tx,
             passed_on,
             refreshes,
+            owner_actions,
         };
         running.until("input ready", |state| state.input_ready);
         running
@@ -413,4 +443,23 @@ pub(super) fn noticed(app: &mut Loop, request: u64, revision: u64, what: &str) -
             && state.input_ready
             && state.status == NOTICE
     })
+}
+/// Waits up to 5 s for `done`.
+pub(super) fn wait(what: &str, done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(Instant::now() < deadline, "never happened: {what}");
+        thread::sleep(Duration::from_millis(2));
+    }
+}
+/// Holds the loop inside one turn, with the window in front, while
+/// `commands` are queued and `during` runs; then lets the turn go on.
+pub(super) fn in_one_turn(app: &Loop, commands: Vec<Command>, during: impl FnOnce()) {
+    app.gate.store(true, Ordering::SeqCst);
+    app.send(focus(true, 0));
+    for command in commands {
+        app.send(command);
+    }
+    during();
+    app.open.send(()).unwrap();
 }
