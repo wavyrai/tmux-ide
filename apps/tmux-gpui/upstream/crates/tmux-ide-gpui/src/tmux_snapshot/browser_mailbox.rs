@@ -25,6 +25,9 @@ pub(in crate::tmux_snapshot) struct MailboxSlot {
     idle: AtomicBool,
     /// Something happened in the window since the UI task last looked.
     activity: AtomicBool,
+    /// Why the terminal loop was given up on, written before the mailbox
+    /// closes (#878).
+    stopped: Mutex<Option<&'static str>>,
 }
 
 /// Holds the slot; when dropped holding a publication, it unlocks first and
@@ -35,6 +38,16 @@ pub(in crate::tmux_snapshot) struct MailboxGuard<'a> {
 }
 
 impl MailboxSlot {
+    /// Records why the terminal loop ended for good.
+    pub(in crate::tmux_snapshot) fn stop(&self, reason: &'static str) {
+        if let Ok(mut stopped) = self.stopped.lock() {
+            *stopped = Some(reason);
+        }
+    }
+    /// Why the terminal loop ended for good, when it was given up on.
+    pub(in crate::tmux_snapshot) fn stopped(&self) -> Option<&'static str> {
+        self.stopped.lock().ok().and_then(|stopped| *stopped)
+    }
     pub(in crate::tmux_snapshot) fn lock(&self) -> Result<MailboxGuard<'_>, PoisonError<()>> {
         let guard = self.slot.lock().map_err(|_| PoisonError::new(()))?;
         Ok(self.guard(guard))

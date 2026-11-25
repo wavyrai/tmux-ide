@@ -43,6 +43,9 @@ mod hold;
 mod loss;
 #[path = "browser_native_open.rs"]
 mod open;
+#[path = "browser_native_run.rs"]
+mod run;
+use run::{Ended, Run, Seen};
 /// Why the loop ended, for its last log line. Each one is the loop's owner
 /// going away or breaking the order of its events, never a terminal stream.
 const CLOSED: &str = "its catalog closed";
@@ -299,9 +302,35 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
     let mailbox = Arc::new(MailboxSlot::default());
     let incoming = mailbox.clone();
     let (commands, receiver) = mpsc::sync_channel(32);
-    let mut hold = hold::Hold::new(hold_frames);
-    let holds_frames = hold.enabled();
+    let holds_frames = hold::Hold::new(hold_frames).enabled();
     std::thread::spawn(move || {
+        let run = Run {
+            kitty,
+            events: rx,
+            commands: &receiver,
+            mailbox: &incoming,
+            hold_frames,
+            seen: &mut Seen::default(),
+        };
+        run_events(run, output());
+        if let Ok(mut slot) = incoming.lock() {
+            *slot = Some(None);
+        }
+    });
+    Bridge::new(mailbox, commands, holds_frames)
+}
+/// One run of the terminal loop, until its catalog or its window goes away.
+fn run_events<F: FnMut(Command) -> Result<(), Error>>(run: Run<'_>, mut output: F) -> Ended {
+    let Run {
+        kitty,
+        events: rx,
+        commands: receiver,
+        mailbox: incoming,
+        hold_frames,
+        seen,
+    } = run;
+    let mut hold = hold::Hold::new(hold_frames);
+    {
         let mut active: Option<Active> = None;
         let history_cache: Cache = Default::default();
         let mut state = State::default();
@@ -310,10 +339,9 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         let mut transition = transition::Transition::default();
         let mut releases = loss::Releases::default();
         let mut browser_read_at = 0;
-        let mut presence = (true, 0);
+        let mut presence = seen.presence;
         let mut pending = std::collections::VecDeque::new();
         let start = Instant::now();
-        let mut output = output();
         let ended = 'worker: loop {
             let now = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
             let mut changed = false;
@@ -904,7 +932,8 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
                 let publication = transition.publication(&state, presence.0, now);
                 let shown = hold.publication(&publication);
                 hold.observe(&shown);
-                send_state(&incoming, &shown);
+                send_state(incoming, &shown);
+                seen.observe(&shown, presence);
             }
             if !changed && !admitted {
                 Active::idle(active.as_ref());
@@ -913,11 +942,12 @@ fn start_events<F: FnMut(Command) -> Result<(), Error>>(
         eprintln!("tmux-preview: terminal loop ended: {ended}");
         revoke_connection(&mut active, &mut state, &mut output);
         previews.clear(&mut state);
-        if let Ok(mut slot) = incoming.lock() {
-            *slot = Some(None);
+        seen.presence = presence;
+        Ended {
+            reason: ended,
+            state,
         }
-    });
-    Bridge::new(mailbox, commands, holds_frames)
+    }
 }
 
 #[cfg(test)]
