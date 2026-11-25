@@ -297,13 +297,15 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
     let cases = [
         (Some(super::KEYS_NOT_SENT), false),
         (Some(super::KEYS_NOT_SENT), true),
+        (Some(super::KEYS_DROPPED), false),
+        (Some(super::KEYS_DROPPED), true),
         (None, false),
         (None, true),
         (other, false),
         (other, true),
     ];
     for (outcome, failed) in cases {
-        let notice = outcome == Some(super::KEYS_NOT_SENT);
+        let notice = [Some(super::KEYS_NOT_SENT), Some(super::KEYS_DROPPED)].contains(&outcome);
         let (mut active, state, _seen, peer) = selection_tests::fixture(true);
         active.action_status.set(outcome);
         let mut hold = hold::Hold::default();
@@ -314,8 +316,8 @@ fn a_lost_stream_hands_keys_not_sent_to_the_next_stream() {
             super::stream_lost(&active, &mut pending, &mut hold, &state, 1, &lost());
         }
         assert_eq!(
-            hold.take_keys_not_sent(&active.session).is_some(),
-            notice,
+            hold.take_keys_not_sent(&active.session),
+            outcome.filter(|_| notice),
             "{outcome:?}, command failed {failed}"
         );
         active.controller.retire();

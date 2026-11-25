@@ -151,3 +151,84 @@ fn a_paste_cut_by_the_focus_loss_is_announced() {
     sent.extend(app.typed());
     assert_eq!(sent.len(), 1, "more than the first chunk was sent");
 }
+
+/// A retired stream reports typing that was queued or held back by the
+/// scheduler, in its own words, and nothing for a fit or a wheel step. Its
+/// queue is emptied either way.
+#[test]
+fn a_retired_stream_reports_typing_queued_or_held_back_and_nothing_else() {
+    let cases = [
+        (Some(text("a")), None, true),
+        (Some(fit()), None, false),
+        (None, Some(Input::Text("x".into())), true),
+        (None, Some(wheel()), false),
+    ];
+    for (queued, held_back, reported) in cases {
+        let label = format!("queued {}, held back {held_back:?}", queued.is_some());
+        let (mut active, _state, _seen, peer) = selection_tests::fixture(true);
+        if let Some(last) = held_back {
+            for n in 0..8 {
+                active
+                    .input("left", None, Input::Text(n.to_string()), 1)
+                    .unwrap();
+            }
+            active.input("left", None, last, 1).unwrap();
+            assert!(active.input.waiting());
+        }
+        let mut pending: std::collections::VecDeque<Command> = queued.into_iter().collect();
+        let mut hold = hold::Hold::default();
+        super::retired(&mut active, &mut pending, &mut hold);
+        assert!(pending.is_empty(), "{label}: input kept");
+        assert!(!active.input.waiting(), "{label}: a key still waits");
+        assert_eq!(
+            hold.take_keys_not_sent(&active.session),
+            reported.then_some(super::KEYS_DROPPED),
+            "{label}"
+        );
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}
+
+/// A focus loss with no stream reports typing, and only typing, for the
+/// session of the held stream, however the hold began; with nothing held
+/// it has no session to report for.
+#[test]
+fn a_blur_with_no_stream_reports_typing_for_the_held_session() {
+    let lost = || {
+        NativeError::Controller(herdr_client::tmux_controller::Error::Transport(
+            herdr_client::tmux_stream::Error::ReadyTimeout,
+        ))
+    };
+    let cases = [
+        (text("a"), Some(false), true),
+        (text("a"), Some(true), true),
+        (fit(), Some(false), false),
+        (text("a"), None, false),
+    ];
+    for (queued, held_by_failure, reported) in cases {
+        let label = format!("held by a failed command {held_by_failure:?}, typing {reported}");
+        let (mut active, state, _seen, peer) = selection_tests::fixture(true);
+        let mut hold = hold::Hold::default();
+        let mut none = std::collections::VecDeque::new();
+        match held_by_failure {
+            Some(true) => {
+                super::command_failed(Some(&active), false, &mut none, &mut hold, &state, 1);
+            }
+            Some(false) => {
+                super::stream_lost(&active, &mut none, &mut hold, &state, 1, &lost());
+            }
+            None => {}
+        }
+        let mut pending = std::collections::VecDeque::from([queued]);
+        super::blur(&mut pending, None, &mut hold);
+        assert!(pending.is_empty(), "{label}: input kept");
+        assert_eq!(
+            hold.take_keys_not_sent(&active.session),
+            reported.then_some(super::KEYS_NOT_SENT),
+            "{label}"
+        );
+        active.controller.retire();
+        peer.join().unwrap();
+    }
+}
