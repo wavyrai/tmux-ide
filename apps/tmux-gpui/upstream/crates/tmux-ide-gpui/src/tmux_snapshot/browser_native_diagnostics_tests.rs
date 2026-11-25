@@ -237,3 +237,50 @@ fn the_close_reason_names_the_cause_and_an_unknown_one_is_a_plain_close() {
         assert!(Stop::new(&error, 4, None).is_none());
     }
 }
+
+/// #870: a link slowed to 1,000 ms each way made the SSH identity check of a
+/// new stream miss its 2 s deadline, and the window stopped on "Couldn't
+/// reconnect" for good, also after the link was back. A check that did not
+/// finish is a lost stream: it is recovered, and the next stream is checked
+/// again. Only an answer from another machine stops.
+#[test]
+fn an_ssh_identity_check_that_did_not_finish_is_recovered_not_stopped() {
+    use herdr_client::tmux_ssh::IdentityError;
+    let stopped = |identity: IdentityError| {
+        let error = NativeError::Controller(tmux_controller::Error::Stopped(Arc::new(
+            tmux_native_session::Error::Transport(tmux_stream::Error::RemoteIdentity(identity)),
+        )));
+        assert_eq!(code(&error), "stream-remote-identity");
+        Stop::new(&error, 4, Some("2.9.7")).map(|stop| stop.status)
+    };
+    let timed_out = || std::io::Error::from(std::io::ErrorKind::TimedOut);
+    assert_eq!(stopped(IdentityError::Io(timed_out())), None);
+    assert_eq!(
+        stopped(IdentityError::Http(ureq::Error::Timeout(
+            ureq::Timeout::Global
+        ))),
+        None
+    );
+    assert_eq!(
+        stopped(IdentityError::Http(ureq::Error::Io(timed_out()))),
+        None
+    );
+    assert_eq!(
+        stopped(IdentityError::Http(ureq::Error::ConnectionFailed)),
+        None
+    );
+    assert_eq!(stopped(IdentityError::Http(ureq::Error::BodyStalled)), None);
+    let gave_up = Some("Couldn't reconnect. Refresh sessions to try again.".to_owned());
+    assert_eq!(stopped(IdentityError::Mismatch), gave_up);
+    assert_eq!(stopped(IdentityError::Trailing), gave_up);
+    assert_eq!(
+        stopped(IdentityError::Http(ureq::Error::StatusCode(502))),
+        gave_up
+    );
+    // The same through the controller's own transport error.
+    let direct = NativeError::Controller(tmux_controller::Error::Transport(
+        tmux_stream::Error::RemoteIdentity(IdentityError::Io(timed_out())),
+    ));
+    assert!(Stop::new(&direct, 4, None).is_none());
+    assert_eq!(cause(&direct), super::super::Cause::Lost);
+}
