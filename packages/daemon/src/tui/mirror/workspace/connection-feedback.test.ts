@@ -204,3 +204,26 @@ it("explains how to recover from a shared terminal binding", () => {
   expect(owner.snapshot()?.failed).toBe(true);
   owner.dispose();
 });
+
+it("says a session over the pane limit is too large, with its counts, and stops (#585)", () => {
+  vi.useFakeTimers();
+  let value: ApplicationConnectionFeedback | null = null;
+  const owner = createApplicationConnectionFeedback((next) => {
+    value = next;
+  });
+  owner.note("opening main");
+  owner
+    .hostOptions("main", false, () => {})
+    .onConnectionProgress?.("runtime-refused", {
+      code: "pane-limit-exceeded",
+      panes: 26,
+      limit: 24,
+    });
+  expect(value).toMatchObject({
+    stage:
+      "Session too large to stream here: 26 panes, the limit is 24. Move some windows to another session, or open it in the Mac app.",
+    failed: true,
+  });
+  expect(vi.getTimerCount()).toBe(0);
+  owner.dispose();
+});
