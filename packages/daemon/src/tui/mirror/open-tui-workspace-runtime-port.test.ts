@@ -1611,6 +1611,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       placementSeedBytes: number;
       placementPatchBytes: number;
       maxHeartbeatDelayMs: number;
+      maxBlockedLoopCpuMs: number;
       deliveryCount: number;
       ackCount: number;
       finalHashExact: boolean;
@@ -1627,10 +1628,13 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(measurement.placementPatchBytes).toBeGreaterThan(2 * 1_024 * 1_024);
     expect(measurement.placementSeedBytes).toBeLessThan(16 * 1_024 * 1_024);
     expect(measurement.placementPatchBytes).toBeLessThan(16 * 1_024 * 1_024);
-    // This max includes time the child is descheduled by the host. Shared
-    // Node 22 runners can miss one 33 ms frame even though compact delivery
-    // adoption performs no measured synchronous work (asserted below).
-    expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(60);
+    // The longest stretch of main-thread work between two heartbeats, in CPU
+    // time: a busy runner that deschedules the child adds wall time, not CPU
+    // time (#867). The wall-clock max is in the message for comparison.
+    expect(
+      measurement.maxBlockedLoopCpuMs,
+      `wall-clock max ${measurement.maxHeartbeatDelayMs} ms`,
+    ).toBeLessThanOrEqual(60);
     expect(measurement.deliveryCount).toBe(5);
     expect(measurement.ackCount).toBe(5);
     expect(measurement.finalHashExact).toBe(true);
@@ -1667,6 +1671,7 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
         explicitGcAvailable: boolean;
         explicitCollectionsDuringWorkload: number;
         maxHeartbeatDelayMs: number;
+        maxBlockedLoopCpuMs: number;
         p99HeartbeatDelayMs: number;
         peakRssBytes: number;
         peakHeapBytes: number;
@@ -1709,13 +1714,17 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
       expect(measurement.explicitCollectionsDuringWorkload).toBe(retainedMemory ? 24 : 0);
       expect(measurement.workloadMinBytes).toBeGreaterThan(512 * 1_024);
       expect(measurement.workloadMaxBytes).toBeLessThan(1_024 * 1_024);
-      // Shared CI hosts show occasional ~70 ms natural-GC/scheduling tails.
       // Keep a 60 ms p99 target and cap isolated stalls at 100 ms for this
       // history replay workload; this is not a direct typing-latency budget.
-      // Deterministic adoption/allocation checks below remain unchanged.
+      // The cap is on main-thread CPU time between two turns of a 1 ms timer,
+      // so a GC pause or a synchronous decode counts in full, but time the
+      // runner deschedules the child does not: the wall-clock max read 105
+      // and 116 ms on CI with no code change (#867). One descheduled sample
+      // barely moves the p99. Deterministic adoption/allocation checks below
+      // remain unchanged.
       if (!retainedMemory) {
-        expect(measurement.p99HeartbeatDelayMs).toBeLessThanOrEqual(60);
-        expect(measurement.maxHeartbeatDelayMs).toBeLessThanOrEqual(100);
+        expect(measurement.p99HeartbeatDelayMs, memoryEvidence).toBeLessThanOrEqual(60);
+        expect(measurement.maxBlockedLoopCpuMs, memoryEvidence).toBeLessThanOrEqual(100);
       }
       expect(measurement.peakRssBytes, memoryEvidence).toBeLessThan(1_073_741_824);
       expect(measurement.peakHeapBytes, memoryEvidence).toBeLessThan(536_870_912);
