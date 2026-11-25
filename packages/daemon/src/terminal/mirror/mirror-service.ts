@@ -383,6 +383,17 @@ export class MirrorService {
     return identity;
   }
 
+  /**
+   * #872: a person asked to retry these panes now. Each one's next recovery
+   * asks tmux even inside a hold after failed recoveries. A session without a
+   * channel has no hold to lift.
+   */
+  liftRecoveryHolds(session: string, semanticPaneIds: readonly string[]): void {
+    const entry = this.channels.get(session);
+    if (!entry || entry.retired) return;
+    for (const semanticPaneId of semanticPaneIds) entry.channel.liftRecoveryHold(semanticPaneId);
+  }
+
   async subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription> {
     const entry = await this.acquire(request.session);
     let handle;

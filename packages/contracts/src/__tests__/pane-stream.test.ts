@@ -28,6 +28,9 @@ import {
   PaneStreamSeedBatchFrameSchemaZ,
   PaneStreamServerFrameSchemaZ,
   PaneStreamTopologyFrameSchemaZ,
+  PANE_STREAM_PANE_HELD_CLOSE_CODE,
+  paneHeldCloseReason,
+  readPaneHeldCloseReason,
 } from "../pane-stream.ts";
 
 const TICKET = `ps2_${"A".repeat(43)}`;
@@ -95,6 +98,19 @@ describe("pane-stream lease contracts", () => {
     expect(
       PaneStreamLeaseRequestSchemaZ.safeParse({ ...leaseRequest(), semanticWindowId: "" }).success,
     ).toBe(false);
+  });
+
+  it("takes a person's retry only as true (#872)", () => {
+    expect(
+      PaneStreamLeaseRequestSchemaZ.parse({ ...leaseRequest(), retryAskedByPerson: true })
+        .retryAskedByPerson,
+    ).toBe(true);
+    expect(PaneStreamLeaseRequestSchemaZ.parse(leaseRequest()).retryAskedByPerson).toBeUndefined();
+    for (const value of [false, "true", 1, null])
+      expect(
+        PaneStreamLeaseRequestSchemaZ.safeParse({ ...leaseRequest(), retryAskedByPerson: value })
+          .success,
+      ).toBe(false);
   });
 
   it("rejects a viewport — mirror streams do not size the source", () => {
@@ -726,5 +742,53 @@ describe("topology in place (capability 119)", () => {
     expect(PaneStreamTopologyFrameSchemaZ.safeParse({ ...topology, ...change }).success).toBe(
       false,
     );
+  });
+});
+
+describe("a held pane's close (#872)", () => {
+  it("is 1013 with the time left and why, in a token the Mac app keeps", () => {
+    expect(PANE_STREAM_PANE_HELD_CLOSE_CODE).toBe(1013);
+    const reason = paneHeldCloseReason({ retryInMs: 12_000, why: "too-large" });
+    expect(reason).toBe("pane-held:12000:too-large");
+    expect(paneHeldCloseReason({ retryInMs: 1, why: "failed" })).toBe("pane-held:1:failed");
+    // The app's close token: letters, digits and -_.: only, at most 64 bytes.
+    expect(reason).toMatch(/^[A-Za-z0-9_.:-]{1,64}$/u);
+    expect(paneHeldCloseReason({ retryInMs: 30_000, why: "too-large" }).length).toBeLessThan(64);
+  });
+
+  it("states a fraction, zero or a negative time as whole milliseconds of at least 1", () => {
+    expect(paneHeldCloseReason({ retryInMs: 0, why: "failed" })).toBe("pane-held:1:failed");
+    expect(paneHeldCloseReason({ retryInMs: -5, why: "failed" })).toBe("pane-held:1:failed");
+    expect(paneHeldCloseReason({ retryInMs: 1_499.2, why: "failed" })).toBe(
+      "pane-held:1500:failed",
+    );
+  });
+
+  it("is read back, and anything else is not a hold", () => {
+    expect(readPaneHeldCloseReason("pane-held:12000:too-large")).toEqual({
+      retryInMs: 12_000,
+      why: "too-large",
+    });
+    expect(readPaneHeldCloseReason("pane-held:1:failed")).toEqual({ retryInMs: 1, why: "failed" });
+    // A why this side does not know is a failure.
+    expect(readPaneHeldCloseReason("pane-held:5:frozen")).toEqual({ retryInMs: 5, why: "failed" });
+    for (const reason of [
+      "stream-unavailable",
+      "pane-held",
+      "pane-held:",
+      "pane-held::failed",
+      "pane-held:0:failed",
+      "pane-held:012:failed",
+      "pane-held:+5:failed",
+      "pane-held:5",
+      "pane-held:5:",
+      "pane-held:600001:failed",
+      "xpane-held:5:failed",
+    ])
+      expect(readPaneHeldCloseReason(reason), reason).toBeNull();
+    expect(readPaneHeldCloseReason("pane-held:600000:failed")).toEqual({
+      retryInMs: 600_000,
+      why: "failed",
+    });
   });
 });

@@ -20,6 +20,7 @@ import {
   PANE_STREAM_REDEEM_PATH,
   PANE_STREAM_WEBSOCKET_SUBPROTOCOL,
   PaneStreamServerFrameSchemaZ,
+  readPaneHeldCloseReason,
 } from "@tmux-ide/contracts";
 import type {
   MirrorLayoutEvent,
@@ -52,6 +53,7 @@ import {
   SessionRuntimeRegistry,
 } from "../session-runtime/registry.ts";
 import { ControlModeOwnershipRegistry } from "../mirror/control-mode-ownership.ts";
+import { MirrorPaneHeldError } from "../mirror/pane-hold.ts";
 import { fixtureAutoReply, fixtureState, FIXTURE } from "../mirror/__tests__/simulated-channel.ts";
 import { PaneStreamLeaseManager } from "./lease-manager.ts";
 import { logger } from "../../lib/log.ts";
@@ -277,6 +279,8 @@ class FakeMirror implements PaneStreamMirror {
   describeFailure = false;
   /** Errors the next layout subscriptions throw, one each, before any works. */
   layoutFailures: Error[] = [];
+  /** #872: set by a test that watches a person's retry lift the holds. */
+  liftRecoveryHolds?: (session: string, semanticPaneIds: readonly string[]) => void;
 
   /** A pane's window when it is not the default one (#806 window-scoped streams). */
   windowOf = new Map<string, string>();
@@ -666,6 +670,7 @@ async function connect(
     allowStartupClose?: boolean;
     diagnosticCapabilities?: readonly ("causal-cell-v1" | "clock-bounds-v1")[];
     semanticWindowId?: string;
+    retryAskedByPerson?: boolean;
   } = {},
 ): Promise<{ socket: FakeSocket; requestId: string }> {
   const requestId = freshRequestId();
@@ -676,6 +681,7 @@ async function connect(
       panes: options.panes ?? ["pane.editor", "pane.shell"],
       viewerMode: options.viewerMode ?? "read-only",
       ...(options.semanticWindowId ? { semanticWindowId: options.semanticWindowId } : {}),
+      ...(options.retryAskedByPerson ? { retryAskedByPerson: true as const } : {}),
       ...(options.semanticDelivery
         ? {
             terminalDelivery: {
@@ -5605,6 +5611,114 @@ describe("a step of the opening that fails", () => {
       expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
     );
     expect(attempts.get("pane.two")).toBe(1);
+  });
+
+  // #872: a refusal inside a hold closed like a try that failed, and was tried
+  // twice more inside the same hold.
+  it("closes a held pane's stream with the time left and why, without trying again", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    const { h, attempts } = flaky(
+      99,
+      () => new MirrorPaneHeldError({ retryInMs: 12_000, why: "too-large" }),
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:12000:too-large" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+    // What a client reads from the close.
+    expect(readPaneHeldCloseReason(socket.closed!.reason)).toEqual({
+      retryInMs: 12_000,
+      why: "too-large",
+    });
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({ code: 1013, cause: "pane-held" }),
+    );
+    logged.mockRestore();
+  });
+
+  it("names the longest hold, and too large if any held pane is", async () => {
+    const holds: Record<string, MirrorPaneHeldError> = {
+      "pane.one": new MirrorPaneHeldError({ retryInMs: 30_000, why: "failed" }),
+      "pane.two": new MirrorPaneHeldError({ retryInMs: 4_000, why: "too-large" }),
+    };
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane) => {
+        throw holds[pane]!;
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1013, reason: "pane-held:30000:too-large" }),
+    );
+  });
+
+  it("closes as before when one pane is held and another failed", async () => {
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane) => {
+        throw pane === "pane.one"
+          ? new MirrorPaneHeldError({ retryInMs: 2_000, why: "failed" })
+          : new Error("tmux timed out");
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+  });
+
+  it("lifts the holds of the stream's panes before it opens them, for a person's retry only", async () => {
+    for (const retryAskedByPerson of [false, true]) {
+      const order: string[] = [];
+      const h = harness({
+        panes: ["pane.one", "pane.two"],
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          order.push(`open ${pane}`);
+          h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation,
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close: async () => undefined,
+          };
+        },
+      });
+      h.mirror.liftRecoveryHolds = (session, panes) =>
+        void order.push(`lift ${session} ${panes.join(",")}`);
+      const { socket } = await connect(h, {
+        panes: ["pane.one", "pane.two"],
+        semanticDelivery: true,
+        retryAskedByPerson,
+      });
+      await vi.waitFor(() =>
+        expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2),
+      );
+      expect(order).toEqual(
+        retryAskedByPerson
+          ? [`lift ${SESSION} pane.one,pane.two`, "open pane.one", "open pane.two"]
+          : ["open pane.one", "open pane.two"],
+      );
+      socket.close();
+    }
   });
 
   it("logs the cause when the ready frame cannot be sent", async () => {

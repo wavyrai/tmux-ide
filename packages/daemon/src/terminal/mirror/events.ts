@@ -82,12 +82,27 @@ export type MirrorPaneEvent =
       /** Native recovery exhausted its bounds; this is not evidence of pane deletion. */
       type: "fault";
       reason: "native-recovery-failed";
+      /**
+       * Present only when the pane's recoveries failed in a row and this one
+       * was refused without asking tmux (#869, #872): how long until the pane
+       * is asked again, and why its last real try failed.
+       */
+      hold?: MirrorPaneHold;
     }
   | {
       /** The pane is gone from tmux truth (a successful list-panes reply that
        *  omits it — probe FAILURE never reads as absence). Terminal event. */
       type: "closed";
     };
+
+/** Why a held pane's last real recovery failed: its capture was over the size cap, or anything else. */
+export type MirrorPaneHoldWhy = "too-large" | "failed";
+
+export interface MirrorPaneHold {
+  /** Whole milliseconds until a new recovery asks tmux again; at least 1. */
+  readonly retryInMs: number;
+  readonly why: MirrorPaneHoldWhy;
+}
 
 /** One visible pane rectangle inside a layout event, in window cells. */
 export interface MirrorLayoutPane {

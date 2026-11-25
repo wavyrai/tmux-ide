@@ -28,8 +28,12 @@ import {
   PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION,
   PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION,
   PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION,
+  PANE_STREAM_PANE_HELD_CLOSE_CODE,
+  paneHeldCloseReason,
   type PaneStreamInputLifetime,
+  type PaneStreamPaneHold,
 } from "@tmux-ide/contracts";
+import { MirrorPaneHeldError } from "../mirror/pane-hold.ts";
 import { inflateSync } from "node:zlib";
 import { PaneStreamLayoutSnapshotFrameSchemaZ, type WindowLinkTopology } from "@tmux-ide/contracts";
 import type { TerminalDeliveryGraphics } from "../session-runtime/terminal-delivery-hub.ts";
@@ -236,6 +240,8 @@ export interface PaneStreamMirror {
     expectedSemanticPaneIds?: readonly string[],
   ): Promise<{ readonly description: MirrorSessionDescription; readonly runtimeSessionId: string }>;
   subscribe(request: MirrorSubscribeRequest): Promise<MirrorSubscription>;
+  /** #872: a person's retry; the panes' next recoveries ask tmux even inside a hold. */
+  liftRecoveryHolds?(session: string, semanticPaneIds: readonly string[]): void;
   subscribeLayout?(
     session: string,
     onLayout: (event: MirrorLayoutEvent) => void,
@@ -470,6 +476,31 @@ function sendControl(socket: DirectTerminalSocket, frame: Readonly<Record<string
     throw new TypeError("Pane-stream control frame exceeded its bound.");
   }
   socket.send(encoded, { binary: false });
+}
+
+/**
+ * The hold to close with when every pane that failed to open was held (#872):
+ * the longest wait, and too large if any held pane was. Null when any failure
+ * was something else, or nothing failed.
+ */
+function heldOnly(
+  settled: readonly PromiseSettledResult<{
+    readonly delivery: { readonly negotiation: { readonly accepted: boolean } };
+  }>[],
+): PaneStreamPaneHold | null {
+  let retryInMs = 0;
+  let tooLarge = false;
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      if (!result.value.delivery.negotiation.accepted) return null;
+      continue;
+    }
+    const reason: unknown = result.reason;
+    if (!(reason instanceof MirrorPaneHeldError)) return null;
+    retryInMs = Math.max(retryInMs, reason.hold.retryInMs);
+    tooLarge ||= reason.hold.why === "too-large";
+  }
+  return retryInMs > 0 ? { retryInMs, why: tooLarge ? "too-large" : "failed" } : null;
 }
 
 function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
@@ -1564,6 +1595,17 @@ export class PaneStreamLiveConnection {
     this.close(1011, "stream-unavailable");
   }
 
+  /**
+   * #872: every pane that did not open is held back after failed recoveries.
+   * "Try again later", with the time left and why, so a client can say so
+   * instead of counting attempts. The client reconnects as for any close.
+   */
+  #closeHeld(hold: PaneStreamPaneHold): void {
+    if (this.#closed) return;
+    this.#closeCause = { cause: "pane-held" };
+    this.close(PANE_STREAM_PANE_HELD_CLOSE_CODE, paneHeldCloseReason(hold));
+  }
+
   close(code = 1000, reason = "stream-closed"): void {
     if (this.#closed) return;
     this.#recordDiagnosticLifecycle("pane-stream-terminal", code, reason);
@@ -1850,6 +1892,11 @@ export class PaneStreamLiveConnection {
     // removes N x attachment latency without allowing a fast pane to make the
     // session look ready while a sibling is still missing. allSettled is
     // deliberate: partial success is always closed before the socket retires.
+    if (this.#descriptor.retryAskedByPerson)
+      this.#mirror.liftRecoveryHolds?.(
+        this.#descriptor.sessionName,
+        channels.map((channel) => channel.semanticPaneId),
+      );
     const openings = channels.map((channel) => this.#openPaneDelivery(binding, offer, channel));
     const settled = await Promise.allSettled(openings);
     const opened = settled.flatMap((result) =>
@@ -1864,6 +1911,11 @@ export class PaneStreamLiveConnection {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
       if (!this.#closed) {
         const rejected = settled.find((result) => result.status === "rejected");
+        const hold = heldOnly(settled);
+        if (hold) {
+          this.#closeHeld(hold);
+          return;
+        }
         this.#fail(
           "delivery-negotiation-failed",
           rejected?.status === "rejected" ? rejected.reason : "a pane's delivery offer was refused",
@@ -1947,20 +1999,26 @@ export class PaneStreamLiveConnection {
     let negotiated = false;
     // #585: a failed open is tried again (150 ms, 400 ms) before the stream
     // closes; this applies to a pane added in place too.
-    const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
-      // A try that failed may have delivered something; start clean.
-      pending.length = 0;
-      return binding.openTerminalDelivery(
-        channel.semanticPaneId,
-        offer,
-        (message) => {
-          if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
-            pending.push(message);
-          else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
-        },
-        this.#descriptor.workspaceName,
-      );
-    });
+    // A held pane is refused without asking tmux until its hold ends: trying
+    // again inside the same stream only repeats the refusal (#872).
+    const delivery = await this.#retryOpenStep(
+      "pane-delivery-open",
+      () => {
+        // A try that failed may have delivered something; start clean.
+        pending.length = 0;
+        return binding.openTerminalDelivery(
+          channel.semanticPaneId,
+          offer,
+          (message) => {
+            if (!ready && !(negotiated && message.type === "terminal.delivery.fault"))
+              pending.push(message);
+            else return this.#sendTerminalDelivery(channel.semanticPaneId, message);
+          },
+          this.#descriptor.workspaceName,
+        );
+      },
+      (error) => error instanceof MirrorPaneHeldError,
+    );
     return {
       channel,
       delivery,

@@ -145,9 +145,45 @@ export const PaneStreamLeaseRequestSchemaZ = z
      * Released daemons refuse the field: send it only to a daemon that has it.
      */
     semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
+    /**
+     * #872: a person asked to retry now. The daemon asks tmux for the
+     * stream's panes even inside a hold after failed recoveries. Released
+     * daemons refuse the field: send it only to 2.9.28 or newer.
+     */
+    retryAskedByPerson: z.literal(true).optional(),
   })
   .strict();
 export type PaneStreamLeaseRequest = z.infer<typeof PaneStreamLeaseRequestSchemaZ>;
+
+/**
+ * #872: the close of a stream whose pane the daemon holds back after its
+ * recoveries failed in a row: "try again later", with the reason
+ * `pane-held:<ms>:<why>`. `<ms>` is the whole milliseconds until the daemon
+ * asks tmux again; `<why>` is `too-large` when the last try's capture was over
+ * its size cap, else `failed`. A client that does not know the reason treats
+ * it as any other close and reconnects.
+ */
+export const PANE_STREAM_PANE_HELD_CLOSE_CODE = 1013;
+export type PaneStreamPaneHoldWhy = "too-large" | "failed";
+export interface PaneStreamPaneHold {
+  readonly retryInMs: number;
+  readonly why: PaneStreamPaneHoldWhy;
+}
+const PANE_HELD_CLOSE_REASON = /^pane-held:([1-9][0-9]{0,5}):([a-z-]+)$/u;
+/** The longest wait a reader takes; the daemon's hold is at most 30 s. */
+const PANE_HELD_MAX_READ_MS = 600_000;
+
+export function paneHeldCloseReason(hold: PaneStreamPaneHold): string {
+  return `pane-held:${Math.max(1, Math.ceil(hold.retryInMs))}:${hold.why}`;
+}
+
+export function readPaneHeldCloseReason(reason: string): PaneStreamPaneHold | null {
+  const match = PANE_HELD_CLOSE_REASON.exec(reason);
+  if (!match) return null;
+  const retryInMs = Number(match[1]);
+  if (retryInMs > PANE_HELD_MAX_READ_MS) return null;
+  return { retryInMs, why: match[2] === "too-large" ? "too-large" : "failed" };
+}
 
 export const PaneStreamRedemptionTicketSchemaZ = z.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u);
 
