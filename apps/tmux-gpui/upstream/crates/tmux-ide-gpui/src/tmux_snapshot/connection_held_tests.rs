@@ -101,6 +101,8 @@ fn a_held_session_says_so_at_once_in_the_card_and_the_slot(cx: &mut TestAppConte
     let (view, cx, _receiver) = open(cx, session_held(held(start, 12_000, true)), clock);
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("tmux-reconnect-card").is_some());
+    // The countdown repaints by itself.
+    assert!(view.read_with(cx, |view, _| view.connection._held_wake.is_some()));
     let card = view.read_with(cx, |view, _| view.reconnect_card()).unwrap();
     assert!(card.ends_with("Trying again in 12 s."), "{card}");
     at.set(S(70_000));
@@ -166,4 +168,16 @@ fn a_hold_once_the_stream_is_back_says_nothing(cx: &mut TestAppContext) {
     let (view, cx, _receiver) = open(cx, state, clock);
     assert_eq!(view.read_with(cx, |view, _| view.reconnect_card()), None);
     assert_ne!(view.read_with(cx, |view, _| view.connection_words()), HELD);
+    // A retry asked before the stream came back is forgotten with the wait.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.connection.retry_asked_at = Some(start);
+            view.observe_connection(cx);
+        })
+    });
+    assert_eq!(
+        view.read_with(cx, |view, _| view.connection.retry_asked_at),
+        None
+    );
+    assert!(view.read_with(cx, |view, _| view.connection._held_wake.is_none()));
 }
