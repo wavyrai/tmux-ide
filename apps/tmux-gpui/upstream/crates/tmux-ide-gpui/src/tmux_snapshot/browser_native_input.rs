@@ -206,6 +206,17 @@ impl InputOwner {
             self.selection_notice(notice);
         }
     }
+    /// Whether the one admission held back from the wire is typing: text, a
+    /// key, bytes or a paste. [`Self::focus_loss`] cancels it unsent.
+    pub fn waiting_keys(&mut self) -> bool {
+        let Some(scheduler) = self.scheduler.as_mut().filter(|s| s.waiting()) else {
+            return false;
+        };
+        matches!(
+            scheduler.waiting_barrier_mut(),
+            None | Some(Control::Paste(_))
+        )
+    }
     pub fn focus_loss(&mut self) {
         self.mouse.retire();
         self.cancel_waiting();

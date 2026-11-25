@@ -28,6 +28,10 @@ pub(super) struct Hold {
     /// The last live frame the UI was shown. A catalog publication can replace the
     /// transport's state, frame included, in the same turn the stream fails.
     last: Option<Held>,
+    /// The session whose typed keys were dropped as the window left (#875),
+    /// until a stream of that session says so with the window back. It lives
+    /// here, not on the stream, so a stream retired meanwhile cannot lose it.
+    keys_not_sent: Option<String>,
 }
 impl Hold {
     /// `hold_frames` is false for the legacy pipe catalog: no held frames.
@@ -85,8 +89,23 @@ impl Hold {
             _ => false,
         }
     }
+    /// Navigation: the user moved on, so a carried "keys not sent" goes too.
     pub fn clear(&mut self) {
         self.held = None;
+        self.keys_not_sent = None;
+    }
+    /// Keys typed into `session` were dropped and not sent: the window says
+    /// so once it is back on a stream of that session.
+    pub fn carry_keys_not_sent(&mut self, session: &str) {
+        self.keys_not_sent = Some(session.to_owned());
+    }
+    /// Whether a stream of `session` must now say that keys were not sent.
+    /// Asking ends the carry: one for another session is dropped, because the
+    /// user has moved on to that session.
+    pub fn take_keys_not_sent(&mut self, session: &str) -> bool {
+        self.keys_not_sent
+            .take()
+            .is_some_and(|carried| carried == session)
     }
     pub fn active(&self) -> bool {
         self.held.is_some()
@@ -108,12 +127,12 @@ impl Hold {
             || state.home_phase == HomePhase::Unavailable
             || state.home_notice.is_some()
         {
-            self.clear();
+            self.held = None;
             return state.clone();
         }
         if state.frame.is_some() && !state.retained_preview {
             if state.input_ready {
-                self.clear();
+                self.held = None;
             }
             return state.clone();
         }
