@@ -29,6 +29,7 @@ import { canonicalDaemonUrl } from "../../../lib/canonical-daemon.ts";
 import { ensureOpenTuiSessionWorkspaceResult } from "../configless-session-bootstrap.ts";
 import {
   OPEN_TUI_HOST_CLIENT_ID,
+  OpenTuiPaneLimitError,
   connectOpenTuiWorkspaceRuntimePort,
   type ConnectOpenTuiWorkspaceRuntimePortOptions,
   type OpenTuiWorkspaceRuntimePort,
@@ -131,6 +132,8 @@ interface BundleCallbacks {
   readonly didSuspendRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
   readonly didRetireRuntime: () => void;
   readonly didFaultRuntime: (runtime: OpenTuiWorkspaceRuntimePort | null, error: Error) => void;
+  /** Refused for good until the session's panes change (#585). */
+  readonly didRefuseRuntime: (error: unknown) => void;
   readonly didRuntimeDiagnostic: (
     phase: Parameters<NonNullable<ConnectOpenTuiWorkspaceRuntimePortOptions["onDiagnostic"]>>[0],
     details: Readonly<Record<string, unknown>>,
@@ -157,6 +160,7 @@ export interface OpenTuiGenerationHostDependencies {
       | "shell-lifecycle"
       | "runtime-progress"
       | "runtime-fault"
+      | "runtime-refused"
       | "workspace-client-state"
       | "host-internal-snapshot-publication",
     details: Readonly<Record<string, unknown>>,
@@ -313,6 +317,7 @@ function buildProductionBundle(
         callbacks.didSuspendRuntime(runtime as OpenTuiWorkspaceRuntimePort);
       },
       didRetireRuntime: callbacks.didRetireRuntime,
+      didFailRuntime: callbacks.didRefuseRuntime,
       requestTerminalRuntimeInventoryRefresh: () => {
         connection.transport.refreshTerminalRuntimeInventory();
       },
@@ -739,6 +744,14 @@ export function createOpenTuiGenerationHost(
                 return;
               currentOwner.runtime = null;
               publish({ ...snapshot, status: "rebinding" });
+            },
+            didRefuseRuntime(error) {
+              const details =
+                error instanceof OpenTuiPaneLimitError
+                  ? { code: error.code, panes: error.panes, limit: error.limit }
+                  : { message: error instanceof Error ? error.message : String(error) };
+              overrides.onConnectionProgress?.("runtime-refused", details);
+              diagnose?.("runtime-refused", details);
             },
             didRuntimeDiagnostic(phase, details) {
               if (phase === "seed" || phase === "coherent")

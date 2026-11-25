@@ -222,6 +222,7 @@ interface FakeBundle extends OpenTuiGenerationBundle {
   ) => void;
   readonly retireRuntime: () => void;
   readonly faultRuntime: (runtime: OpenTuiWorkspaceRuntimePort) => void;
+  readonly refuseRuntime: (error: unknown) => void;
   readonly revokeSpy: ReturnType<typeof vi.fn>;
   readonly disposeSpy: ReturnType<typeof vi.fn>;
 }
@@ -243,6 +244,7 @@ function bundle(
     ) => void;
     readonly didRetireRuntime: () => void;
     readonly didFaultRuntime: (runtime: OpenTuiWorkspaceRuntimePort | null, error: Error) => void;
+    readonly didRefuseRuntime: (error: unknown) => void;
   },
 ): FakeBundle {
   const listeners = new Set<LifecycleListener>();
@@ -309,12 +311,39 @@ function bundle(
     retireRuntime: callbacks.didRetireRuntime,
     faultRuntime: (failedRuntime) =>
       callbacks.didFaultRuntime(failedRuntime, new Error("runtime connection closed")),
+    refuseRuntime: (error) => callbacks.didRefuseRuntime(error),
     revoke: revokeSpy,
     dispose: disposeSpy,
   };
 }
 
 describe("OpenTUI generation host", () => {
+  it("reports a session over the pane limit with its counts (#585)", async () => {
+    const { OpenTuiPaneLimitError } = await import("../open-tui-workspace-runtime-port.ts");
+    const progress = vi.fn();
+    const phases: string[] = [];
+    let created!: FakeBundle;
+    const host = createOpenTuiGenerationHost("alpha", presentation().value, {
+      initialConnection: connection("daemon-a"),
+      observeCanonicalGeneration: inertCanonicalObserver,
+      buildBundle: (resolved, callbacks) => (created = bundle(resolved, callbacks)),
+      onDiagnostic: (phase) => phases.push(phase),
+      onConnectionProgress: progress,
+    });
+    const started = host.start();
+    await flushHostStart();
+    created.refuseRuntime(new OpenTuiPaneLimitError(26, 24));
+    expect(progress).toHaveBeenCalledWith("runtime-refused", {
+      code: "pane-limit-exceeded",
+      panes: 26,
+      limit: 24,
+    });
+    expect(phases).toContain("runtime-refused");
+    created.activate();
+    await started;
+    await host.dispose();
+  });
+
   it("marks the exact prepared generation before resolving its connection", async () => {
     const view = presentation();
     const phases: string[] = [];
