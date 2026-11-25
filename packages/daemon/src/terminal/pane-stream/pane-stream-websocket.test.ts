@@ -5645,8 +5645,8 @@ describe("a step of the opening that fails", () => {
 
   it("names the longest hold, and too large if any held pane is", async () => {
     const holds: Record<string, MirrorPaneHeldError> = {
-      "pane.one": new MirrorPaneHeldError({ retryInMs: 30_000, why: "failed" }),
-      "pane.two": new MirrorPaneHeldError({ retryInMs: 4_000, why: "too-large" }),
+      "pane.one": new MirrorPaneHeldError({ retryInMs: 30_000, why: "too-large" }),
+      "pane.two": new MirrorPaneHeldError({ retryInMs: 4_000, why: "failed" }),
     };
     const h = harness({
       panes: ["pane.one", "pane.two"],
@@ -5684,6 +5684,36 @@ describe("a step of the opening that fails", () => {
       expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
     );
   });
+
+  it.each([true, false])(
+    "closes as before when a pane's offer was refused (another pane held: %s)",
+    async (otherHeld) => {
+      const h = harness({
+        panes: ["pane.one", "pane.two"],
+        openRetryDelaysMs: [1, 1],
+        openTerminalDelivery: async (pane, _offer, onMessage) => {
+          if (pane === "pane.one" && otherHeld)
+            throw new MirrorPaneHeldError({ retryInMs: 2_000, why: "failed" });
+          h.deliveryListeners.set(pane, onMessage as (message: never) => void);
+          return {
+            negotiation: pane === "pane.two" ? { accepted: false as const } : negotiation,
+            ack: vi.fn(),
+            nack: vi.fn(),
+            setVisibility: vi.fn(),
+            close: async () => undefined,
+          } as never;
+        },
+      });
+      const { socket } = await connect(h, {
+        panes: ["pane.one", "pane.two"],
+        semanticDelivery: true,
+        allowStartupClose: true,
+      });
+      await vi.waitFor(() =>
+        expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+      );
+    },
+  );
 
   it("lifts the holds of the stream's panes before it opens them, for a person's retry only", async () => {
     for (const retryAskedByPerson of [false, true]) {
