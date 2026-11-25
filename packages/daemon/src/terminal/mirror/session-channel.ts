@@ -3298,14 +3298,17 @@ export class SessionChannel {
         return;
       }
       const leafIds = new Set(membership.leaves.map((leaf) => leaf.id));
-      // #882: a floating pane is never a leaf; it leaves by tmux's pane list.
+      // #882: a floating pane is never a leaf. The bundled build lists it in
+      // the layout's floating section, so its absence there means it closed.
+      // tmux 3.8 leaves it out of a control client's layout altogether, so a
+      // known float there always reads as possibly gone: tmux's pane list
+      // decides. Without that read a closed float stayed listed.
       const floatingIds = new Set((membership.floating ?? []).map((leaf) => leaf.id));
       const knownPaneVanished = [...this.panesByRuntime.values()].some(
         (pane) =>
           pane.windowRuntimeId === change.windowId &&
           !leafIds.has(pane.runtimeId) &&
-          !floatingIds.has(pane.runtimeId) &&
-          !pane.descriptor?.floating,
+          !floatingIds.has(pane.runtimeId),
       );
       if (
         membership.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) ||

@@ -459,6 +459,82 @@ describe("terminal browser kind (#718)", () => {
   });
 });
 
+describe("floating panes (#882)", () => {
+  /** Lists a floating %4 (pane.float) in window @1, as tmux 3.7+ does. */
+  function withFloat(state: Rig["state"]): void {
+    const tiledCount = (row: string) => {
+      const fields = row.split("\t");
+      if (fields[8] === "@1") fields[18] = "3";
+      return fields.join("\t");
+    };
+    const floatRow = FIXTURE.descriptorRows[1]!.split("\t");
+    floatRow[0] = "%4";
+    floatRow[1] = "pane.float";
+    floatRow[18] = "3";
+    state.descriptorRows = [
+      ...FIXTURE.descriptorRows.map(tiledCount),
+      // Fields 21 to 25 stay empty; field 26 is #{pane_floating_flag}.
+      `${floatRow.join("\t")}\t\t\t\t\t\t1`,
+    ];
+    state.truthRows = [...FIXTURE.truthRows, "%4\t0\t@1\t1"];
+  }
+  function withoutFloat(state: Rig["state"]): void {
+    state.descriptorRows = [...FIXTURE.descriptorRows];
+    state.truthRows = [...FIXTURE.truthRows];
+  }
+  const listed = (rig: Rig) =>
+    rig.channel
+      .describe()
+      .panes.map((pane) => `${pane.semanticPaneId}${pane.floating ? " floating" : ""}`)
+      .sort();
+
+  it.each([
+    // tmux 3.8 leaves a float out of a control client's layout: closing it
+    // sends the same layout again.
+    { build: "3.8", open: FIXTURE.layoutW1, closed: FIXTURE.layoutW1 },
+    // The bundled 3.7c lists it in a trailing section, and drops it on close.
+    {
+      build: "bundled 3.7c",
+      open: "aaaa,200x50,0,0{100x50,0,0,1,99x50,101,0,2,40x10,10,5,4}<40x10,10,5,4>",
+      closed: FIXTURE.layoutW1,
+    },
+  ])(
+    "reads the panes again when a layout change may have closed a float ($build)",
+    async ({ open, closed }) => {
+      const rig = await startedRig();
+      withFloat(rig.state);
+      rig.state.windowRows = FIXTURE.windowRows(open, FIXTURE.layoutW2);
+      rig.sim.feedLines("%window-renamed @1 main");
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() => expect(listed(rig)).toContain("pane.float floating"));
+      expect(rig.pendingSyncs).toHaveLength(0);
+
+      withoutFloat(rig.state);
+      rig.state.windowRows = FIXTURE.windowRows(closed, FIXTURE.layoutW2);
+      rig.sim.feedLines(`%layout-change @1 ${closed} ${closed} *`);
+      expect(rig.pendingSyncs).toHaveLength(1);
+      rig.pendingSyncs.shift()!();
+      await vi.waitFor(() =>
+        expect(listed(rig)).toEqual(["pane.alpha", "pane.beta", "pane.mirror.gen1"]),
+      );
+      await rig.channel.dispose();
+    },
+  );
+
+  it("does not read the panes again while the bundled build still lists the float", async () => {
+    const rig = await startedRig();
+    const open = "aaaa,200x50,0,0{100x50,0,0,1,99x50,101,0,2,40x10,10,5,4}<40x10,10,5,4>";
+    withFloat(rig.state);
+    rig.state.windowRows = FIXTURE.windowRows(open, FIXTURE.layoutW2);
+    rig.sim.feedLines("%window-renamed @1 main");
+    rig.pendingSyncs.shift()!();
+    await vi.waitFor(() => expect(listed(rig)).toContain("pane.float floating"));
+    rig.sim.feedLines(`%layout-change @1 ${open} ${open} *`);
+    expect(rig.pendingSyncs).toHaveLength(0);
+    await rig.channel.dispose();
+  });
+});
+
 describe("native client activity", () => {
   it("distinguishes proven absence from native presence and malformed inventory", async () => {
     const presence = vi.fn();
