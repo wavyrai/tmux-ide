@@ -237,6 +237,9 @@ pub(super) fn poll(
 #[cfg(test)]
 #[path = "browser_native_blur_tests.rs"]
 mod blur_tests;
+#[cfg(test)]
+#[path = "browser_native_loop_harness.rs"]
+mod harness;
 /// The stream under `current` failed with `error`. Keys in flight or queued
 /// die with it, so the held frame says they were not sent; so does a key that
 /// went unanswered until the scheduler gave it up (an input error). Returns
