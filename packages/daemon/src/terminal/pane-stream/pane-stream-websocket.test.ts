@@ -5561,6 +5561,47 @@ describe("a step of the opening that fails", () => {
     socket.close();
   });
 
+  it("closes at once, without deferred tries, when every pane failed", async () => {
+    const attempts = new Map<string, number>();
+    const h = harness({
+      panes: ["pane.one", "pane.two"],
+      openRetryDelaysMs: [1],
+      deferredPaneRetryDelaysMs: [1, 1],
+      openTerminalDelivery: async (pane) => {
+        attempts.set(pane, (attempts.get(pane) ?? 0) + 1);
+        throw new Error("tmux timed out");
+      },
+    });
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    expect(Object.fromEntries(attempts)).toEqual({ "pane.one": 2, "pane.two": 2 });
+  });
+
+  it("closes at once for a refusal of authority even with deferred tries", async () => {
+    const { h, attempts } = flaky(
+      99,
+      () =>
+        new SessionRuntimeControllerLeaseError("invalid-source-pane-binding", "outside the grant"),
+      [1, 1],
+    );
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    expect(attempts.get("pane.two")).toBe(1);
+    expect(socket.framesOfType("layout-snapshot")).toEqual([]);
+  });
+
   it("closes with the pane and its cause when every deferred try has failed too", async () => {
     const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
     onTestFinished(() => logged.mockRestore());

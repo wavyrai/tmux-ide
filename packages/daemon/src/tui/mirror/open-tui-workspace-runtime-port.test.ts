@@ -805,6 +805,22 @@ describe("OpenTUI WorkspaceClient runtime port", () => {
     expect(test.openPaneStream).not.toHaveBeenCalled();
   });
 
+  it("still opens a session with exactly the stream's pane limit", async () => {
+    const test = rig(false);
+    const controller = new AbortController();
+    const panes = Array.from({ length: 24 }, (_, index) => `pane.p${index}`).sort((left, right) =>
+      left.localeCompare(right),
+    );
+    const opening = connectOpenTuiWorkspaceRuntimePort({
+      inventory: inventory(panes),
+      routing: test.routing,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(test.openPaneStream).toHaveBeenCalledOnce());
+    controller.abort(new Error("done"));
+    await expect(opening).rejects.toThrow("done");
+  });
+
   it("aborts a negotiated but incoherent physical connection", async () => {
     const test = rig(false);
     const controller = new AbortController();
