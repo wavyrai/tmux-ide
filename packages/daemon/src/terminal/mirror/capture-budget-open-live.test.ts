@@ -73,6 +73,8 @@ describe.each([
             ],
             { env, encoding: "utf8", timeout: 10_000 },
           ).status === 0;
+        if (!nativeServer && process.env.TMUX_IDE_ORACLE_EXPECT_NATIVE === "1")
+          throw new Error("TMUX_IDE_ORACLE_EXPECT_NATIVE=1, but this tmux has no native capture");
         if (!nativeServer) skip("not tmux-ide's tmux: no native capture to budget");
         tmux("set-option", "-g", "history-limit", String(historyLimit));
         // Every seventh line is longer than the pane and wraps, so the joins

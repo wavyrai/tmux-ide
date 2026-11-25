@@ -55,6 +55,8 @@ for (const [config, test] of [
   ["vitest.live.config.ts", "src/terminal/session-runtime/terminal-hidden-viewer-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/session-runtime/xterm-history-collection-live.test.ts"],
   ["vitest.live.config.ts", "src/terminal/session-runtime/history-vs-tmux-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/long-history-open-live.test.ts"],
+  ["vitest.live.config.ts", "src/terminal/mirror/capture-budget-open-live.test.ts"],
   ...(expectedNative === "1"
     ? [
         [
