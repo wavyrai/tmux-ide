@@ -216,6 +216,12 @@ export interface WorkspaceClientPorts<
   ) => void;
   /** Called only when no active runtime remains (empty inventory/target retirement). */
   readonly didRetireRuntime?: () => void;
+  /**
+   * The desired runtime was refused in a way another try cannot change (a
+   * session over the stream's pane limit, code `pane-limit-exceeded`). No
+   * further try is made until the inventory changes.
+   */
+  readonly didFailRuntime?: (error: unknown) => void;
   /** Presentation inventory disagreed with the newer terminal authority. */
   readonly requestTerminalRuntimeInventoryRefresh?: () => void;
   readonly actions: WorkspaceClientOwnerActionPort;
