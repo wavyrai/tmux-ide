@@ -233,8 +233,17 @@ function parseCell(
         if (!tree) return { width, height, pos: pos + 1 };
         // A split left with one tiled child once its floats are dropped is
         // that child (the bundled build wraps a lone pane and its floats).
-        if (droppedFloating > 0 && children.length === 1)
-          return { width, height, pos: pos + 1, node: children[0] };
+        // It must fill the split exactly; otherwise tilesParent refuses it.
+        const lone = children.length === 1 ? children[0]! : null;
+        if (
+          droppedFloating > 0 &&
+          lone &&
+          lone.left === left &&
+          lone.top === top &&
+          lone.width === width &&
+          lone.height === height
+        )
+          return { width, height, pos: pos + 1, node: lone };
         const axis = ch === "{" ? "cols" : "rows";
         const node: LayoutTreeNode = { kind: "split", axis, left, top, width, height, children };
         if (!tilesParent(node)) return null;

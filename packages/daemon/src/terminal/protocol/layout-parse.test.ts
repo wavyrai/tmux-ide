@@ -191,6 +191,12 @@ describe("floating panes in the bundled build's layout (#882)", () => {
       "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5>",
       "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5,3,40x10,10,5,3>",
       "b975,120x40,0,0{60x40,0,0,0,40x10,10,5,3}<40x10,10,5,3,60x40,0,0,0>",
+      // A cell in the section must be WxH,X,Y,ID: "5x3" is no pane id.
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5x3>",
+      // A trailing comma ends no cell.
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3}<40x10,10,5,3,>",
+      // A float listed twice in the tiled part.
+      "b975,120x40,0,0{60x40,0,0,0,59x40,61,0,2,40x10,10,5,3,40x10,10,5,3}<40x10,10,5,3>",
     ]) {
       expect(parseLayout(layout), layout).toBeNull();
       expect(parseLayoutTree(layout), layout).toBeNull();
@@ -210,6 +216,26 @@ describe("floating panes in the bundled build's layout (#882)", () => {
       width: 120,
       height: 40,
       leaves: [{ id: "%0", left: 0, top: 0, width: 120, height: 40 }],
+    });
+  });
+
+  it("never lets dropped floats hide a tiled tree that does not fill its window (review #882)", () => {
+    // Without the float, the tiled part is a 60-column tree in a 120-column window.
+    expect(parseLayoutTree("b975,120x40,0,0{60x40,0,0,0}")).toBeNull();
+    expect(parseLayoutTree("b975,120x40,0,0{60x40,0,0,0,40x10,10,5,3}<40x10,10,5,3>")).toBeNull();
+    expect(
+      parseLayoutTree(
+        "b975,120x40,0,0{60x40,0,0,0,59x40,61,0[59x20,61,0,2,40x10,10,5,3]}<40x10,10,5,3>",
+      ),
+    ).toBeNull();
+    // The real lone-pane case: the tiled pane fills the window.
+    expect(parseLayoutTree("b975,120x40,0,0{120x40,0,0,0,40x10,10,5,3}<40x10,10,5,3>")).toEqual({
+      kind: "leaf",
+      id: "%0",
+      left: 0,
+      top: 0,
+      width: 120,
+      height: 40,
     });
   });
 });
