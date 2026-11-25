@@ -543,9 +543,10 @@ fn the_actor_keeps_a_saved_machine_whose_quiet_verification_failed() {
     assert!(local.home.quiet.wait(Instant::now()).is_some());
 }
 
-/// The profile is read before every try, not once: a machine disabled or
-/// removed meanwhile is never read, and the window goes back to Local, as
-/// after a refresh.
+/// The profile is read before every try, not once: a machine disabled,
+/// removed or edited meanwhile (its SSH target, or the environment it must
+/// answer as) is never read, and the window goes back to Local, as after a
+/// refresh (#853 review, item 3).
 #[cfg(unix)]
 #[test]
 fn a_saved_machine_disabled_or_removed_meanwhile_is_never_read_quietly() {
@@ -553,7 +554,15 @@ fn a_saved_machine_disabled_or_removed_meanwhile_is_never_read_quietly() {
         enabled: false,
         ..build_machine()
     };
-    for machines in [vec![disabled], Vec::new()] {
+    let edited = herdr_client::tmux_daemon::SavedMachine {
+        ssh_target: "other.invalid".into(),
+        ..build_machine()
+    };
+    let pinned = herdr_client::tmux_daemon::SavedMachine {
+        expected_environment_id: Some("22222222-2222-4222-8222-222222222222".into()),
+        ..build_machine()
+    };
+    for machines in [vec![disabled], Vec::new(), vec![edited], vec![pinned]] {
         let (mut local, _events) = stopped_saved_machine();
         assert!(verified(&mut local, vec![build_machine()]));
         local.stage = None;
@@ -568,6 +577,8 @@ fn a_saved_machine_disabled_or_removed_meanwhile_is_never_read_quietly() {
             local.sources.observation_source(),
             Ok(CatalogSource::Local(_))
         ));
+        // The local read that follows is an ordinary one, not a quiet try.
+        assert!(!local.home.quiet.probing());
     }
 }
 
@@ -807,3 +818,7 @@ fn a_fresh_restart_of_the_same_recovery_asks_the_fleet_again() {
         "the new episode did not ask the fleet"
     );
 }
+
+#[cfg(unix)]
+#[path = "browser_native_local_saved_quiet_tests.rs"]
+mod saved_quiet;

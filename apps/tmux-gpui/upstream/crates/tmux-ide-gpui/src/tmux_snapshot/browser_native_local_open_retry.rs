@@ -118,6 +118,9 @@ impl Local {
             eprintln!("tmux-ide: opening the session failed, trying again: {error}");
             return self.reconnect_opening(target, pane, failure);
         }
+        if quiet::another_machine(error) {
+            return self.unavailable(reconnect::SSH_IDENTITY);
+        }
         // Home keeps looking meanwhile.
         let words = self.stopped_words(matches!(stage, Stage::Servers), error);
         self.unavailable_retrying(words)?;

@@ -287,6 +287,9 @@ impl Local {
     /// Ends this link and forgets what it showed: navigation, a refresh, or a
     /// different daemon. A recoverable drop uses [`Self::drop_link`] instead.
     fn cancel(&mut self) -> Result<(), Error> {
+        // A quiet try under way ends too: what follows is not its answer
+        // (#853 review, A8: a machine selected meanwhile).
+        self.home.quiet = Default::default();
         self.forget_agents();
         self.drop_link()
     }

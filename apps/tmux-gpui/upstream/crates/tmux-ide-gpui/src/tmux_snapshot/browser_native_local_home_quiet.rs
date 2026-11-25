@@ -7,7 +7,9 @@
 //! at most, since a try may start an SSH connection. A saved machine's profile
 //! is read again from the local registry and must be unchanged before each
 //! try reads its catalog (#853), as a refresh does. In an active or inactive
-//! window. A stop that only the user can clear never arms it.
+//! window. A stop that only the user can clear never arms it, and neither
+//! does a saved machine that answered as another environment: over SSH that
+//! stops at once ([`reconnect::SSH_IDENTITY`]), as recovery does.
 use super::*;
 
 const FIRST: Duration = Duration::from_secs(1);
@@ -126,6 +128,11 @@ impl Local {
         &mut self,
         error: &herdr_client::tmux_daemon::Error,
     ) -> Result<(), Error> {
+        if another_machine(error) {
+            // The machine began answering as another environment between two
+            // tries: stop, as the first load would have.
+            return self.unavailable(reconnect::SSH_IDENTITY);
+        }
         self.home.quiet.probing = false;
         self.home.quiet.due = Some(Instant::now() + self.home.quiet.delay());
         let words = self.stopped_words(true, error);
@@ -149,4 +156,11 @@ impl Local {
             };
         }
     }
+}
+/// A saved SSH machine answered as another environment than the one it was
+/// saved with (#853 review, item 1). Only that: an SSH machine that is away,
+/// slow or cut off is retried (#363 review, S10).
+pub(super) fn another_machine(error: &herdr_client::tmux_daemon::Error) -> bool {
+    matches!(error, herdr_client::tmux_daemon::Error::Remote(_))
+        && reconnect::Failure::of(error) == reconnect::Failure::Identity
 }
