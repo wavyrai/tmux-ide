@@ -350,6 +350,12 @@ export interface PaneStreamAdmissionCoordinatorOptions {
   readonly drainTickMs?: number;
   /** Waits between tries of a step of a stream's opening that failed (#585). */
   readonly openRetryDelaysMs?: readonly number[];
+  /**
+   * Waits between later tries of a pane whose delivery still failed after the
+   * opening's tries, while the stream runs without it (#585). Empty: that
+   * pane's failure closes the stream at once.
+   */
+  readonly deferredPaneRetryDelaysMs?: readonly number[];
   /** How long input waits for registered-window ownership to be read again. */
   readonly ownershipWaitMs?: number;
   /** Hard whole-socket ceiling; the ledger should stall panes far earlier. */
@@ -472,6 +478,10 @@ function sendControl(socket: DirectTerminalSocket, frame: Readonly<Record<string
   socket.send(encoded, { binary: false });
 }
 
+function errorText(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 300);
+}
+
 function errorFrameCode(error: unknown): PaneStreamErrorFrameCode {
   if (error instanceof PaneStreamLeaseError && error.code === "ticket-expired") {
     return "ticket-expired";
@@ -511,6 +521,7 @@ export class PaneStreamAdmissionCoordinator {
   readonly #flowBudgets: PaneStreamFlowBudgets;
   readonly #drainTickMs: number;
   readonly #openRetryDelaysMs: readonly number[];
+  readonly #deferredPaneRetryDelaysMs: readonly number[];
   readonly #ownershipWaitMs: number;
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
@@ -553,6 +564,8 @@ export class PaneStreamAdmissionCoordinator {
     this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
     this.#drainTickMs = boundedInteger(options.drainTickMs, 15, 1_000);
     this.#openRetryDelaysMs = options.openRetryDelaysMs ?? PANE_STREAM_OPEN_RETRY_DELAYS_MS;
+    this.#deferredPaneRetryDelaysMs =
+      options.deferredPaneRetryDelaysMs ?? PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS;
     this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
     this.#maxSocketBufferedBytes = boundedInteger(
       options.maxSocketBufferedBytes,
@@ -633,7 +646,14 @@ export class PaneStreamAdmissionCoordinator {
             this.#observability!.nowMicros(),
             trace,
           );
-      } catch {
+      } catch (error) {
+        // #585: the client is told only "stream-unavailable"; the log keeps why.
+        logger.info("pane-stream", "stream refused", {
+          step: "issue",
+          cause: "describe-session-failed",
+          session: context.sessionName,
+          error: errorText(error),
+        });
         throw new PaneStreamAdmissionError(
           "stream-unavailable",
           "The workspace session could not be described.",
@@ -960,6 +980,7 @@ export class PaneStreamAdmissionCoordinator {
             ledger: this.#ledger,
             drainTickMs: this.#drainTickMs,
             openRetryDelaysMs: this.#openRetryDelaysMs,
+            deferredPaneRetryDelaysMs: this.#deferredPaneRetryDelaysMs,
             ownershipWaitMs: this.#ownershipWaitMs,
             maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
             maxInputFrames: this.#maxInputFrames,
@@ -1146,6 +1167,11 @@ class PreAuthAdmission implements PaneStreamPreAuthAdmission {
     void this.#onRedeem(this, frame, socket).catch((error: unknown) => {
       if (!this.#open) return;
       const code = errorFrameCode(error);
+      logger.info("pane-stream", "stream refused", {
+        step: "redeem",
+        code,
+        error: errorText(error),
+      });
       try {
         sendControl(socket, {
           type: "error",
@@ -1188,6 +1214,7 @@ interface LiveConnectionOptions {
   readonly ledger: PaneStreamWireLedger;
   readonly drainTickMs: number;
   readonly openRetryDelaysMs: readonly number[];
+  readonly deferredPaneRetryDelaysMs: readonly number[];
   readonly ownershipWaitMs: number;
   readonly maxSocketBufferedBytes: number;
   readonly maxInputFrames: number;
@@ -1227,6 +1254,12 @@ interface OpenedPaneDelivery {
 
 /** About half a second in all: long enough for one slow tmux answer, short for a user. */
 export const PANE_STREAM_OPEN_RETRY_DELAYS_MS: readonly number[] = [150, 400];
+/**
+ * A pane whose delivery still fails after those is tried again this long
+ * after the stream opened without it (about 7 s in all, inside the terminal
+ * app's 15 s wait for a hidden pane's state). Then the stream closes (#585).
+ */
+export const PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
 /** Input waits this long for ownership to be read again before the stream closes. */
 export const PANE_STREAM_OWNERSHIP_WAIT_MS = 2_000;
 /** At most this many input and geometry frames wait for it. */
@@ -1321,6 +1354,7 @@ export class PaneStreamLiveConnection {
   readonly #ledger: PaneStreamWireLedger;
   readonly #drainTickMs: number;
   readonly #openRetryDelaysMs: readonly number[];
+  readonly #deferredPaneRetryDelaysMs: readonly number[];
   readonly #ownershipWaitMs: number;
   readonly #maxSocketBufferedBytes: number;
   readonly #maxInputFrames: number;
@@ -1466,6 +1500,7 @@ export class PaneStreamLiveConnection {
     this.#ledger = options.ledger;
     this.#drainTickMs = options.drainTickMs;
     this.#openRetryDelaysMs = options.openRetryDelaysMs;
+    this.#deferredPaneRetryDelaysMs = options.deferredPaneRetryDelaysMs;
     this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
     this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
     this.#maxInputFrames = options.maxInputFrames;
@@ -1553,10 +1588,11 @@ export class PaneStreamLiveConnection {
    * none of them. The log says which one, with the error text, so a stream
    * that "just closed" can be traced without a reproduction.
    */
-  #fail(cause: string, error?: unknown): void {
+  #fail(cause: string, error?: unknown, pane?: string): void {
     if (this.#closed) return;
     this.#closeCause = {
       cause,
+      ...(pane === undefined ? {} : { pane }),
       ...(error === undefined
         ? {}
         : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }),
@@ -1855,11 +1891,25 @@ export class PaneStreamLiveConnection {
     const opened = settled.flatMap((result) =>
       result.status === "fulfilled" ? [result.value] : [],
     );
+    // #585: one pane that still fails no longer takes the others down. The
+    // stream opens without it and the pane is tried again (`#deferPane`). A
+    // refusal (authority, or a delivery offer not accepted) still closes it.
+    const deferred = channels.flatMap((channel, index) => {
+      const result = settled[index]!;
+      return result.status === "rejected" ? [{ channel, error: result.reason as unknown }] : [];
+    });
+    const deferrable =
+      deferred.length > 0 &&
+      deferred.length < channels.length &&
+      this.#deferredPaneRetryDelaysMs.length > 0 &&
+      opened.every(({ delivery }) => delivery.negotiation.accepted) &&
+      deferred.every(({ error }) => !(error instanceof SessionRuntimeControllerLeaseError));
     if (
       this.#closed ||
-      settled.some(
-        (result) => result.status === "rejected" || !result.value.delivery.negotiation.accepted,
-      )
+      (!deferrable &&
+        settled.some(
+          (result) => result.status === "rejected" || !result.value.delivery.negotiation.accepted,
+        ))
     ) {
       await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => undefined)));
       if (!this.#closed) {
@@ -1933,7 +1983,60 @@ export class PaneStreamLiveConnection {
         Number(visibleAtDelivery.has(left.channel.semanticPaneId)),
     );
     await this.#publishOpenedDeliveries(opened);
+    if (deferrable)
+      for (const { channel, error } of deferred)
+        void this.#deferPane(binding, offer, channel, error);
     this.#closeIfAllPanesGone();
+  }
+
+  /**
+   * A pane left out of the opening (#585): try its delivery again after each
+   * deferred delay and announce it like a pane added in place. Only when
+   * every try failed does the stream close, naming the pane.
+   */
+  async #deferPane(
+    binding: SessionRuntimePaneStreamTransportBinding,
+    offer: NonNullable<PaneStreamLeaseDescriptor["terminalDelivery"]>,
+    channel: PaneChannel,
+    firstError: unknown,
+  ): Promise<void> {
+    const gone = () =>
+      this.#closed || channel.closed || this.#panes.get(channel.semanticPaneId) !== channel;
+    let error = firstError;
+    for (const [index, delayMs] of this.#deferredPaneRetryDelaysMs.entries()) {
+      logger.info("pane-stream", "pane delivery deferred", {
+        session: this.#descriptor.sessionName,
+        clientId: this.#clientId,
+        pane: channel.semanticPaneId,
+        attempt: index + 1,
+        error: errorText(error),
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs).unref?.());
+      if (gone()) return;
+      let entry: OpenedPaneDelivery;
+      try {
+        entry = await this.#openPaneDelivery(binding, offer, channel, false);
+      } catch (cause) {
+        if (cause instanceof SessionRuntimeControllerLeaseError) {
+          this.#fail("pane-delivery-open-failed", cause, channel.semanticPaneId);
+          return;
+        }
+        error = cause;
+        continue;
+      }
+      if (gone()) {
+        await entry.delivery.close().catch(() => undefined);
+        return;
+      }
+      if (!entry.delivery.negotiation.accepted || this.#deliveryIdentityChanged(entry)) {
+        await entry.delivery.close().catch(() => undefined);
+        this.#failTopologyChanged();
+        return;
+      }
+      await this.#publishOpenedDeliveries([entry]);
+      return;
+    }
+    if (!gone()) this.#fail("pane-delivery-open-failed", error, channel.semanticPaneId);
   }
 
   /** Open one pane's delivery; its messages wait until the pane is announced. */
@@ -1941,13 +2044,14 @@ export class PaneStreamLiveConnection {
     binding: SessionRuntimePaneStreamTransportBinding,
     offer: NonNullable<PaneStreamLeaseDescriptor["terminalDelivery"]>,
     channel: PaneChannel,
+    retry = true,
   ): Promise<OpenedPaneDelivery> {
     const pending: TerminalDeliveryServerMessage[] = [];
     let ready = false;
     let negotiated = false;
     // #585: a failed open is tried again (150 ms, 400 ms) before the stream
     // closes; this applies to a pane added in place too.
-    const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
+    const open = () => {
       // A try that failed may have delivered something; start clean.
       pending.length = 0;
       return binding.openTerminalDelivery(
@@ -1960,7 +2064,8 @@ export class PaneStreamLiveConnection {
         },
         this.#descriptor.workspaceName,
       );
-    });
+    };
+    const delivery = retry ? await this.#retryOpenStep("pane-delivery-open", open) : await open();
     return {
       channel,
       delivery,

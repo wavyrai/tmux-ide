@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { deflateSync, inflateSync } from "node:zlib";
 import { OwnedSnapshotChannel } from "../mirror/__tests__/owned-snapshot-channel.ts";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { _resetLogStateForTests, getLogBuffer } from "../../lib/log.ts";
 import {
   decodeTerminalGraphicsBinary,
@@ -476,6 +476,7 @@ function harness(
     openTerminalDelivery?: SessionRuntimePaneStreamTransportBinding["openTerminalDelivery"];
     withoutGrantAmendment?: boolean;
     openRetryDelaysMs?: readonly number[];
+    deferredPaneRetryDelaysMs?: readonly number[];
     graphics?: import("../session-runtime/terminal-delivery-hub.ts").TerminalDeliveryGraphics;
     observability?: SessionRuntimeObservability;
     diagnosticSharedNowMicros?: () => number;
@@ -545,6 +546,7 @@ function harness(
   const coordinator = new PaneStreamAdmissionCoordinator({
     // Existing tests fail a step once and expect the close; retries are opt-in here.
     openRetryDelaysMs: options.openRetryDelaysMs ?? [],
+    deferredPaneRetryDelaysMs: options.deferredPaneRetryDelaysMs ?? [],
     nativeSurfaces: options.nativeSurfaces,
     localImages: options.localImages,
     daemonInstanceId: INSTANCE,
@@ -5487,11 +5489,17 @@ describe("a step of the opening that fails", () => {
       deliveryNonce: "00000000-0000-4000-8000-000000000098",
     },
   };
-  function flaky(failures: number, error: () => Error = () => new Error("tmux timed out")) {
+  function flaky(
+    failures: number,
+    error: () => Error = () => new Error("tmux timed out"),
+    deferredPaneRetryDelaysMs: readonly number[] = [],
+  ) {
     const attempts = new Map<string, number>();
+    const closedDeliveries: string[] = [];
     const h = harness({
       panes: ["pane.one", "pane.two"],
       openRetryDelaysMs: [1, 1],
+      deferredPaneRetryDelaysMs,
       openTerminalDelivery: async (pane, _offer, onMessage) => {
         const attempt = (attempts.get(pane) ?? 0) + 1;
         attempts.set(pane, attempt);
@@ -5502,12 +5510,82 @@ describe("a step of the opening that fails", () => {
           ack: vi.fn(),
           nack: vi.fn(),
           setVisibility: vi.fn(),
-          close: async () => undefined,
+          close: async () => {
+            closedDeliveries.push(pane);
+          },
         };
       },
     });
-    return { h, attempts };
+    return { h, attempts, closedDeliveries };
   }
+
+  it("opens without a pane that still fails, and adds that pane when a later try works (#585)", async () => {
+    // One pane's failed delivery closed the whole session with 1011, so a busy
+    // host lost every pane for one slow one.
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    // Three opening tries fail; the second deferred try works.
+    const { h, attempts } = flaky(4, undefined, [1, 1, 1]);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() => expect(socket.framesOfType("terminal-delivery-ready")).toHaveLength(2));
+    expect(socket.closed).toBeNull();
+    expect(attempts.get("pane.two")).toBe(5);
+    const order = socket.frames
+      .map((frame) => frame as { type: string; pane?: string })
+      .filter(({ type }) => type === "terminal-delivery-ready" || type === "layout-snapshot")
+      .map(({ type, pane }) => (pane ? `${type}:${pane}` : type));
+    // The layout names both panes; the late pane is announced after the other.
+    expect(order).toEqual([
+      "layout-snapshot",
+      "terminal-delivery-ready:pane.one",
+      "terminal-delivery-ready:pane.two",
+    ]);
+    expect(logged.mock.calls.filter(([, message]) => message === "pane delivery deferred")).toEqual(
+      [
+        [
+          "pane-stream",
+          "pane delivery deferred",
+          expect.objectContaining({ pane: "pane.two", attempt: 1, error: "tmux timed out" }),
+        ],
+        [
+          "pane-stream",
+          "pane delivery deferred",
+          expect.objectContaining({ pane: "pane.two", attempt: 2, error: "tmux timed out" }),
+        ],
+      ],
+    );
+    socket.close();
+  });
+
+  it("closes with the pane and its cause when every deferred try has failed too", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    const { h, attempts, closedDeliveries } = flaky(99, undefined, [1, 1]);
+    const { socket } = await connect(h, {
+      panes: ["pane.one", "pane.two"],
+      semanticDelivery: true,
+      allowStartupClose: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
+    );
+    // Three opening tries, then one per deferred delay.
+    expect(attempts.get("pane.two")).toBe(5);
+    expect(closedDeliveries).toContain("pane.one");
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream closed",
+      expect.objectContaining({
+        cause: "pane-delivery-open-failed",
+        pane: "pane.two",
+        error: "tmux timed out",
+      }),
+    );
+  });
 
   it("is tried again, and the stream opens when the second try works", async () => {
     const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
@@ -5605,6 +5683,81 @@ describe("a step of the opening that fails", () => {
       expect(socket.closed).toEqual({ code: 1011, reason: "stream-unavailable" }),
     );
     expect(attempts.get("pane.two")).toBe(1);
+  });
+
+  it("logs why an issue was refused when the session could not be described (#585)", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    const h = harness({ panes: ["pane.one"] });
+    h.mirror.describeFailure = true;
+    await expect(
+      connect(h, { panes: ["pane.one"], allowStartupClose: true }),
+    ).rejects.toMatchObject({ code: "stream-unavailable" });
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream refused",
+      expect.objectContaining({
+        step: "issue",
+        cause: "describe-session-failed",
+        error: "describe failed",
+      }),
+    );
+  });
+
+  it("logs why a redemption was refused (#585)", async () => {
+    const logged = vi.spyOn(logger, "info").mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    const h = harness({ panes: ["pane.one"] });
+    const requestId = freshRequestId();
+    const descriptor = await h.coordinator.issue(
+      {
+        protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+        workspaceName: "workspace.alpha",
+        panes: ["pane.one"],
+        viewerMode: "read-only",
+        terminalDelivery: {
+          protocolVersions: [1],
+          encodings: ["semantic-v1"] as const,
+          richPlacements: false,
+        },
+      },
+      {
+        requestId,
+        projectIdentity: "workspace.alpha",
+        sessionName: SESSION,
+        rendererOrigin: ORIGIN,
+        hostClientId: `test-host:${requestId}`,
+      },
+    );
+    const decision = h.coordinator.reserveUpgrade({
+      path: PANE_STREAM_REDEEM_PATH,
+      protocols: [PANE_STREAM_WEBSOCKET_SUBPROTOCOL],
+      origin: ORIGIN,
+    });
+    if (!decision.accepted) throw new Error(`upgrade rejected: ${decision.code}`);
+    const socket = new FakeSocket();
+    decision.admission.bind(socket);
+    // Semantic delivery owns its ACKs, so legacy renderer ACKs are refused.
+    socket.message({
+      type: "redeem",
+      protocolVersion: PANE_STREAM_PROTOCOL_VERSION,
+      ticket: descriptor.redemptionTicket,
+      requestId,
+      daemonInstanceId: INSTANCE,
+      deliveryAcks: true,
+    });
+    await vi.waitFor(() =>
+      expect(socket.closed).toEqual({ code: 1008, reason: "redemption-rejected" }),
+    );
+    expect(logged).toHaveBeenCalledWith(
+      "pane-stream",
+      "stream refused",
+      expect.objectContaining({
+        step: "redeem",
+        code: "stream-unavailable",
+        error: expect.stringContaining("legacy renderer ACKs are invalid"),
+      }),
+    );
   });
 
   it("logs the cause when the ready frame cannot be sent", async () => {
