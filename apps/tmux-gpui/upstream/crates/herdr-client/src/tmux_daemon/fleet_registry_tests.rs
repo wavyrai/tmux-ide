@@ -162,3 +162,29 @@ fn changed_binding_revokes_disconnected_route_and_its_retry_authority() {
     assert!(fleet.busy());
     fleet.invalidate().unwrap();
 }
+
+/// Card #876: a saved machine's push reaches the agent rows only for the
+/// route as it is now: a replaced or disconnected route pushes nothing.
+#[test]
+fn agent_push_answers_only_for_the_current_route() {
+    let mut fleet = fleet();
+    let machine = profile();
+    fleet.reconcile(registry(&machine), "local").unwrap();
+    let current = incarnation(&fleet, &machine.id);
+    let lane = crate::tmux_daemon::CatalogWatchWorker::detached(1);
+    lane.push_detached(true);
+    fleet.pool.set_watch(&machine.id, lane);
+    assert_eq!(fleet.agent_push(&machine.id, current), (true, false));
+    assert_eq!(
+        fleet.agent_push(&machine.id, uuid::Uuid::new_v4()),
+        (false, false),
+        "a stale incarnation"
+    );
+    fleet.disconnect(&machine.id, current).unwrap();
+    assert_eq!(
+        fleet.agent_push(&machine.id, current),
+        (false, false),
+        "disconnected"
+    );
+    fleet.invalidate().unwrap();
+}

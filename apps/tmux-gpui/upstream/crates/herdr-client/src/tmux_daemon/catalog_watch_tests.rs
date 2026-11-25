@@ -461,3 +461,76 @@ fn a_silent_daemon_without_the_header_keeps_the_events_lane() {
         assert!(ended.is_none(), "{header:?}: {:?}", ended.map(|e| e.0));
     }
 }
+
+/// A lane on a daemon without the heartbeat header, probed once it is live:
+/// the daemon then answers pings (`answer`) or neither sends nor reads.
+/// Returns how the lane ended within `watch`, and whether `probe_all` could
+/// reach it.
+fn probed_after_ready(
+    answer: bool,
+    watch: Duration,
+) -> (Option<(Duration, CatalogWatchError)>, bool) {
+    let (_sandbox, listener, source, identity, expected) = fixture();
+    let server = thread::spawn(move || {
+        let mut socket = proofs(&listener, &identity);
+        response(&mut socket, &identity, false);
+        socket
+            .set_read_timeout(Some(Duration::from_secs(12)))
+            .unwrap();
+        let mut socket = upgrade(socket);
+        socket.send(daemon_hello(&identity, 0)).unwrap();
+        assert!(matches!(socket.read().unwrap(), Message::Text(_)));
+        socket.send(ack(0)).unwrap();
+        if answer {
+            // Reading answers each ping until the client leaves.
+            while socket.read().is_ok() {}
+        } else {
+            // A link that died without closing: what the client sends is
+            // swallowed, and nothing comes back, until the client leaves.
+            let mut raw = socket.get_ref().try_clone().unwrap();
+            drop(socket);
+            let mut sink = [0; 256];
+            while raw.read(&mut sink).is_ok_and(|n| n > 0) {}
+        }
+    });
+    let worker = CatalogWatchWorker::spawn(source, expected, || {}).unwrap();
+    let registered = worker.registered();
+    wait(|| worker.live());
+    worker.probe();
+    let started = Instant::now();
+    let mut ended = None;
+    while started.elapsed() < watch {
+        if let Some(Err(error)) = worker.poll().unwrap() {
+            ended = Some((started.elapsed(), error));
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    worker.shutdown().unwrap();
+    server.join().unwrap();
+    (ended, registered)
+}
+
+/// Card #876: on wake or a network change every catalog lane is probed, as
+/// every pane stream is (#863). A link that died without closing ends the
+/// lane within the probe limit, not after the 45 s of three unanswered pings.
+#[test]
+fn a_probe_finds_a_dead_link_in_seconds() {
+    let (ended, registered) = probed_after_ready(false, Duration::from_secs(9));
+    assert!(registered, "probe_all would not reach this lane");
+    assert!(ended.is_some(), "the probe found nothing");
+    let (after, error) = ended.unwrap();
+    assert!(matches!(error, CatalogWatchError::Timeout), "{error:?}");
+    assert!(
+        after >= PROBE_LIMIT - Duration::from_millis(100)
+            && after < PROBE_LIMIT + Duration::from_secs(2),
+        "ended after {after:?}"
+    );
+}
+
+/// A probe on a live link is answered and changes nothing: no reconnect.
+#[test]
+fn a_probe_on_a_live_link_keeps_the_lane() {
+    let (ended, _) = probed_after_ready(true, Duration::from_secs(8));
+    assert!(ended.is_none(), "{:?}", ended.map(|e| e.0));
+}

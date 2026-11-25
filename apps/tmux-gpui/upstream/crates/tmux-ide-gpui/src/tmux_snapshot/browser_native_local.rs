@@ -288,6 +288,9 @@ impl Local {
     /// Ends this link and forgets what it showed: navigation, a refresh, or a
     /// different daemon. A recoverable drop uses [`Self::drop_link`] instead.
     fn cancel(&mut self) -> Result<(), Error> {
+        // A quiet try under way ends too: what follows is not its answer
+        // (#853 review, A8: a machine selected meanwhile).
+        self.home.quiet = Default::default();
         self.forget_agents();
         self.drop_link()
     }
@@ -552,18 +555,7 @@ impl Local {
                     Err(_) if matches!(stage, Stage::Preferences { .. }) => {
                         self.preference_failed()?
                     }
-                    Err(error) if stage.registry() => {
-                        let selecting = matches!(
-                            stage,
-                            Stage::MachineSelection { .. } | Stage::AddMachine { .. }
-                        );
-                        self.registry_failed(error)?;
-                        if selecting {
-                            self.unavailable(
-                                "Saved machine verification failed — refresh and select it again",
-                            )?;
-                        }
-                    }
+                    Err(error) if stage.registry() => self.registry_stage_failed(&stage, error)?,
                     Err(_) if matches!(stage, Stage::Owner { .. }) => {
                         if let Stage::Owner { request, .. } = stage {
                             self.owner_completed(request, None)?;

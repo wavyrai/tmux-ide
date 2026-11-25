@@ -2,24 +2,33 @@
 //! for the daemon, quietly: the daemon was not running yet when the app
 //! started, launchd is bringing it back, or no tmux server was online. What
 //! the window shows does not change until a load succeeds; then Home appears
-//! as after Refresh. Only a local daemon is probed (one record read and a
-//! loopback request, every five seconds at most), in an active or inactive
-//! window. A stop that only the user can clear never arms it.
+//! as after Refresh. A local daemon is probed every five seconds at most (one
+//! record read and a loopback request); an SSH machine every thirty seconds
+//! at most, since a try may start an SSH connection. A saved machine's profile
+//! is read again from the local registry and must be unchanged before each
+//! try reads its catalog (#853), as a refresh does. In an active or inactive
+//! window. A stop that only the user can clear never arms it, and neither
+//! does a saved machine that answered as another environment: over SSH that
+//! stops at once ([`reconnect::SSH_IDENTITY`]), as recovery does.
 use super::*;
 
 const FIRST: Duration = Duration::from_secs(1);
-const CAP: Duration = Duration::from_secs(5);
+const CAP_LOCAL: Duration = Duration::from_secs(5);
+const CAP_REMOTE: Duration = Duration::from_secs(30);
 #[derive(Default)]
 pub(super) struct Quiet {
     due: Option<Instant>,
     tries: u32,
     probing: bool,
+    /// The source is an SSH machine: the longer cap.
+    remote: bool,
 }
 impl Quiet {
     fn delay(&self) -> Duration {
+        let cap = if self.remote { CAP_REMOTE } else { CAP_LOCAL };
         FIRST
             .saturating_mul(1u32.checked_shl(self.tries.min(16)).unwrap_or(u32::MAX))
-            .min(CAP)
+            .min(cap)
     }
     pub(super) fn probing(&self) -> bool {
         self.probing
@@ -37,14 +46,17 @@ impl Local {
     pub(super) fn unavailable_retrying(&mut self, status: &'static str) -> Result<(), Error> {
         let tries = self.home.quiet.tries;
         self.unavailable(status)?;
-        if self.selected_profile.is_none() && self.local_record.is_some() {
-            let mut quiet = Quiet {
-                tries,
-                ..Quiet::default()
-            };
-            quiet.due = Some(Instant::now() + quiet.delay());
-            self.home.quiet = quiet;
-        }
+        let remote = !matches!(
+            self.sources.observation_source(),
+            Ok(CatalogSource::Local(_))
+        );
+        let mut quiet = Quiet {
+            tries,
+            remote,
+            ..Quiet::default()
+        };
+        quiet.due = Some(Instant::now() + quiet.delay());
+        self.home.quiet = quiet;
         Ok(())
     }
     /// Starts the next quiet load when it is due. Publishes nothing.
@@ -68,8 +80,43 @@ impl Local {
         self.worker.reset();
         self.targets.clear();
         self.catalog_identity = None;
-        self.stage = Some(Stage::Servers);
+        self.stage = Some(if self.selected_profile.is_some() {
+            // The registry first; its answer starts the catalog read only
+            // for the same, still enabled profile (`registry_received`).
+            self.registry.begin();
+            Stage::VerifyProfile
+        } else {
+            Stage::Servers
+        });
         self.submitted = false;
+        Ok(())
+    }
+    /// A registry read or change failed. When it was a quiet try verifying
+    /// the saved machine, no catalog is read, and the window stays on that
+    /// machine until the next try, as after a failed catalog read. Otherwise
+    /// the saved route is retired, as before.
+    pub(super) fn registry_stage_failed(
+        &mut self,
+        stage: &Stage,
+        error: herdr_client::tmux_daemon::Error,
+    ) -> Result<(), Error> {
+        if self.home.quiet.probing() && matches!(stage, Stage::VerifyProfile) {
+            if let Some(worker) = &mut self.registry_worker {
+                worker.reset();
+            }
+            self.registry.finish(Err(error));
+            self.home.quiet.probing = false;
+            self.home.quiet.due = Some(Instant::now() + self.home.quiet.delay());
+            return Ok(());
+        }
+        let selecting = matches!(
+            stage,
+            Stage::MachineSelection { .. } | Stage::AddMachine { .. }
+        );
+        self.registry_failed(error)?;
+        if selecting {
+            self.unavailable("Saved machine verification failed — refresh and select it again")?;
+        }
         Ok(())
     }
     /// The quiet load failed: the window stays as it is until the next one,
@@ -81,6 +128,11 @@ impl Local {
         &mut self,
         error: &herdr_client::tmux_daemon::Error,
     ) -> Result<(), Error> {
+        if another_machine(error) {
+            // The machine began answering as another environment between two
+            // tries: stop, as the first load would have.
+            return self.unavailable(reconnect::SSH_IDENTITY);
+        }
         self.home.quiet.probing = false;
         self.home.quiet.due = Some(Instant::now() + self.home.quiet.delay());
         let words = self.stopped_words(true, error);
@@ -104,4 +156,11 @@ impl Local {
             };
         }
     }
+}
+/// A saved SSH machine answered as another environment than the one it was
+/// saved with (#853 review, item 1). Only that: an SSH machine that is away,
+/// slow or cut off is retried (#363 review, S10).
+pub(super) fn another_machine(error: &herdr_client::tmux_daemon::Error) -> bool {
+    matches!(error, herdr_client::tmux_daemon::Error::Remote(_))
+        && reconnect::Failure::of(error) == reconnect::Failure::Identity
 }

@@ -4,10 +4,13 @@
 //!
 //! - Every open pane stream is probed at once
 //!   (`herdr_client::tmux_stream::probe_all`): a dead link is found within
-//!   the stream's pong limit (5 s), and keys typed meanwhile are held.
+//!   the stream's pong limit (5 s), and keys typed meanwhile are held. Every
+//!   catalog lane (Home, the sidebar, saved machines) is probed the same way
+//!   (`herdr_client::tmux_daemon::probe_catalog_lanes`).
 //! - When the network is usable again (and on wake), the epoch moves on. A
 //!   catalog recovery that is waiting reads it on its next tick and tries now
-//!   (`browser_native_local_reconnect.rs`).
+//!   (`browser_native_local_reconnect.rs`, and Home's and a session's
+//!   catalog lane in `browser_native_local_home_recovery.rs`).
 //!
 //! Sources: `NSWorkspaceDidWakeNotification`, and Network.framework's path
 //! monitor through its C API. Both callbacks touch only atomics and the
@@ -33,13 +36,20 @@ pub(in crate::tmux_snapshot) fn epoch() -> u64 {
 /// a waiting recovery try now.
 pub(super) fn usable_again() {
     EPOCH.fetch_add(1, Ordering::AcqRel);
-    herdr_client::tmux_stream::probe_all();
+    probe();
 }
 
 /// The network changed, but is not usable: probe the streams, which then end
 /// within the pong limit if their link went with it.
 fn changed() {
+    probe();
+}
+
+/// One dead-link check for every link: the pane streams and the catalog
+/// lanes behind Home, the sidebar and saved machines (card #876).
+fn probe() {
     herdr_client::tmux_stream::probe_all();
+    herdr_client::tmux_daemon::probe_catalog_lanes();
 }
 
 /// Starts watching, once per process, on the main thread.
@@ -215,5 +225,18 @@ mod tests {
             before + 1,
             "the epoch did not move"
         );
+    }
+
+    /// Card #876: the same two entries probe every catalog lane (Home, the
+    /// sidebar, saved machines), with the pane streams.
+    #[test]
+    fn a_changed_or_usable_network_probes_the_catalog_lanes_too() {
+        let lane = herdr_client::tmux_daemon::CatalogWatchWorker::detached(1);
+        assert!(!lane.probing());
+        changed();
+        assert!(lane.probing(), "a changed network probed no catalog lane");
+        let lane = herdr_client::tmux_daemon::CatalogWatchWorker::detached(1);
+        usable_again();
+        assert!(lane.probing(), "a usable network probed no catalog lane");
     }
 }

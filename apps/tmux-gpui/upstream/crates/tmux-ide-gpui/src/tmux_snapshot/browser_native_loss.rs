@@ -164,6 +164,79 @@ fn drop_queued_input(pending: &mut VecDeque<Command>) -> bool {
     pending.retain(|command| !matches!(command, Command::Input { .. }));
     pending.len() != before
 }
+
+/// What the status line says once the window is back, when keys typed just
+/// before it left were not sent (#875). It stays until the next command.
+pub(super) const KEYS_NOT_SENT: &str =
+    "Keys typed as the window lost focus were not sent. Type them again.";
+/// Whether `command` is typing: text, a key, bytes or a paste. A fit, a
+/// pointer or a wheel step is not.
+fn typed(command: &Command) -> bool {
+    use crate::tmux_snapshot::keys::Input;
+    matches!(
+        command,
+        Command::Input {
+            input: Input::Text(_) | Input::Key(_) | Input::Bytes(_) | Input::Paste(_),
+            ..
+        }
+    )
+}
+/// The window left. Queued input is dropped: keys are never sent once the
+/// window has left, because input belongs to the window in front. So is a
+/// key the input scheduler admitted but has not sent (`focus_loss` cancels
+/// it next). When any of them was typing, the window says so once it is back
+/// (#875: a line typed 5 ms before the window left was lost with no notice).
+/// The loop keeps that in `hold` until then: the stream may be lost or
+/// re-leased while the window is away.
+pub(super) fn blur(pending: &mut VecDeque<Command>, active: Option<&mut Active>, hold: &mut Hold) {
+    let queued = pending.iter().any(typed);
+    pending.retain(|command| !matches!(command, Command::Input { .. }));
+    if let Some(current) = active
+        && (queued || current.input.waiting_keys())
+    {
+        hold.carry_keys_not_sent(&current.session);
+    }
+}
+/// Typing that reached the loop after the window left is refused there, and
+/// says so as [`blur`] does.
+pub(super) fn refused(command: &Command, active: Option<&Active>, hold: &mut Hold) {
+    if let Some(current) = active
+        && typed(command)
+    {
+        hold.carry_keys_not_sent(&current.session);
+    }
+}
+
+/// The stream is lost while it says that keys were not sent, perhaps before
+/// anyone read it: the next stream of its session says it again. Nothing is
+/// re-sent.
+fn carry(current: &Active, hold: &mut Hold) {
+    if current.action_status.is(KEYS_NOT_SENT) {
+        hold.carry_keys_not_sent(&current.session);
+    }
+}
+/// Polls the stream. Once the window is back and the stream takes input, it
+/// takes over a "keys not sent" for its session and shows it in the same
+/// publication, until the next command.
+pub(super) fn poll(
+    current: &mut Active,
+    hold: &mut Hold,
+    state: &mut State,
+    foreground: bool,
+    now: u64,
+) -> Result<bool, NativeError> {
+    let dirty = current.poll(state, foreground, now)?;
+    if foreground && current.controller.input_ready() && hold.take_keys_not_sent(&current.session) {
+        current.action_status.set(Some(KEYS_NOT_SENT));
+        current.action_status.publish(&mut state.status);
+        return Ok(true);
+    }
+    Ok(dirty)
+}
+
+#[cfg(test)]
+#[path = "browser_native_blur_tests.rs"]
+mod blur_tests;
 /// The stream under `current` failed with `error`. Keys in flight or queued
 /// die with it, so the held frame says they were not sent; so does a key that
 /// went unanswered until the scheduler gave it up (an input error). Returns
@@ -178,6 +251,7 @@ pub(super) fn stream_lost(
 ) -> Command {
     let queued = drop_queued_input(pending);
     let unanswered = matches!(error, NativeError::Input(_));
+    carry(current, hold);
     hold.begin(state, queued || unanswered || current.input.busy());
     interrupted(current, presence_revision, diagnostics::cause(error))
 }
@@ -194,6 +268,9 @@ pub(super) fn command_failed(
 ) -> Option<Command> {
     let queued = drop_queued_input(pending);
     let in_flight = active.is_some_and(|a| a.input.busy());
+    if let Some(current) = active {
+        carry(current, hold);
+    }
     hold.begin(state, failed_input || queued || in_flight);
     active.map(|a| interrupted(a, presence_revision, Cause::Lost))
 }

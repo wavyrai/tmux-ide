@@ -270,3 +270,65 @@ fn nothing_folds_into_a_waiting_step_that_is_not_a_wheel_step() {
         }
     ));
 }
+/// #875: the focus loss cancels the admission held back from the wire. Only
+/// typing (text, a key, bytes, a paste) counts as keys not sent.
+#[test]
+fn a_held_back_admission_is_typing_only_for_text_keys_bytes_and_paste() {
+    let wheel = || {
+        Work::Barrier(Control::Wheel(tmux_pointer::WheelEvent {
+            lines: -1,
+            row: 0,
+            col: 0,
+            modifiers: tmux_pointer::Modifiers {
+                shift: false,
+                alt: false,
+                control: false,
+            },
+        }))
+    };
+    let cases: Vec<(Work<Control>, bool)> = vec![
+        (Work::Input(Input::Text("a".into())), true),
+        (Work::Input(Input::Key("Enter".into())), true),
+        (Work::Input(Input::Bytes("1b".into())), true),
+        (Work::Barrier(Control::Paste("paste".into())), true),
+        (wheel(), false),
+        (Work::Barrier(Control::Scroll(-1)), false),
+        (
+            Work::Barrier(Control::Mouse(PointerEvent::Cancel { gesture: 1 })),
+            false,
+        ),
+    ];
+    for (work, typing) in cases {
+        let scope = scope();
+        let mut scheduler = Scheduler::new(scope.clone());
+        for sequence in 1..=8 {
+            let Admission::Ready(dispatch) = scheduler
+                .admit(&scope, Work::Input(Input::Text("a".into())))
+                .unwrap()
+            else {
+                panic!()
+            };
+            scheduler
+                .bind_input(dispatch.ticket, "pane", sequence)
+                .unwrap();
+        }
+        let label = format!("{work:?}");
+        assert!(matches!(
+            scheduler.admit(&scope, work).unwrap(),
+            Admission::Queued(_)
+        ));
+        let mut owner = InputOwner {
+            scheduler: Some(scheduler),
+            ..Default::default()
+        };
+        assert_eq!(owner.waiting_keys(), typing, "{label}");
+        owner.focus_loss();
+        assert!(!owner.waiting_keys(), "{label}: cancelled");
+    }
+    let mut idle = InputOwner {
+        scheduler: Some(Scheduler::new(scope())),
+        ..Default::default()
+    };
+    assert!(!idle.waiting_keys());
+    assert!(!InputOwner::default().waiting_keys());
+}

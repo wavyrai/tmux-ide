@@ -118,7 +118,10 @@ impl Local {
             eprintln!("tmux-ide: opening the session failed, trying again: {error}");
             return self.reconnect_opening(target, pane, failure);
         }
-        // Home keeps looking for a local daemon meanwhile.
+        if quiet::another_machine(error) {
+            return self.unavailable(reconnect::SSH_IDENTITY);
+        }
+        // Home keeps looking meanwhile.
         let words = self.stopped_words(matches!(stage, Stage::Servers), error);
         self.unavailable_retrying(words)?;
         if matches!(stage, Stage::Servers) {
@@ -131,17 +134,15 @@ impl Local {
     /// instead of "refresh", which cannot help (soak: a tmux server that
     /// could not finish kill-server answered nothing for an hour). Only for
     /// the catalog (`catalog`): the daemon answers 503 for other things too.
-    /// And only where Home does keep trying, which is a local daemon
-    /// (`unavailable_retrying`): a saved SSH machine is not reloaded by
-    /// itself, so there "refresh to retry" stays the true hint.
+    /// Home keeps trying wherever it stops this way (`unavailable_retrying`),
+    /// a saved SSH machine included since #853, so the sentence is true there.
     pub(super) fn stopped_words(
         &self,
         catalog: bool,
         error: &herdr_client::tmux_daemon::Error,
     ) -> &'static str {
         let unanswered = matches!(error, herdr_client::tmux_daemon::Error::RequestStatus(503));
-        let retried = self.selected_profile.is_none() && self.local_record.is_some();
-        if catalog && unanswered && retried {
+        if catalog && unanswered {
             TMUX_NOT_ANSWERING
         } else {
             REFRESH_TO_RETRY

@@ -497,3 +497,30 @@ fn a_reconnect_to_an_updated_daemon_takes_its_new_version() {
     drop((client, updated, old, new));
     source.shutdown().unwrap();
 }
+
+/// #853: the network went away and the shared route's forward exited, before
+/// the window's worker held an owner of it. Every later discovery forked the
+/// dead route and failed at once with "SSH tunnel exited", also after the
+/// network was back and after a refresh. Discovery drops it now; a route whose
+/// forward still runs is kept.
+#[test]
+fn a_shared_route_whose_forward_exited_is_dropped_by_the_next_discovery() {
+    let dead = fixture();
+    dead.retire();
+    assert!(dead.fork().is_err(), "a retired forward still forks");
+    let mut cached = Some(dead);
+    drop_exited(&mut cached).unwrap();
+    assert!(
+        cached.is_none(),
+        "the dead route is kept for the next discovery"
+    );
+    let live = fixture();
+    let generation = live.generation();
+    let mut cached = Some(live);
+    drop_exited(&mut cached).unwrap();
+    assert_eq!(
+        cached.as_ref().map(RemoteTransport::generation),
+        Some(generation)
+    );
+    cached.take().unwrap().shutdown_fixture().unwrap();
+}
