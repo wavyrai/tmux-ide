@@ -535,3 +535,6 @@ fn the_transports_admission_ends_the_outcome() {
     active.controller.retire();
     peer.join().unwrap();
 }
+
+#[path = "browser_native_worker_exit_tests.rs"]
+mod worker_exit;
