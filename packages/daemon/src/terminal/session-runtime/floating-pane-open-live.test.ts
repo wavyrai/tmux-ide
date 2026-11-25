@@ -168,6 +168,16 @@ it.for(cases)(
           .sort();
         expect(placed).toEqual(tiled);
         expect(tiled.map((line) => line.split(" ")[0])).toEqual(["pane.f0", "pane.f1"]);
+
+        // Closing the float from a shell removes it from the listing.
+        run("kill-pane", "-t", panes[2]![0]!);
+        await expect
+          .poll(async () =>
+            (await runtime!.describeSessionAuthority("f")).description.panes
+              .map((pane) => pane.semanticPaneId)
+              .sort(),
+          )
+          .toEqual(["pane.f0", "pane.f1"]);
       } finally {
         await subscription.close();
       }

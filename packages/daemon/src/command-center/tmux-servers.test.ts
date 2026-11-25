@@ -25,6 +25,7 @@ async function fixture() {
     issue: ReturnType<typeof vi.fn>;
     openSession: ReturnType<typeof vi.fn>;
     registryGet: ReturnType<typeof vi.fn>;
+    subscribeLayout: ReturnType<typeof vi.fn>;
   }[] = [];
   const manager = new TmuxServerOwners<NativeTmuxServerOwner>({
     probe: async (selector) => ({
@@ -82,7 +83,21 @@ async function fixture() {
         workspaceName: "same",
         liveSessionId,
       }));
+      const describeSessionAuthority = vi.fn(async () => ({
+        runtimeSessionId: "$1",
+        description: {
+          session: "same",
+          panes: [
+            { semanticPaneId: "pane.same" },
+            { semanticPaneId: "pane.float", floating: true },
+          ],
+          diagnostics: [],
+          degraded: false,
+        },
+      }));
+      const subscribeLayout = vi.fn(async () => ({ session: "same", close: async () => {} }));
       ownersCreated.push({
+        subscribeLayout,
         nativeBrowser,
         surfaceContext,
         splitRead,
@@ -112,6 +127,7 @@ async function fixture() {
           get: registryGet,
         },
         paneStreamRuntime: { coordinator: { issue } },
+        sessionRuntimeRegistry: { describeSessionAuthority, subscribeLayout },
       } as unknown as NativeTmuxServerOwner;
     },
   });
@@ -486,6 +502,24 @@ it("serves inventory version 2 with windows only when asked (#806)", async () =>
   } finally {
     await f.manager.dispose();
   }
+});
+
+it("fences session events on the tiled panes, leaving a floating pane out (#882)", async () => {
+  const f = await fixture();
+  const controller = new AbortController();
+  const response = await f.app.request(
+    `${base}${f.scope(f.a)}/session-events/same?liveSessionId=live-session.${"a".repeat(20)}`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal },
+  );
+  expect(response.status).toBe(200);
+  const subscribeLayout = f.ownersCreated[0]!.subscribeLayout;
+  await vi.waitFor(() => expect(subscribeLayout).toHaveBeenCalledOnce());
+  expect(subscribeLayout.mock.calls[0]![2]).toMatchObject({
+    expectedRuntimeSessionId: "$1",
+    expectedSemanticPaneIds: ["pane.same"],
+  });
+  controller.abort();
+  await response.body?.cancel().catch(() => undefined);
 });
 
 describe("split layout reads", () => {
