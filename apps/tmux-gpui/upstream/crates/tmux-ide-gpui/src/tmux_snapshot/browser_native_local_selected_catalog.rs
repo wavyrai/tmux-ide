@@ -346,6 +346,7 @@ impl Owner {
 }
 /// Tests outside this module drive the selected lane through these.
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 impl Owner {
     /// Seeds `snapshot` and gives it `lane`, as a completed read would.
     pub(in crate::tmux_snapshot) fn install_test_lane(
