@@ -1,0 +1,106 @@
+---
+title: tmux-ide 2.9.28
+metaTitle: "What's new in 2.9.28"
+description: "Sessions recover by themselves after a drop, typed keys are never lost without a word, long scrollbacks and floating panes open, and held panes say why."
+---
+
+`2.9.28` is a CLI/daemon release about connections that come back by
+themselves. Panes with a long scrollback open on stock tmux 3.8 and on the
+bundled tmux, sessions with floating panes open, a pane the daemon holds back
+says why, and one bad pane no longer closes a whole session. It adds no
+commands. Native Mac alpha 0.1.22 comes with it: keys typed during a drop are
+held or announced, and the window recovers from dropped links, sleep, slow SSH
+and remote daemon restarts without a refresh.
+
+## Connections recover by themselves
+
+In the Mac app 0.1.22:
+
+- A link that gives no answer for 5 s is replaced, without waiting for the
+  network to give up. When the Mac wakes or the network changes, every open
+  link is checked at once.
+- From 2 s into a drop, the pane shows "Reconnecting…" with a "Retry now"
+  button.
+- Over SSH, a slow link no longer ends in "Couldn't reconnect. Refresh
+  sessions to try again." A window opened for one SSH destination reopens its
+  session after the remote daemon restarts.
+- A saved SSH machine's Home loads again by itself after a failed load, as the
+  local one does. A machine that answers as a different machine stops with "A
+  different machine answered at this address. Check the machine, then refresh
+  sessions."
+- Switching to another app and back no longer reconnects Home or the sidebar,
+  and the agent list stays where it was.
+- A focus change that meets a dead link no longer stops the window's
+  terminals. If the terminal part of the window stops anyway, it restarts on
+  its own and reopens your session, showing "Connection lost. Reconnecting…"
+  meanwhile.
+
+Before the release, a soak ran on main for 4 legs of 5 hours, local and over
+SSH, with 2,761 injected faults. No session stayed stuck, none needed a refresh,
+the terminal part of the window never stopped, and the app did not crash.
+
+## Typed keys are never lost without a word
+
+Keys typed while a session reconnects are held, up to 512 keys for 5 s, and
+then sent once, in order, to the same pane. If that is not certain, none of
+them are sent, and the pane says "N keys not sent. Type them again when the
+connection is back."
+
+Keys that could not be sent for another reason are announced once you are
+back on that session, until you type again:
+
+- Typed just as the window lost focus: "Keys typed as the window lost focus
+  were not sent. Type them again."
+- Typed as the session's connection was replaced, for example when another
+  client added a pane: "Keys typed as the terminal reconnected were not sent.
+  Type them again."
+
+The rest of a paste cut short counts the same way. Keys are never sent late or
+twice.
+
+## Long scrollbacks open
+
+- On stock tmux 3.8, a pane with a long history opens. Before, a pane with a
+  full default history of 2,000 lines could fail to open, and every retry
+  failed the same way.
+- With the bundled tmux, a pane larger than 1,000,000 cells opens. Its screen
+  and newest history arrive first, and older lines follow in pieces.
+- The daemon keeps up to 10,000 lines of scrollback per pane. tmux keeps the
+  rest of its history as before.
+
+## A held pane says why
+
+A pane that failed to open twice in a row is held back for a while instead of
+being tried every 2 s. The Mac app now says so, with a countdown:
+
+- "Can't open this session: a pane's scrollback is too long to send. Clear it
+  with tmux clear-history, or wait. Trying again in 12 s."
+- "Can't open this session: tmux could not send a pane twice in a row. Trying
+  again in 12 s."
+
+The footer and the window title say "Can't open this session" instead of
+counting attempts. "Retry now" tries at once and reads "Trying…" while it
+runs. Clearing the pane's history ends the hold.
+
+## Floating panes and large sessions
+
+- A session that holds a floating pane (tmux 3.7 and later) or a modal pane
+  (tmux 3.8) opens. Before, it failed with "Session has no attachable terminal
+  panes". The floating pane itself is not shown yet.
+- One pane that fails to open no longer closes the session. The rest opens,
+  and that pane is tried again after 1, 2 and 4 s.
+- `tmux-ide app` no longer stays on "connecting" for a session with more than
+  24 panes. It says, with your session's numbers: "Session too large to stream
+  here: 26 panes, the limit is 24. Move some windows to another session, or
+  open it in the Mac app."
+
+## Updating
+
+Update with `tmux-ide update` or rerun the installer. A running older daemon
+restarts on 2.9.28 by itself; your tmux sessions keep running. Update remote
+machines too: long scrollbacks, floating panes and the held-pane reasons are in
+the daemon on the machine that runs tmux. "Retry now" inside a hold needs a
+2.9.28 daemon.
+
+Full list of changes:
+[CHANGELOG.md](https://github.com/wavyrai/tmux-ide/blob/main/CHANGELOG.md).
