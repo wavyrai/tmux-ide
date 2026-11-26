@@ -8019,7 +8019,10 @@ var init_terminal_graphics = __esm({
 
 // packages/contracts/src/pane-stream.ts
 import { z as z52 } from "zod";
-var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
+function paneHeldCloseReason(hold) {
+  return `pane-held:${Math.max(1, Math.ceil(hold.retryInMs))}:${hold.why}`;
+}
+var PANE_STREAM_CLOCK_BOUNDS_CAPABILITY_V1, PaneStreamDiagnosticCapabilitySchemaZ, PANE_STREAM_PROTOCOL_VERSION, PANE_STREAM_ISSUE_PATH, PANE_STREAM_REDEEM_PATH, PANE_STREAM_WEBSOCKET_SUBPROTOCOL, PANE_STREAM_MAX_PANES, PANE_STREAM_MAX_OUTPUT_BYTES, PANE_STREAM_MAX_OUTPUT_BASE64_CHARS, PANE_STREAM_MAX_SEED_BYTES, PANE_STREAM_MAX_SEED_BASE64_CHARS, PANE_STREAM_MAX_HELD_DELTAS, PANE_STREAM_MAX_LAYOUT_PANES, PANE_STREAM_MAX_GRID_CELLS, PANE_STREAM_MAX_INPUT_SEQUENCE, PaneStreamSemanticPaneIdSchemaZ, PaneStreamViewerModeSchemaZ, PaneSetSchemaZ, PaneStreamLeaseRequestSchemaZ, PANE_STREAM_PANE_HELD_CLOSE_CODE, PaneStreamRedemptionTicketSchemaZ, PaneStreamLoopbackWebSocketUrlSchemaZ, PaneStreamIssueDescriptorSchemaZ, PaneStreamIssueErrorSchemaZ, PaneStreamIssueResultSchemaZ, PaneStreamIssueMutationRequestSchemaZ, BoundedIdentitySchemaZ, PaneStreamRedeemFrameSchemaZ, PANE_STREAM_INPUT_LIFETIME_CAPABILITY_VERSION, PANE_STREAM_INPUT_BYTES_CAPABILITY_VERSION, PANE_STREAM_BROWSER_ICON_CAPABILITY_VERSION, PANE_STREAM_READER_CAPABILITY_VERSION, PANE_STREAM_BROWSER_KIND_CAPABILITY_VERSION, PANE_STREAM_TOPOLOGY_IN_PLACE_CAPABILITY_VERSION, PANE_STREAM_READER_TOPOLOGY_BUNDLE_CAPABILITY_VERSION, PaneStreamInputLifetimeSchemaZ, PaneStreamInputFrameMetadataShape, PaneStreamInputFrameSchemaZ, PaneStreamConsumedFrameSchemaZ, PaneStreamTerminalDeliveryAckFrameSchemaZ, PaneStreamTerminalProjectionReceiptFrameSchemaZ, PaneStreamTerminalProjectionMaterializeFrameSchemaZ, PaneStreamTerminalDeliveryHistoryRequestFrameSchemaZ, PaneStreamTerminalDeliveryNackFrameSchemaZ, PaneStreamTerminalDeliveryVisibilityFrameSchemaZ, PaneStreamSemanticIntentFrameSchemaZ, PaneStreamViewportFrameSchemaZ, PaneStreamAuthorityRequestIdSchemaZ, PaneStreamAuthorityGenerationSchemaZ, PaneStreamPresenceFrameSchemaZ, PaneStreamActivityFrameSchemaZ, PaneStreamAuthorityRequestFrameSchemaZ, PaneStreamAuthorityReleaseFrameSchemaZ, SharedMonotonicMicrosSchemaZ, PaneStreamClockProbeFrameSchemaZ, PaneStreamTerminalGraphicsRequestFrameSchemaZ, PaneStreamTerminalGraphicsLocalReleaseFrameSchemaZ, PaneStreamTerminalCellPixelsFrameSchemaZ, PaneStreamClientFrameSchemaZ, Base64SchemaZ, ServerSeqSchemaZ, GridCellSchemaZ, CellCoordinateSchemaZ, PaneStreamReadyFrameSchemaZ, PaneStreamSeedBatchFrameSchemaZ, PaneStreamOutputFrameSchemaZ, PaneStreamCursorFrameSchemaZ, BoundedDisplayNameSchemaZ, PaneDisplayNameSourceSchemaZ, PaneStreamLayoutFrameSchemaZ, PaneStreamLayoutSnapshotV1FrameSchemaZ, PaneStreamLayoutSnapshotV2FrameSchemaZ, PaneStreamLayoutSnapshotFrameSchemaZ, PaneStreamFlowFrameSchemaZ, PaneStreamTopologyFrameSchemaZ, PaneStreamClosedFrameSchemaZ, PaneStreamInputAckFrameSchemaZ, PaneStreamClockProbeAckFrameSchemaZ, PaneStreamCausalCellProofFrameSchemaZ, PaneStreamCausalCellFailureFrameSchemaZ, PaneStreamTerminalDeliveryReadyFrameSchemaZ, PaneStreamTerminalDeliveryEnvelopeFrameSchemaZ, PaneStreamTerminalProjectionEnvelopeFrameSchemaZ, PaneStreamTerminalDeliveryChunkFrameSchemaZ, PaneStreamTerminalDeliveryFaultFrameSchemaZ, PaneStreamTerminalGraphicsFrameSchemaZ, PaneStreamTerminalGraphicsBlobFrameSchemaZ, PaneStreamTerminalGraphicsLocalFrameSchemaZ, PaneStreamSemanticIntentAckFrameSchemaZ, PaneStreamViewportAckFrameSchemaZ, PaneStreamAuthoritySnapshotFrameSchemaZ, PaneStreamAuthorityReceiptFrameSchemaZ, PaneStreamErrorFrameCodeSchemaZ, PaneStreamErrorFrameSchemaZ, PaneStreamServerFrameSchemaZ;
 var init_pane_stream = __esm({
   "packages/contracts/src/pane-stream.ts"() {
     "use strict";
@@ -8073,8 +8076,15 @@ var init_pane_stream = __esm({
        * follows that window's pane set in place; other windows never enter.
        * Released daemons refuse the field: send it only to a daemon that has it.
        */
-      semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional()
+      semanticWindowId: TerminalAttachmentSemanticWindowIdSchemaZ.optional(),
+      /**
+       * #872: a person asked to retry now. The daemon asks tmux for the
+       * stream's panes even inside a hold after failed recoveries. Released
+       * daemons refuse the field: send it only to 2.9.28 or newer.
+       */
+      retryAskedByPerson: z52.literal(true).optional()
     }).strict())();
+    PANE_STREAM_PANE_HELD_CLOSE_CODE = /* @__PURE__ */ (() => 1013)();
     PaneStreamRedemptionTicketSchemaZ = /* @__PURE__ */ (() => z52.string().regex(/^ps2_[A-Za-z0-9_-]{43}$/u))();
     PaneStreamLoopbackWebSocketUrlSchemaZ = /* @__PURE__ */ (() => z52.url().max(2048).refine((value) => {
       const url = new URL(value);
@@ -15516,7 +15526,7 @@ var require_package = __commonJS({
   "package.json"(exports, module) {
     module.exports = {
       name: "tmux-ide",
-      version: "2.9.27",
+      version: "2.9.28",
       description: "The open-source workspace for coding agents: run Claude Code, Codex and other agents in tmux with live status",
       type: "module",
       bin: {
@@ -28496,7 +28506,7 @@ function parseSessionPaneDescriptorReply(lines) {
       continue;
     }
     const encoded = utf8Line.split("	");
-    if (encoded.length < 21 || encoded.length > 26) continue;
+    if (encoded.length < 21 || encoded.length > 27) continue;
     const [
       runtimePaneId = "",
       semanticPaneId3 = "",
@@ -28523,7 +28533,8 @@ function parseSessionPaneDescriptorReply(lines) {
       browserIconRaw = "",
       readerRaw = "",
       panePidRaw = "",
-      browserControl = ""
+      browserControl = "",
+      floatingRaw = ""
     ] = encoded.map(decodeTmuxArgument);
     if (!/^%(?:0|[1-9][0-9]*)$/u.test(runtimePaneId) || runtimePaneId.length > 32) continue;
     if (!/^\$(?:0|[1-9][0-9]*)$/u.test(runtimeSessionId) || runtimeSessionId.length > 32) continue;
@@ -28567,7 +28578,8 @@ function parseSessionPaneDescriptorReply(lines) {
       paneActive: paneActiveRaw === "1",
       windowActive: windowActiveRaw === "1",
       windowPaneCount,
-      sessionWindowCount
+      sessionWindowCount,
+      floating: floatingRaw === "1"
     });
   }
   return { descriptors, malformedUtf8Records };
@@ -28630,7 +28642,9 @@ var init_session_descriptor_discovery = __esm({
       // The reader option belongs to the pane only when its own process set it.
       "#{pane_pid}",
       // Set only by a terminal browser that has tmux-ide's native controls (#718).
-      "#{qa:@tmux_ide_browser_control}"
+      "#{qa:@tmux_ide_browser_control}",
+      // #882: tmux 3.7+ floating panes have no cell in the tiled layout.
+      "#{pane_floating_flag}"
     ].join("	");
     VOLATILE_DESCRIPTOR_FIELDS = /* @__PURE__ */ new Set([
       4,
@@ -29631,23 +29645,71 @@ var init_native_surface_provider = __esm({
 });
 
 // packages/daemon/src/terminal/protocol/layout-parse.ts
+function splitFloating(s) {
+  if (!s.endsWith(">")) return { tiled: s, floating: [] };
+  const open5 = s.lastIndexOf("<");
+  if (open5 <= 0) return null;
+  const section = s.slice(open5 + 1, -1);
+  const floating = [];
+  let pos = 0;
+  while (pos < section.length) {
+    const dims = readDims(section, pos);
+    if (!dims || section[dims.pos] !== ",") return null;
+    const id2 = readInt(section, dims.pos + 1);
+    if (!id2) return null;
+    floating.push({
+      id: `%${id2.value}`,
+      left: dims.left,
+      top: dims.top,
+      width: dims.width,
+      height: dims.height
+    });
+    pos = id2.pos;
+    if (pos === section.length) break;
+    if (section[pos] !== ",") return null;
+    pos += 1;
+    if (pos === section.length) return null;
+  }
+  if (floating.length === 0) return null;
+  if (new Set(floating.map((leaf) => leaf.id)).size !== floating.length) return null;
+  return { tiled: s.slice(0, open5), floating };
+}
 function parseLayoutTree(layout) {
   if (layout.length > 64 * 1024 || !/^[0-9a-fA-F]{4},/.test(layout)) return null;
-  const s = layout.slice(5);
-  const root = parseCell(s, 0, [], { nodes: 0, ids: /* @__PURE__ */ new Set() });
-  if (!root?.node || root.pos !== s.length || root.node.left !== 0 || root.node.top !== 0)
+  const split = splitFloating(layout.slice(5));
+  if (!split) return null;
+  const s = split.tiled;
+  const skip = floatingIds(split.floating);
+  const root = parseCell(s, 0, [], { nodes: 0, ids: /* @__PURE__ */ new Set() }, 1, skip);
+  if (!root?.node || root.pos !== s.length || root.node.left !== 0 || root.node.top !== 0 || !skip.allSeenOnce())
     return null;
   return root.node;
 }
+function floatingIds(floating) {
+  const seen = new Map(floating.map((leaf) => [leaf.id, 0]));
+  return {
+    has: (id2) => seen.has(id2),
+    see: (id2) => seen.set(id2, (seen.get(id2) ?? 0) + 1),
+    allSeenOnce: () => [...seen.values()].every((count) => count === 1)
+  };
+}
 function parseLayout(layout) {
   if (!/^[0-9a-fA-F]{4},/.test(layout)) return null;
-  const s = layout.slice(5);
+  const split = splitFloating(layout.slice(5));
+  if (!split) return null;
+  const s = split.tiled;
+  const skip = floatingIds(split.floating);
   const leaves = [];
-  const root = parseCell(s, 0, leaves);
-  if (!root || root.pos !== s.length) return null;
-  return { width: root.width, height: root.height, leaves };
+  const root = parseCell(s, 0, leaves, void 0, 1, skip);
+  if (!root || root.pos !== s.length || !skip.allSeenOnce() || leaves.length === 0) return null;
+  return {
+    width: root.width,
+    height: root.height,
+    leaves,
+    ...split.floating.length > 0 ? { floating: split.floating } : {}
+  };
 }
-function parseCell(s, pos, leaves, tree, depth = 1) {
+function parseCell(s, pos, leaves, tree, depth = 1, skip) {
   if (tree && (depth > 64 || ++tree.nodes > MAX_TREE_LEAVES * 2 - 1)) return null;
   const dims = readDims(s, pos);
   if (!dims) return null;
@@ -29660,6 +29722,10 @@ function parseCell(s, pos, leaves, tree, depth = 1) {
     const id2 = readInt(s, pos + 1);
     if (!id2) return null;
     const leaf = { id: `%${id2.value}`, left, top, width, height };
+    if (skip?.has(leaf.id)) {
+      skip.see(leaf.id);
+      return { width, height, pos: id2.pos, floating: true };
+    }
     if (tree) {
       if (!Number.isSafeInteger(id2.value) || tree.ids.has(leaf.id) || tree.ids.size >= MAX_TREE_LEAVES)
         return null;
@@ -29676,11 +29742,13 @@ function parseCell(s, pos, leaves, tree, depth = 1) {
   if (ch === "{" || ch === "[") {
     const close2 = ch === "{" ? "}" : "]";
     const children = [];
+    let droppedFloating = 0;
     pos++;
     for (; ; ) {
-      const child = parseCell(s, pos, leaves, tree, depth + 1);
+      const child = parseCell(s, pos, leaves, tree, depth + 1, skip);
       if (!child) return null;
-      if (tree && child.node) children.push(child.node);
+      if (child.floating) droppedFloating += 1;
+      else if (tree && child.node) children.push(child.node);
       pos = child.pos;
       if (s[pos] === ",") {
         pos++;
@@ -29688,6 +29756,9 @@ function parseCell(s, pos, leaves, tree, depth = 1) {
       }
       if (s[pos] === close2) {
         if (!tree) return { width, height, pos: pos + 1 };
+        const lone = children.length === 1 ? children[0] : null;
+        if (droppedFloating > 0 && lone && lone.left === left && lone.top === top && lone.width === width && lone.height === height)
+          return { width, height, pos: pos + 1, node: lone };
         const axis = ch === "{" ? "cols" : "rows";
         const node = { kind: "split", axis, left, top, width, height, children };
         if (!tilesParent(node)) return null;
@@ -33234,6 +33305,29 @@ var init_layout_content_rows = __esm({
 function isStockRawGridCapture(lines) {
   return /^G [1-9][0-9]*x[1-9][0-9]* \([0-9]+\/[0-9]+\)$/.test(lines[0] ?? "") && /^\tL 0 \((?:-|0)\) flags=/.test(lines[1] ?? "");
 }
+function readNativeBootstrapProbe(ok2, lines) {
+  if (!ok2)
+    return lines.some(
+      (line) => /^(?:parse error: )?(?:command capture-pane: )?unknown flag -V$/.test(line.trim())
+    ) ? "unsupported" : "unknown";
+  if (isStockRawGridCapture(lines)) return "unsupported";
+  let header;
+  try {
+    header = JSON.parse(lines[0] ?? "");
+  } catch {
+    return "unknown";
+  }
+  if (header === null || typeof header !== "object" || !("cols" in header)) return "unknown";
+  return "version" in header && header.version === 2 && "currentAttributes" in header ? "native" : "unsupported";
+}
+function nativeSeedHistoryRows(cols, rows) {
+  if (!Number.isSafeInteger(cols) || cols < 1 || !Number.isSafeInteger(rows) || rows < 1) return 0;
+  return Math.max(0, Math.floor(NATIVE_SEED_CELL_BUDGET / cols) - rows);
+}
+function nativeHistoryPieceRows(cols) {
+  if (!Number.isSafeInteger(cols) || cols < 1) return 1;
+  return Math.max(1, Math.floor(NATIVE_HISTORY_PIECE_CELL_BUDGET / cols));
+}
 function isNativeBootstrapCapture(snapshot3) {
   return uint(snapshot3.cols, 16384) && snapshot3.cols > 0 && uint(snapshot3.rows, MAX_ROWS) && snapshot3.rows > 0 && uint(snapshot3.history, MAX_ROWS) && snapshot3.version === 2 && snapshot3.currentAttributes !== void 0 && snapshot3.cols * (snapshot3.history + snapshot3.rows) <= MAX_CELLS;
 }
@@ -33275,7 +33369,7 @@ function encodeNativeGridCapture(source) {
   }
   return records.join("");
 }
-function decodeNativeGridCapture(text2) {
+function decodeNativeGridCapture(text2, options = {}) {
   if (text2.length > MAX_BYTES || Buffer.byteLength(text2, "utf8") > MAX_BYTES) return null;
   let offset = 0;
   const next = () => {
@@ -33288,7 +33382,7 @@ function decodeNativeGridCapture(text2) {
   };
   try {
     const header = next();
-    if (!object2(header) || header.version !== 1 && header.version !== 2 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, MAX_ROWS) || header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || // screen_resize_cursor preserves x after a non-reflow (alternate)
+    if (!object2(header) || header.version !== 1 && header.version !== 2 || !uint(header.cols, MAX_CELLS) || header.cols === 0 || !uint(header.rows, MAX_ROWS) || header.rows === 0 || !uint(header.history, options.tail ? 4294967295 : MAX_ROWS) || !options.tail && header.history + header.rows > MAX_ROWS || !uint(header.hscrolled, header.history) || !uint(header.limit) || !Array.isArray(header.cursor) || header.cursor.length !== 2 || // screen_resize_cursor preserves x after a non-reflow (alternate)
     // shrink. Bound the source coordinate independently of current columns.
     !uint(header.cursor[0], MAX_CELLS) || !uint(header.cursor[1], header.rows - 1))
       return null;
@@ -33297,7 +33391,12 @@ function decodeNativeGridCapture(text2) {
       return null;
     const grid = [];
     let count = 0;
-    for (let index = 0; index < header.history + header.rows; index++) {
+    const savedOffset = offset;
+    const first = options.tail ? next() : null;
+    offset = savedOffset;
+    const omitted = options.tail && object2(first) && uint(first.row, header.history) ? first.row : 0;
+    if (header.history - omitted + header.rows > MAX_ROWS) return null;
+    for (let index = omitted; index < header.history + header.rows; index++) {
       const row = next();
       if (!object2(row) || row.row !== index || !uint(row.flags) || !uint(row.used, MAX_CELLS - count) || !Array.isArray(row.cells) || row.cells.length > MAX_CELLS - count || (header.version === 1 ? row.cells.length !== row.used : row.cells.length < row.used))
         return null;
@@ -33337,7 +33436,8 @@ function decodeNativeGridCapture(text2) {
       } : {},
       cols: header.cols,
       rows: header.rows,
-      history: header.history,
+      history: header.history - omitted,
+      ...omitted > 0 ? { omittedHistory: omitted } : {},
       hscrolled: header.hscrolled,
       limit: header.limit,
       cursor: Object.freeze([header.cursor[0], header.cursor[1]]),
@@ -33347,13 +33447,59 @@ function decodeNativeGridCapture(text2) {
     return null;
   }
 }
-var MAX_BYTES, MAX_ROWS, MAX_CELLS, utf8, uint, signed, object2;
+function decodeNativeHistoryPiece(text2) {
+  const newline = text2.indexOf("\n");
+  if (newline < 0) return null;
+  let header;
+  let first;
+  try {
+    header = JSON.parse(text2.slice(0, newline));
+    const second = text2.indexOf("\n", newline + 1);
+    first = JSON.parse(text2.slice(newline + 1, second < 0 ? text2.length : second));
+  } catch {
+    return null;
+  }
+  if (!object2(header) || !object2(first) || !uint(first.row) || !uint(header.history)) return null;
+  const firstRow = first.row;
+  const lines = text2.endsWith("\n") ? text2.slice(0, -1).split("\n") : text2.split("\n");
+  const count = lines.length - 1;
+  if (firstRow + count > header.history) return null;
+  const renumbered = [];
+  for (let index = 0; index < count; index++) {
+    const line = lines[index + 1];
+    const prefix = `{"row":${firstRow + index},`;
+    if (!line.startsWith(prefix)) return null;
+    renumbered.push(`{"row":${index},` + line.slice(prefix.length));
+  }
+  const synthetic = {
+    ...header,
+    history: count - 1,
+    rows: 1,
+    hscrolled: 0,
+    cursor: [0, 0]
+  };
+  const capture = decodeNativeGridCapture(
+    JSON.stringify(synthetic) + "\n" + renumbered.join("\n") + "\n"
+  );
+  if (!capture || capture.version !== 2) return null;
+  return Object.freeze({
+    cols: capture.cols,
+    historySize: header.history,
+    firstRow,
+    rows: capture.grid
+  });
+}
+var NATIVE_BOOTSTRAP_PROBE_FLAGS, NATIVE_BOOTSTRAP_PROBE_LIMITS, MAX_BYTES, MAX_ROWS, MAX_CELLS, NATIVE_SEED_CELL_BUDGET, NATIVE_HISTORY_PIECE_CELL_BUDGET, utf8, uint, signed, object2;
 var init_native_grid_capture = __esm({
   "packages/daemon/src/terminal/mirror/native-grid-capture.ts"() {
     "use strict";
+    NATIVE_BOOTSTRAP_PROBE_FLAGS = ["-V", "-R", "-S", "0", "-E", "0"];
+    NATIVE_BOOTSTRAP_PROBE_LIMITS = { maxBytes: 1024 * 1024, maxLines: 4 };
     MAX_BYTES = 16 * 1024 * 1024;
     MAX_ROWS = MAX_BYTES / 64;
     MAX_CELLS = 1e6;
+    NATIVE_SEED_CELL_BUDGET = 262144;
+    NATIVE_HISTORY_PIECE_CELL_BUDGET = 262144;
     utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
     uint = (value, max = 4294967295) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max;
     signed = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= -2147483648 && value <= 2147483647;
@@ -33366,7 +33512,7 @@ import { z as z103 } from "zod";
 function validLimit(limit) {
   return Number.isSafeInteger(limit) && limit > 0 && limit <= NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES;
 }
-function nativeAtomicSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES) {
+function nativeAtomicSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES, historyRows) {
   const validated = TargetSchema.parse(target);
   const continuationBytes = `%continue ${validated.paneId}
 `.length;
@@ -33385,7 +33531,7 @@ function nativeAtomicSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_
         "-U",
         String(maxBytes - continuationBytes),
         "-S",
-        "-",
+        historyStart(historyRows),
         "-t",
         validated.paneId
       ]
@@ -33394,12 +33540,18 @@ function nativeAtomicSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_
     limits: { maxBytes, maxLines: MAX_LINES }
   };
 }
+function historyStart(historyRows) {
+  if (historyRows === void 0) return "-";
+  if (!Number.isSafeInteger(historyRows) || historyRows < 0 || historyRows > 1e6)
+    throw new TypeError("Invalid atomic snapshot history rows");
+  return `-${historyRows}`;
+}
 function validModes(line, capture) {
   const fields = line.split(" ");
   if (fields.length !== 23) return false;
   const numeric = [0, 1, 2, 3, 14, 15].map((index) => decimal(fields[index]));
   if (numeric.some((value) => value === null)) return false;
-  if (numeric[0] !== capture.cursor[0] || numeric[1] !== capture.cursor[1] || numeric[2] !== capture.cols || numeric[3] !== capture.rows || numeric[4] !== capture.history || numeric[5] !== capture.limit)
+  if (numeric[0] !== capture.cursor[0] || numeric[1] !== capture.cursor[1] || numeric[2] !== capture.cols || numeric[3] !== capture.rows || numeric[4] !== capture.history + (capture.omittedHistory ?? 0) || numeric[5] !== capture.limit)
     return false;
   for (const index of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19])
     if (!["0", "1", "unknown"].includes(fields[index])) return false;
@@ -33427,7 +33579,9 @@ function decodeNativeAtomicSnapshot(reply, expected, maxBytes = NATIVE_ATOMIC_SN
     if (metadata.serverEpoch !== expected.serverEpoch || metadata.paneId !== expected.paneId || metadata.paneBirthId !== expected.paneBirthId)
       return unknown;
     if (reply.lines.at(-1) !== `%continue ${expected.paneId}`) return unknown;
-    const capture = decodeNativeGridCapture(reply.lines.slice(1, -1).join("\n") + "\n");
+    const capture = decodeNativeGridCapture(reply.lines.slice(1, -1).join("\n") + "\n", {
+      tail: true
+    });
     if (!capture || !isNativeBootstrapCapture(capture) || !validModes(metadata.cursor, capture))
       return unknown;
     return {
@@ -33441,8 +33595,8 @@ function decodeNativeAtomicSnapshot(reply, expected, maxBytes = NATIVE_ATOMIC_SN
     return unknown;
   }
 }
-function nativeAtomicDualSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES) {
-  const plan = nativeAtomicSnapshotPlan(target, maxBytes);
+function nativeAtomicDualSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_MAX_BYTES, historyRows) {
+  const plan = nativeAtomicSnapshotPlan(target, maxBytes, historyRows);
   return {
     ...plan,
     commands: [
@@ -33455,7 +33609,7 @@ function nativeAtomicDualSnapshotPlan(target, maxBytes = NATIVE_ATOMIC_SNAPSHOT_
         "-U",
         String(maxBytes),
         "-S",
-        "-",
+        historyStart(historyRows),
         "-t",
         target.paneId
       ]
@@ -34179,6 +34333,10 @@ var init_pane_feed = __esm({
       currentState() {
         return this.state;
       }
+      /** Changes with every `beginReseed`; a reply read under another value is stale. */
+      reseedEpoch() {
+        return this.epoch;
+      }
       /** Arm a reseed. Returns the epoch token the two reply hooks must present;
        *  an in-flight older reseed is invalidated wholesale. */
       beginReseed() {
@@ -34482,12 +34640,8 @@ var init_stock_pane_snapshot = __esm({
 // packages/daemon/src/terminal/mirror/session-channel.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
 import { hostname } from "node:os";
-function nativeBootstrapUnsupported(ok2, lines, native2) {
-  if (ok2)
-    return isStockRawGridCapture(lines) || native2 !== null && (native2.version !== 2 || native2.currentAttributes === void 0);
-  return lines.some(
-    (line) => /^(?:parse error: )?(?:command capture-pane: )?unknown flag -R$/.test(line.trim())
-  );
+function nativeBootstrapUnsupported(lines, native2) {
+  return isStockRawGridCapture(lines) || native2 !== null && (native2.version !== 2 || native2.currentAttributes === void 0);
 }
 function tmuxSingleQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -34502,7 +34656,7 @@ function defaultMirrorPaneId() {
 function defaultMirrorWindowId() {
   return `window.mirror.${randomBytes3(8).toString("hex")}`;
 }
-var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, MAX_QUEUED_SNAPSHOTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SplitLayoutPublicationPending, SessionChannel;
+var TMUX_SERVER_HOSTNAME, STRUCTURAL_NOTIFICATIONS, NATIVE_CLIENT_NOTIFICATIONS, NATIVE_CLIENT_SUBSCRIPTION, SYNC_DEBOUNCE_MS, DISPLAY_NAME_SYNC_INTERVAL_MS, RECOVERY_COMMAND_DEADLINE_MS, RECOVERY_NO_PROGRESS_DEADLINE_MS, RECOVERY_ABSOLUTE_DEADLINE_MS, RECOVERY_MAX_ATTEMPTS, RECOVERY_HOLD_AFTER_FAILURES, RECOVERY_HOLD_BASE_MS, RECOVERY_HOLD_MAX_MS, MAX_QUEUED_SNAPSHOTS, RECOVERY_CAPTURE_MAX_BYTES, RECOVERY_CAPTURE_MAX_LINES, RECOVERY_CURSOR_MAX_BYTES, NATIVE_SEED_FALLBACK_COLS, NATIVE_HISTORY_PIECE_LIMITS, RECOVERY_CURSOR_PROBE_FORMAT, FAILED_RESEED_RESULT, SplitLayoutPublicationPending, SessionChannel;
 var init_session_channel = __esm({
   "packages/daemon/src/terminal/mirror/session-channel.ts"() {
     "use strict";
@@ -34550,10 +34704,18 @@ var init_session_channel = __esm({
     RECOVERY_NO_PROGRESS_DEADLINE_MS = 3e3;
     RECOVERY_ABSOLUTE_DEADLINE_MS = 5e3;
     RECOVERY_MAX_ATTEMPTS = 4;
+    RECOVERY_HOLD_AFTER_FAILURES = 2;
+    RECOVERY_HOLD_BASE_MS = 2e3;
+    RECOVERY_HOLD_MAX_MS = 3e4;
     MAX_QUEUED_SNAPSHOTS = 64;
     RECOVERY_CAPTURE_MAX_BYTES = 16 * 1024 * 1024;
     RECOVERY_CAPTURE_MAX_LINES = RECOVERY_CAPTURE_MAX_BYTES / 64;
     RECOVERY_CURSOR_MAX_BYTES = 1024;
+    NATIVE_SEED_FALLBACK_COLS = 512;
+    NATIVE_HISTORY_PIECE_LIMITS = {
+      maxBytes: RECOVERY_CAPTURE_MAX_BYTES,
+      maxLines: RECOVERY_CAPTURE_MAX_LINES
+    };
     RECOVERY_CURSOR_PROBE_FORMAT = [
       "#{cursor_x}",
       "#{cursor_y}",
@@ -34842,7 +35004,8 @@ var init_session_channel = __esm({
             displayName: display.name,
             displayNameSource: display.source,
             windowName: pane.descriptor?.windowName ?? null,
-            active: pane.active
+            active: pane.active,
+            ...pane.descriptor?.floating ? { floating: true } : {}
           };
         });
         return {
@@ -35077,6 +35240,15 @@ var init_session_channel = __esm({
           () => (this.outputOrdinals.get(runtimeId) ?? 0) === outputOrdinal && this.layoutTopologyEpoch === topologyEpoch && this.windowAuthorityOrdinal === authorityOrdinal
         );
       }
+      /**
+       * A person asked to retry (#872): the pane's next recovery asks tmux even
+       * inside its hold. The failure count is kept, so a failure holds it for the
+       * next, longer time. Nothing for a pane that is not held or not known.
+       */
+      liftRecoveryHold(semanticPaneId3) {
+        const pane = this.panesBySemantic.get(semanticPaneId3);
+        if (pane) pane.recoveryHoldUntilMs = 0;
+      }
       subscribePane(semanticPaneId3, onEvent, onLayout, nativeBootstrap = false) {
         const pane = this.panesBySemantic.get(semanticPaneId3);
         if (!pane) {
@@ -35103,6 +35275,7 @@ var init_session_channel = __esm({
             semanticPaneId3,
             () => !sub.closed && sub.pane === pane && this.panesBySemantic.get(semanticPaneId3) === pane
           ),
+          requestNativeHistory: (request3) => this.requestNativeHistory(sub, request3),
           readHistorySize: () => new Promise((resolve47) => {
             const current = () => !this.disposed && !sub.closed && !sub.frozen && this.panesByRuntime.get(pane.runtimeId) === pane;
             if (!current()) {
@@ -35167,15 +35340,16 @@ var init_session_channel = __esm({
         const identity4 = await this.attachedSessionIdentity();
         const inventory = await this.describeTrustedInventory(identity4.runtimeSessionId);
         if (this.disposed) throw new Error(`mirror session ${this.opts.session} is disposed`);
+        const tiled = inventory.panes.filter((pane) => pane.floating !== true);
         const expectedByWindow = /* @__PURE__ */ new Map();
-        for (const pane of inventory.panes) {
+        for (const pane of tiled) {
           const expected = expectedByWindow.get(pane.runtimeWindowId) ?? /* @__PURE__ */ new Set();
           expected.add(pane.semanticPaneId);
           expectedByWindow.set(pane.runtimeWindowId, expected);
         }
         if (expectedSemanticPaneIds) {
           const requested = [...expectedSemanticPaneIds].sort();
-          const authoritative = inventory.panes.map(({ semanticPaneId: semanticPaneId3 }) => semanticPaneId3).sort();
+          const authoritative = tiled.map(({ semanticPaneId: semanticPaneId3 }) => semanticPaneId3).sort();
           if (requested.length === 0 || new Set(requested).size !== requested.length || requested.length !== authoritative.length || requested.some((pane, index) => pane !== authoritative[index])) {
             const error = new Error(`authoritative layout for ${this.opts.session} changed topology`);
             error.name = "MirrorTopologyChangedError";
@@ -35506,6 +35680,67 @@ var init_session_channel = __esm({
           rows: layoutContentRows(pane.top, pane.height, event.rows, event.paneBorderStatus)
         };
       }
+      /**
+       * #873: history rows a native first-open capture reads: the newest that fit
+       * the seed budget at the pane's tmux size. Older rows are read later in
+       * pieces (`requestNativeHistory`), so the open does not depend on the
+       * history's length. Without a known size, assume a 512-column pane.
+       */
+      nativeSeedHistoryRowsFor(pane) {
+        const size = this.layoutSizeFor(pane.runtimeId);
+        const rows = size ? nativeSeedHistoryRows(size.cols, size.rows) : nativeSeedHistoryRows(NATIVE_SEED_FALLBACK_COLS, 1);
+        const limit = this.opts.historyLines;
+        return limit === void 0 ? rows : Math.min(limit, rows);
+      }
+      /**
+       * #873: read history rows `endRow - rows .. endRow - 1` (tmux's numbers,
+       * from its oldest row) for this subscriber. The answer is one `history`
+       * event, sent from the reply callback so it keeps its place among the
+       * deltas. It is null unless the read stayed clear of every output, layout
+       * and reseed crossing: then the subscriber's parser, having applied every
+       * earlier delta, holds exactly the state tmux read the rows from.
+       */
+      requestNativeHistory(sub, request3) {
+        const pane = sub.pane;
+        const { endRow, rows, historySize } = request3;
+        if (this.disposed || sub.closed || sub.frozen || !sub.nativeBootstrap || this.nativeBootstrapUnavailable || sub.feed.currentState() !== "live" || ![endRow, rows, historySize].every((value) => Number.isSafeInteger(value)) || endRow < 1 || rows < 1 || historySize < endRow)
+          return false;
+        const runtimeId = pane.runtimeId;
+        const size = this.layoutSizeFor(runtimeId);
+        const cols = size?.cols ?? NATIVE_SEED_FALLBACK_COLS;
+        const wanted = Math.min(
+          rows,
+          endRow,
+          Math.max(1, Math.floor(NATIVE_HISTORY_PIECE_CELL_BUDGET / cols))
+        );
+        const start3 = endRow - wanted - historySize;
+        const end = endRow - 1 - historySize;
+        this.input.flush();
+        const outputOrdinal = this.outputOrdinals.get(runtimeId) ?? 0;
+        const feedEpoch = sub.feed.reseedEpoch();
+        const incarnation = pane.incarnation;
+        let marker = null;
+        this.captureWithViewer(
+          runtimeId,
+          ["-R", "-S", String(start3), "-E", String(end)],
+          (value) => {
+            marker = value;
+          },
+          (reply) => {
+            if (marker) {
+              if (reply.ok) this.clearInternalReadMarkerOption(runtimeId, marker);
+              else this.retireInternalReadMarker(runtimeId, marker);
+            }
+            if (sub.closed || this.disposed) return;
+            const windowId = pane.windowRuntimeId;
+            const current = !sub.frozen && sub.pane === pane && this.panesByRuntime.get(runtimeId) === pane && pane.incarnation === incarnation && sub.feed.currentState() === "live" && sub.feed.reseedEpoch() === feedEpoch && (this.outputOrdinals.get(runtimeId) ?? 0) === outputOrdinal && !(windowId !== null && this.pendingLayoutOutput.has(windowId));
+            const piece = current && reply.ok ? decodeNativeHistoryPiece(reply.lines.join("\n") + "\n") : null;
+            sub.onEvent({ type: "history", piece });
+          },
+          NATIVE_HISTORY_PIECE_LIMITS
+        );
+        return true;
+      }
       layoutSizeFor(runtime) {
         for (const layout of this.layoutByWindow.values()) {
           const leaf = layout.leaves.find((candidate) => candidate.id === runtime);
@@ -35643,8 +35878,12 @@ var init_session_channel = __esm({
           cancelAbsoluteDeadline: null
         };
         this.recoveries.set(pane.runtimeId, recovery);
-        this.snapshotQueue.set(pane.runtimeId, recovery);
-        this.drainSnapshots();
+        if (recovery.startedAtMs < pane.recoveryHoldUntilMs)
+          this.failRecovery(recovery, "held-after-failures");
+        else {
+          this.snapshotQueue.set(pane.runtimeId, recovery);
+          this.drainSnapshots();
+        }
       }
       beginLocalOverflowRecovery(pane) {
         this.beginRecovery(pane, "backpressure");
@@ -35807,7 +36046,7 @@ var init_session_channel = __esm({
           }, RECOVERY_COMMAND_DEADLINE_MS);
           this.captureWithViewer(
             pane.runtimeId,
-            ["-R", "-S", "-"],
+            NATIVE_BOOTSTRAP_PROBE_FLAGS,
             (value) => {
               marker = value;
             },
@@ -35817,9 +36056,9 @@ var init_session_channel = __esm({
               probeSettled = true;
               recovery.cancelCommandDeadline?.();
               recovery.cancelCommandDeadline = null;
-              const native2 = reply.ok ? decodeNativeGridCapture(reply.lines.join("\n")) : null;
-              if (native2 && isNativeBootstrapCapture(native2)) this.nativeBootstrapConfirmed = true;
-              else if (nativeBootstrapUnsupported(reply.ok, reply.lines, native2)) {
+              const probe = readNativeBootstrapProbe(reply.ok, reply.lines);
+              if (probe === "native") this.nativeBootstrapConfirmed = true;
+              else if (probe === "unsupported") {
                 this.nativeBootstrapUnavailable = true;
                 for (const current of this.panesByRuntime.values())
                   for (const sub of current.subs) sub.nativeBootstrap = false;
@@ -35830,7 +36069,7 @@ var init_session_channel = __esm({
               }
               this.startStockSnapshot(pane, recovery, lease);
             },
-            { maxBytes: RECOVERY_CAPTURE_MAX_BYTES, maxLines: RECOVERY_CAPTURE_MAX_LINES }
+            NATIVE_BOOTSTRAP_PROBE_LIMITS
           );
           return;
         }
@@ -36014,15 +36253,23 @@ var init_session_channel = __esm({
           recovery.cancelCommandDeadline = this.scheduleRecovery(failed, RECOVERY_COMMAND_DEADLINE_MS);
           const accepted = this.opts.ownedViewer.tryDispatch(
             this.io,
-            target.representation === "dual" ? nativeAtomicDualSnapshotPlan({
-              serverEpoch: target.serverEpoch,
-              paneId: target.paneId,
-              paneBirthId: target.paneBirthId
-            }) : nativeAtomicSnapshotPlan({
-              serverEpoch: target.serverEpoch,
-              paneId: target.paneId,
-              paneBirthId: target.paneBirthId
-            }),
+            target.representation === "dual" ? nativeAtomicDualSnapshotPlan(
+              {
+                serverEpoch: target.serverEpoch,
+                paneId: target.paneId,
+                paneBirthId: target.paneBirthId
+              },
+              void 0,
+              this.nativeSeedHistoryRowsFor(pane)
+            ) : nativeAtomicSnapshotPlan(
+              {
+                serverEpoch: target.serverEpoch,
+                paneId: target.paneId,
+                paneBirthId: target.paneBirthId
+              },
+              void 0,
+              this.nativeSeedHistoryRowsFor(pane)
+            ),
             (reply) => {
               if (settled || !exact()) {
                 failed();
@@ -36231,7 +36478,7 @@ var init_session_channel = __esm({
         }
         const sentinel = (kind) => `display-message -p -l -t ${pane.runtimeId} "%tmux-ide-atomic-v1 ${nonce} ${kind}"`;
         const observerCommands = safeObserver ? ` ; ${boundedTmuxInteractionAppendCommand(observer.bufferName, observer.record)} ; wait-for -S ${observer.signalChannel}` : "";
-        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")}` + (dualCapture ? ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("ansi-capture-end")}` : "") + ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
+        const body = `set-option -po -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION} ${internalReadMarker} ; ${sentinel("start")} ; capture-pane -p ${nativeCapture ? "-R" : "-e -J"} -S -${nativeCapture ? this.nativeSeedHistoryRowsFor(pane) : this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("capture-end")}` + (dualCapture ? ` ; capture-pane -p -e -J -S -${this.opts.historyLines ?? ""} -t ${pane.runtimeId} ; ${sentinel("ansi-capture-end")}` : "") + ` ; display-message -p -t ${pane.runtimeId} "${RECOVERY_CURSOR_PROBE_FORMAT}" ; ${sentinel("cursor-end")} ; refresh-client -A ${tmuxSingleQuote(`${pane.runtimeId}:continue`)}` + observerCommands + ` ; if-shell -t ${pane.runtimeId} -F "#{==:#{${INTERNAL_READ_OPERATION_OPTION}},${internalReadMarker}}" ` + tmuxSingleQuote(`set-option -pu -t ${pane.runtimeId} ${INTERNAL_READ_OPERATION_OPTION}`) + ` ${tmuxSingleQuote(`${sentinel("marker-rejected")}`)} ; ${sentinel("status-ok")} ; set-option -pu -t ${pane.runtimeId} ${hookName} ; ${sentinel("complete")}`;
         this.input.flush();
         const invoke = (reply) => {
           if (settled || !this.snapshotLeaseCurrent(lease)) {
@@ -36296,9 +36543,9 @@ var init_session_channel = __esm({
                   return;
                 }
                 const captureLines = Object.freeze([...result2.captureLines]);
-                const native2 = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n")) : null;
+                const native2 = nativeCapture ? decodeNativeGridCapture(captureLines.join("\n"), { tail: true }) : null;
                 if (nativeCapture && (!native2 || !isNativeBootstrapCapture(native2))) {
-                  if (nativeBootstrapUnsupported(true, captureLines, native2)) {
+                  if (nativeBootstrapUnsupported(captureLines, native2)) {
                     this.nativeBootstrapUnavailable = true;
                     for (const { sub } of participants) sub.nativeBootstrap = false;
                   }
@@ -36427,6 +36674,7 @@ var init_session_channel = __esm({
         recovery.cancelAbsoluteDeadline = null;
         this.recoveries.delete(recovery.runtimeId);
         recovery.retired = true;
+        pane.failedRecoveries = 0;
         this.ledger.noteContinued(recovery.runtimeId);
         if (recovery.reason === "requested") this.ledger.clearRequest(recovery.runtimeId);
         for (const sub of pane.subs) {
@@ -36449,6 +36697,13 @@ var init_session_channel = __esm({
       failRecovery(recovery, failureReason) {
         const pane = this.recoveryPane(recovery);
         if (!pane) return;
+        if (failureReason !== "held-after-failures") {
+          pane.failedRecoveries += 1;
+          pane.heldWhy = recovery.collectorFailureReason === "capture-byte-cap" ? "too-large" : "failed";
+          const repeats = pane.failedRecoveries - RECOVERY_HOLD_AFTER_FAILURES;
+          if (repeats >= 0)
+            pane.recoveryHoldUntilMs = this.recoveryNowMs() + Math.min(RECOVERY_HOLD_MAX_MS, RECOVERY_HOLD_BASE_MS * 2 ** repeats);
+        }
         recovery.cancelCommandDeadline?.();
         recovery.cancelCommandDeadline = null;
         recovery.cancelNoProgressDeadline?.();
@@ -36464,11 +36719,18 @@ var init_session_channel = __esm({
         recovery.atomicCollectorNonce = null;
         if (collectorNonce) this.io.retireAtomicPaneSnapshotCollector?.(collectorNonce, "retired");
         this.observeRecovery(pane, recovery, "nonconverged", failureReason);
+        const hold = failureReason === "held-after-failures" ? {
+          // Positive: a refusal starts before the hold ends.
+          retryInMs: Math.ceil(pane.recoveryHoldUntilMs - this.recoveryNowMs()),
+          why: pane.heldWhy
+        } : null;
         for (const sub of pane.subs) {
           sub.cancelCapture?.();
           if (sub.closed || sub.frozen) continue;
           try {
-            sub.onEvent({ type: "fault", reason: "native-recovery-failed" });
+            sub.onEvent(
+              hold ? { type: "fault", reason: "native-recovery-failed", hold } : { type: "fault", reason: "native-recovery-failed" }
+            );
           } catch {
           }
         }
@@ -36539,6 +36801,10 @@ var init_session_channel = __esm({
             if (pane && Number.isSafeInteger(size)) {
               const cleared = size === 0 && (pane.historySize ?? 0) > 0;
               pane.historySize = size;
+              if (cleared) {
+                pane.failedRecoveries = 0;
+                pane.recoveryHoldUntilMs = 0;
+              }
               if (cleared && !this.recoveries.has(pane.runtimeId)) {
                 for (const sub of pane.subs) if (!sub.closed && !sub.frozen) this.reseedPlain(sub);
               }
@@ -36643,8 +36909,9 @@ var init_session_channel = __esm({
             return;
           }
           const leafIds = new Set(membership.leaves.map((leaf) => leaf.id));
+          const floatingIds2 = new Set((membership.floating ?? []).map((leaf) => leaf.id));
           const knownPaneVanished = [...this.panesByRuntime.values()].some(
-            (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId)
+            (pane) => pane.windowRuntimeId === change.windowId && !leafIds.has(pane.runtimeId) && !floatingIds2.has(pane.runtimeId)
           );
           if (membership.leaves.some((leaf) => !this.panesByRuntime.has(leaf.id)) || knownPaneVanished) {
             this.scheduleSync();
@@ -37013,15 +37280,25 @@ var init_session_channel = __esm({
         const stagedPaneIds = /* @__PURE__ */ new Set();
         let stagedPaneCount = 0;
         let stagedPaneMembershipExact = true;
+        const floatingByWindow = /* @__PURE__ */ new Map();
+        for (const descriptor of descriptors) {
+          if (!descriptor.floating) continue;
+          const floating = floatingByWindow.get(descriptor.windowId) ?? /* @__PURE__ */ new Set();
+          floating.add(descriptor.runtimePaneId);
+          floatingByWindow.set(descriptor.windowId, floating);
+        }
+        let floatingPaneCount = 0;
         for (const [runtimeWindowId, layout] of confirmedWindowStage.layouts) {
           const membership = layout.zoomed ? layout.unzoomed : layout;
-          if (!membership || membership.leaves.length !== computedWindowCounts.get(runtimeWindowId)) {
+          const floating = floatingByWindow.get(runtimeWindowId) ?? /* @__PURE__ */ new Set();
+          if (!membership || membership.leaves.length + floating.size !== computedWindowCounts.get(runtimeWindowId) || (membership.floating ?? []).some((leaf) => !floating.has(leaf.id))) {
             stagedPaneMembershipExact = false;
             break;
           }
+          floatingPaneCount += floating.size;
           for (const leaf of membership.leaves) {
             stagedPaneCount += 1;
-            if (stagedPaneIds.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
+            if (stagedPaneIds.has(leaf.id) || floating.has(leaf.id) || descriptorWindowByPane.get(leaf.id) !== runtimeWindowId) {
               stagedPaneMembershipExact = false;
               break;
             }
@@ -37029,7 +37306,7 @@ var init_session_channel = __esm({
           }
           if (!stagedPaneMembershipExact) break;
         }
-        if (confirmedWindowStage.currentWindow !== activeWindowId || confirmedWindowStage.links.length !== descriptors[0].sessionWindowCount || confirmedWindowStage.windows.size !== computedWindowCounts.size || !stagedPaneMembershipExact || stagedPaneCount !== descriptors.length || stagedPaneIds.size !== descriptors.length || [...computedWindowCounts.keys()].some(
+        if (confirmedWindowStage.currentWindow !== activeWindowId || confirmedWindowStage.links.length !== descriptors[0].sessionWindowCount || confirmedWindowStage.windows.size !== computedWindowCounts.size || !stagedPaneMembershipExact || stagedPaneCount + floatingPaneCount !== descriptors.length || stagedPaneIds.size + floatingPaneCount !== descriptors.length || [...computedWindowCounts.keys()].some(
           (runtimeWindowId) => !confirmedWindowStage.windows.has(runtimeWindowId)
         ))
           throw new Error(`trusted inventory for ${this.opts.session} lacks verified identity`);
@@ -37100,7 +37377,8 @@ var init_session_channel = __esm({
             type: descriptor.type,
             missionStamp: descriptor.missionStamp,
             nativePaneBirthId: descriptor.nativePaneBirthId ?? null,
-            dir: descriptor.cwd ?? ""
+            dir: descriptor.cwd ?? "",
+            ...descriptor.floating ? { floating: true } : {}
           });
         });
         return Object.freeze({
@@ -37451,7 +37729,10 @@ var init_session_channel = __esm({
             windowRuntimeId,
             subs: /* @__PURE__ */ new Set(),
             incarnation: ++this.paneIncarnation,
-            snapshotLayoutGeneration: 0
+            snapshotLayoutGeneration: 0,
+            failedRecoveries: 0,
+            recoveryHoldUntilMs: 0,
+            heldWhy: "failed"
           };
           this.panesByRuntime.set(record2.runtimeId, record2);
           this.panesBySemantic.set(record2.semanticId, record2);
@@ -45133,6 +45414,16 @@ var init_mirror_service = __esm({
         if (this.channels.get(session) !== entry || entry.retired) return null;
         return identity4;
       }
+      /**
+       * #872: a person asked to retry these panes now. Each one's next recovery
+       * asks tmux even inside a hold after failed recoveries. A session without a
+       * channel has no hold to lift.
+       */
+      liftRecoveryHolds(session, semanticPaneIds2) {
+        const entry = this.channels.get(session);
+        if (!entry || entry.retired) return;
+        for (const semanticPaneId3 of semanticPaneIds2) entry.channel.liftRecoveryHold(semanticPaneId3);
+      }
       async subscribe(request3) {
         const entry = await this.acquire(request3.session);
         let handle;
@@ -45155,6 +45446,7 @@ var init_mirror_service = __esm({
           thaw: () => handle.thaw(),
           reseed: () => handle.reseed(),
           readHistorySize: () => handle.readHistorySize(),
+          requestNativeHistory: (historyRequest) => handle.requestNativeHistory(historyRequest),
           captureNativeBacking: () => handle.captureNativeBacking(),
           sendText: (text2) => {
             this.assertWindowOwnership(request3.session);
@@ -46397,6 +46689,22 @@ var init_semantic_mutation_executor = __esm({
           });
         }
         return receipt;
+      }
+    };
+  }
+});
+
+// packages/daemon/src/terminal/mirror/pane-hold.ts
+var MirrorPaneHeldError;
+var init_pane_hold = __esm({
+  "packages/daemon/src/terminal/mirror/pane-hold.ts"() {
+    "use strict";
+    MirrorPaneHeldError = class extends Error {
+      hold;
+      constructor(hold) {
+        super("Native terminal recovery held after failed recoveries");
+        this.name = "MirrorPaneHeldError";
+        this.hold = hold;
       }
     };
   }
@@ -50487,6 +50795,15 @@ var init_native_seed_backing = __esm({
     init_native_grid_projection();
     MAX_RETAINED_NATIVE_BACKING_BYTES = 64 * 1024 * 1024;
     handoff = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// packages/daemon/src/terminal/session-runtime/terminal-interpreter-backend.ts
+var DAEMON_HISTORY_ROW_CAP;
+var init_terminal_interpreter_backend = __esm({
+  "packages/daemon/src/terminal/session-runtime/terminal-interpreter-backend.ts"() {
+    "use strict";
+    DAEMON_HISTORY_ROW_CAP = 1e4;
   }
 });
 
@@ -63279,6 +63596,7 @@ var init_xterm_terminal_interpreter_backend = __esm({
     init_xterm_headless();
     import_addon_unicode11 = __toESM(require_addon_unicode11(), 1);
     init_src3();
+    init_terminal_interpreter_backend();
     XtermTerminalInterpreterBackend = class {
       kind = "xterm";
       #terminal;
@@ -63298,9 +63616,14 @@ var init_xterm_terminal_interpreter_backend = __esm({
       #nativeModesObserved = false;
       #historyProjectionInvalidated = false;
       #scrollOnClear;
+      /** #873: tmux history rows older than the oldest row held (see omittedHistory). */
+      #omittedHistory = 0;
+      /** #873: the most history rows held; rows pushed past it count as left out. */
+      #historyRowCap;
       constructor(options) {
         const historyLimit = options.historyLimit ?? options.scrollback;
         this.#historyLimit = historyLimit;
+        this.#historyRowCap = options.historyRowCap ?? DAEMON_HISTORY_ROW_CAP;
         this.#terminal = new Terminal2({
           cols: options.cols,
           rows: options.rows,
@@ -63358,22 +63681,60 @@ var init_xterm_terminal_interpreter_backend = __esm({
        */
       startHistoryCollection() {
         this.#collecting = true;
+        this.#enforceRowCap();
         this.#lastYbase = this.#normalBuffer()?.ybase ?? null;
+      }
+      historyRowCap() {
+        return this.#historyRowCap;
+      }
+      /**
+       * #873: hold at most #historyRowCap history rows. The oldest rows past it
+       * are dropped here and counted as left out, so tmux's history size is still
+       * the rows held plus the rows left out. tmux itself keeps them.
+       */
+      #enforceRowCap() {
+        const buffer = this.#normalBuffer();
+        if (!buffer || buffer.ybase <= this.#historyRowCap) return;
+        const extra = buffer.ybase - this.#historyRowCap;
+        buffer.lines.trimStart(extra);
+        buffer.ybase -= extra;
+        buffer.ydisp = Math.max(0, buffer.ydisp - extra);
+        this.#setOmittedHistory(this.#omittedHistory + extra);
       }
       #normalBuffer() {
         return this.#terminal._core?.buffers?.normal;
+      }
+      omittedHistory() {
+        return this.#omittedHistory;
+      }
+      /**
+       * The parser's own erase-in-display collection counts only the rows held.
+       * While tmux holds older rows than these, turn it off: #collectHistory then
+       * collects after each of the erase's scrolls instead, which leaves the same
+       * rows as tmux's collection before it.
+       */
+      #setOmittedHistory(count) {
+        this.#omittedHistory = count;
+        this.#terminal.options.tmuxHistoryLimit = count > 0 ? Number.MAX_SAFE_INTEGER : this.#historyLimit;
       }
       #collectHistory() {
         const buffer = this.#normalBuffer();
         if (!buffer) return;
         const before = this.#lastYbase;
         const limit = this.#historyLimit;
-        if (this.#collecting && limit > 0 && before !== null && before >= limit && buffer.ybase === before + 1) {
-          const trim = Math.min(buffer.ybase, Math.max(1, Math.floor(limit / 10)));
-          buffer.lines.trimStart(trim);
-          buffer.ybase -= trim;
-          buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+        const omitted = this.#omittedHistory;
+        if (this.#collecting && limit > 0 && before !== null && omitted + before >= limit && buffer.ybase === before + 1) {
+          const collected = Math.min(omitted + buffer.ybase, Math.max(1, Math.floor(limit / 10)));
+          const fromOmitted = Math.min(omitted, collected);
+          if (fromOmitted > 0) this.#setOmittedHistory(omitted - fromOmitted);
+          const trim = collected - fromOmitted;
+          if (trim > 0) {
+            buffer.lines.trimStart(trim);
+            buffer.ybase -= trim;
+            buffer.ydisp = Math.max(0, buffer.ydisp - trim);
+          }
         }
+        if (this.#collecting) this.#enforceRowCap();
         this.#lastYbase = buffer.ybase;
       }
       get cols() {
@@ -63411,6 +63772,8 @@ var init_xterm_terminal_interpreter_backend = __esm({
         const cell = this.#terminal.buffer.active.getNullCell();
         if (typeof cell.setFromCharData !== "function")
           throw new Error("Unsupported @tmux-ide/xterm-headless 6 native cell shape");
+        const omitted = snapshot3.omittedHistory ?? 0;
+        if (!Number.isSafeInteger(omitted) || omitted < 0) return false;
         if (buffer.lines.maxLength < snapshot3.grid.length) return false;
         buffer.lines.length = 0;
         for (let index = 0; index < snapshot3.grid.length; index++) {
@@ -63458,8 +63821,45 @@ var init_xterm_terminal_interpreter_backend = __esm({
           1
         ).cells[0];
         [handler._curAttrData.fg, handler._curAttrData.bg] = nativeImportAttributes(current);
+        this.#setOmittedHistory(omitted);
         this.#historyProjectionInvalidated = true;
         return true;
+      }
+      prependNativeHistory(piece) {
+        const omitted = this.#omittedHistory;
+        const buffer = this.#normalBuffer();
+        if (!buffer || omitted <= 0 || this.#terminal.buffer.active.type !== "normal" || piece.cols !== this.cols || piece.historySize !== omitted + buffer.ybase || !Number.isSafeInteger(piece.firstRow) || piece.firstRow < 0 || piece.firstRow >= omitted || piece.firstRow + piece.rows.length < omitted || !this.canImportNativeGrid())
+          return false;
+        const count = omitted - piece.firstRow;
+        if (buffer.lines.length + count > buffer.lines.maxLength) return false;
+        const lines = piece.rows.slice(0, count).map(
+          (row, index) => this.#nativeLine(row, index > 0 && (piece.rows[index - 1].flags & 1) !== 0)
+        );
+        for (let offset = 0; offset < lines.length; offset += 4096)
+          buffer.lines.splice(offset, 0, ...lines.slice(offset, offset + 4096));
+        const boundary2 = buffer.lines.get(count);
+        if (boundary2) boundary2.isWrapped = (piece.rows[count - 1].flags & 1) !== 0;
+        buffer.ybase += count;
+        buffer.ydisp += count;
+        if (this.#lastYbase !== null) this.#lastYbase += count;
+        this.#setOmittedHistory(piece.firstRow);
+        this.#enforceRowCap();
+        this.#historyProjectionInvalidated = true;
+        return true;
+      }
+      /** One native row as a parser line, as importNativeGrid writes it. */
+      #nativeLine(source, wrapped) {
+        const buffer = this.#terminal.buffer.active._buffer;
+        const cell = this.#terminal.buffer.active.getNullCell();
+        const row = projectNativeGridRow(source, this.cols, 0, wrapped);
+        const line = buffer.getBlankLine(void 0, row.wrapped);
+        for (let column = 0; column < row.cells.length; column++) {
+          const projected = row.cells[column];
+          cell.setFromCharData([0, projected.grapheme, projected.width, 0]);
+          [cell.fg, cell.bg] = nativeImportAttributes(projected);
+          line.setCell(column, cell);
+        }
+        return line;
       }
       prioritizeNextWrite() {
         this.#terminal.prioritizeNextWrite();
@@ -64527,6 +64927,7 @@ var init_terminal_replica_interpreter = __esm({
     init_src3();
     init_runtime_scheduler();
     init_runtime_observability();
+    init_terminal_interpreter_backend();
     init_xterm_terminal_interpreter_backend();
     init_causal_cell_ledger();
     init_kitty_graphics();
@@ -64544,6 +64945,7 @@ var init_terminal_replica_interpreter = __esm({
       #semanticPaneId;
       #incarnation;
       #scrollback;
+      #historyRowCap;
       #listeners = /* @__PURE__ */ new Set();
       #onRawCommit;
       #scheduler;
@@ -64610,6 +65012,7 @@ var init_terminal_replica_interpreter = __esm({
         this.#incarnation = options.incarnation;
         this.#revision = options.initialRevision ?? 0;
         this.#scrollback = options.scrollback ?? 5e3;
+        this.#historyRowCap = options.historyRowCap ?? DAEMON_HISTORY_ROW_CAP;
         this.#onRawCommit = options.onRawCommit;
         this.#onNativeReseedRequired = options.onNativeReseedRequired;
         this.#scheduler = options.scheduler ?? SYSTEM_SESSION_RUNTIME_SCHEDULER;
@@ -64618,7 +65021,8 @@ var init_terminal_replica_interpreter = __esm({
         this.#backend = this.#backendFactory({
           cols: options.cols,
           rows: options.rows,
-          scrollback: this.#scrollback
+          scrollback: this.#scrollback,
+          historyRowCap: this.#historyRowCap
         });
         this.#backend.startHistoryCollection?.();
         this.#kitty = new KittyImageStore(
@@ -64667,6 +65071,33 @@ var init_terminal_replica_interpreter = __esm({
           ...operation.captureChunks ? { captureChunks: operation.captureChunks.map((chunk) => Uint8Array.from(chunk)) } : {}
         } : operation;
         return this.#append(admitted);
+      }
+      /**
+       * #873: prepend the older history rows of a piece read from tmux, in order
+       * with the writes queued before it. True when the rows were prepended and a
+       * new revision published; false when the piece does not fit the replica as
+       * it is at that point of the stream (see the backend's prependNativeHistory).
+       */
+      prependNativeHistory(piece) {
+        this.#flushWrites();
+        const run = this.#tail.then(() => this.#applyHistoryPiece(piece));
+        this.#tail = run.then(
+          () => void 0,
+          () => void 0
+        );
+        return run;
+      }
+      /**
+       * #873: tmux history rows older than the replica's oldest history row; tmux's
+       * history size is this plus the replica's history rows. Set by a native seed
+       * that left them out, zero after any other seed.
+       */
+      omittedHistory() {
+        return this.#backend.omittedHistory?.() ?? 0;
+      }
+      /** #873: the most history rows the replica holds; the backfill stops there. */
+      historyRowCap() {
+        return this.#historyRowCap;
       }
       whenIdle() {
         this.#flushWrites();
@@ -64756,13 +65187,14 @@ var init_terminal_replica_interpreter = __esm({
           const scrollback = Math.max(
             operation.historyLimit ?? this.#scrollback,
             operation.historySize ?? 0,
-            operation.native?.history ?? 0
+            (operation.native?.history ?? 0) + (operation.native?.omittedHistory ?? 0)
           );
           const replacement = this.#backendFactory({
             cols: nativeCols,
             rows: nativeRows,
             scrollback,
-            historyLimit: operation.historyLimit ?? scrollback
+            historyLimit: operation.historyLimit ?? scrollback,
+            historyRowCap: this.#historyRowCap
           });
           try {
             if (operation.native && !replacement.importNativeGrid?.(operation.native))
@@ -64873,6 +65305,15 @@ var init_terminal_replica_interpreter = __esm({
           this.#rejectSeedReady(new Error("Terminal replica closed before bootstrap"));
         this.#backend.dispose();
         this.#emit(update);
+      }
+      #applyHistoryPiece(piece) {
+        if (this.#closed || this.#needsSeed || this.#nativeReseedRequested || this.#pendingResize !== null || this.#backend.requiresNativeReseed() || // A synchronized update publishes nothing until it ends.
+        this.#backend.modes().synchronizedOutput || !this.#backend.prependNativeHistory?.(piece))
+          return false;
+        this.#kitty.dropCursorPlacements();
+        this.#commit(false);
+        this.#publishGraphics();
+        return true;
       }
       async #write(data, continuedTrace, hasBacklog = () => false) {
         if (this.#closed || this.#nativeReseedRequested) return;
@@ -65315,18 +65756,24 @@ function layoutLeaseEqual(left, right) {
 function diagnosticInteger(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
-var PARK_AFTER_MS, SessionRuntimeTerminalReplicaOwner;
+var PARK_AFTER_MS, BACKFILL_FIRST_RETRY_MS, BACKFILL_MAX_RETRY_MS, BACKFILL_MAX_FAILURES, BACKFILL_ALTERNATE_WAIT_MS, SessionRuntimeTerminalReplicaOwner;
 var init_terminal_replica_owner = __esm({
   "packages/daemon/src/terminal/session-runtime/terminal-replica-owner.ts"() {
     "use strict";
+    init_pane_hold();
     init_history_anchor_owner();
     init_layout_content_rows();
+    init_native_grid_capture();
     init_src3();
     init_native_grid_projection();
     init_terminal_replica_interpreter();
     init_runtime_scheduler();
     init_runtime_observability();
     PARK_AFTER_MS = 1e4;
+    BACKFILL_FIRST_RETRY_MS = 250;
+    BACKFILL_MAX_RETRY_MS = 4e3;
+    BACKFILL_MAX_FAILURES = 16;
+    BACKFILL_ALTERNATE_WAIT_MS = 1e3;
     SessionRuntimeTerminalReplicaOwner = class {
       constructor(generation, session, semanticPaneId3, mirror, options) {
         this.generation = generation;
@@ -65347,10 +65794,12 @@ var init_terminal_replica_owner = __esm({
           rows: this.#rows,
           scheduler: options.scheduler,
           observability: options.observability,
+          ...options.historyRowCap !== void 0 ? { historyRowCap: options.historyRowCap } : {},
           onNativeReseedRequired: () => {
             if (this.#disposed || this.#reseed || this.#waitingForGeometryCapture) return;
             this.#waitingForGeometryCapture = true;
             this.#historyAnchors.invalidate();
+            this.#cancelBackfill();
             this.#supervise(
               this.#start.then(() => {
                 if (!this.#disposed && this.#waitingForGeometryCapture) this.#upstream?.reseed();
@@ -65441,6 +65890,14 @@ var init_terminal_replica_owner = __esm({
       #historyChecking = false;
       #historyDirty = false;
       #reconstructedHistoryGap = null;
+      // #873 backfill. A new seed, resize, park or disposal starts a new token;
+      // anything from an older token is ignored.
+      #backfillToken = 0;
+      // The token of each history request sent and not yet answered, oldest first.
+      // Answers arrive in request order, so each one belongs to the first entry.
+      #backfillAsked = [];
+      #backfillFailures = 0;
+      #backfillTimer = null;
       installOutputTraceReader(reader) {
         this.#takeOutputTrace ??= reader;
       }
@@ -65498,6 +65955,7 @@ var init_terminal_replica_owner = __esm({
         const initial = this.#interpreter.currentSeed();
         if (!initial || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
           return { status: "changed" };
+        if (this.#interpreter.omittedHistory() > 0) return { status: "mismatch" };
         const epoch = this.#subscriptionEpoch;
         const captured = await upstream.captureNativeBacking();
         if (captured.status !== "captured") return captured;
@@ -65584,6 +66042,7 @@ var init_terminal_replica_owner = __esm({
           if (this.#disposed || this.#parked || this.#listeners.size > 0 || !this.#upstream) return;
           this.#parked = true;
           this.#stale = true;
+          this.#cancelBackfill();
           this.#upstream.freeze();
         }, PARK_AFTER_MS);
       }
@@ -65635,6 +66094,7 @@ var init_terminal_replica_owner = __esm({
         this.#historyTimer = null;
         this.#parkTimer?.cancel();
         this.#parkTimer = null;
+        this.#cancelBackfill();
         this.#subscriptionEpoch += 1;
         await this.#interpreter.enqueue({ type: "close", reason });
         await this.#start.catch(() => void 0);
@@ -65675,7 +66135,7 @@ var init_terminal_replica_owner = __esm({
               return;
             }
             if (this.#reconstructedHistoryGap.gap === gap) return;
-          } else if (gap === 0) return;
+          } else if (gap === this.#interpreter.omittedHistory()) return;
           upstream.reseed();
         } catch {
         } finally {
@@ -65684,12 +66144,17 @@ var init_terminal_replica_owner = __esm({
         }
       }
       #observePane(event) {
+        if (event.type === "history") {
+          this.#observeHistoryPiece(event.piece);
+          return;
+        }
         if (event.type === "delta") {
           this.#historyDirty = true;
           this.#scheduleHistoryCheck();
         }
         if (event.type === "reset") {
           this.#historyAnchors.invalidate();
+          this.#cancelBackfill();
           this.#reseed = {
             nativeCols: event.cols,
             nativeRows: event.rows,
@@ -65752,7 +66217,7 @@ var init_terminal_replica_owner = __esm({
                 "before-commit",
                 "lease-crossed"
               )
-            }) : reseed ? (this.#retryReseedOrFault(
+            }).then(() => this.#startBackfill()) : reseed ? (this.#retryReseedOrFault(
               `terminal reseed geometry is incompatible: capture ${reseed.nativeCols}x${reseed.nativeRows}, layout ${reseed.layoutLease?.pane.width}x${reseed.layoutLease?.pane.height}, border ${reseed.layoutLease?.paneBorderStatus}`,
               reseed,
               "capture-qualification",
@@ -65767,7 +66232,7 @@ var init_terminal_replica_owner = __esm({
           );
         } else if (event.type === "fault") {
           this.#noteLifecycle("upstream-fault");
-          const error = new Error("Native terminal recovery failed");
+          const error = event.hold ? new MirrorPaneHeldError(event.hold) : new Error("Native terminal recovery failed");
           this.#interpreter.abort(error);
           this.#onFault?.(error);
         } else if (event.type === "closed") {
@@ -65782,6 +66247,73 @@ var init_terminal_replica_owner = __esm({
             () => void 0
           );
         }
+      }
+      #cancelBackfill() {
+        this.#backfillToken += 1;
+        this.#backfillFailures = 0;
+        this.#backfillTimer?.cancel();
+        this.#backfillTimer = null;
+      }
+      /** After a seed commits: ask for the rows it left out, if any. */
+      #startBackfill() {
+        this.#cancelBackfill();
+        void this.#askForHistory(this.#backfillToken);
+      }
+      async #askForHistory(token2) {
+        await this.#interpreter.whenIdle();
+        if (token2 !== this.#backfillToken || this.#disposed || this.#parked || this.#stale || this.#reseed || this.#waitingForGeometryCapture)
+          return;
+        const omitted = this.#interpreter.omittedHistory();
+        const upstream = this.#upstream;
+        if (omitted <= 0 || !upstream?.requestNativeHistory) return;
+        const snapshot3 = this.#interpreter.currentSnapshot();
+        if (snapshot3.modes.alternateScreen) {
+          this.#retryBackfill(token2, false);
+          return;
+        }
+        const room = this.#interpreter.historyRowCap() - snapshot3.history.length;
+        if (room <= 0) return;
+        const sent = upstream.requestNativeHistory({
+          endRow: omitted,
+          rows: Math.min(room, nativeHistoryPieceRows(snapshot3.cols)),
+          historySize: omitted + snapshot3.history.length
+        });
+        if (sent) this.#backfillAsked.push(token2);
+        else this.#retryBackfill(token2, true);
+      }
+      #observeHistoryPiece(piece) {
+        const token2 = this.#backfillAsked.shift();
+        if (token2 === void 0 || token2 !== this.#backfillToken || this.#disposed) return;
+        if (!piece) {
+          this.#retryBackfill(token2, true);
+          return;
+        }
+        this.#supervise(
+          this.#interpreter.prependNativeHistory(piece).then((applied) => {
+            if (token2 !== this.#backfillToken) return;
+            if (applied) {
+              this.#backfillFailures = 0;
+              void this.#askForHistory(token2);
+            } else this.#retryBackfill(token2, true);
+          })
+        );
+      }
+      #retryBackfill(token2, failed) {
+        if (token2 !== this.#backfillToken || this.#disposed) return;
+        let delay5 = BACKFILL_ALTERNATE_WAIT_MS;
+        if (failed) {
+          this.#backfillFailures += 1;
+          if (this.#backfillFailures >= BACKFILL_MAX_FAILURES) return;
+          delay5 = Math.min(
+            BACKFILL_MAX_RETRY_MS,
+            BACKFILL_FIRST_RETRY_MS * 2 ** (this.#backfillFailures - 1)
+          );
+        }
+        this.#backfillTimer?.cancel();
+        this.#backfillTimer = this.#scheduler.timer(() => {
+          this.#backfillTimer = null;
+          void this.#askForHistory(token2);
+        }, delay5);
       }
       #observeLayout(event) {
         const observed = this.#readLayoutLease(event);
@@ -65801,6 +66333,7 @@ var init_terminal_replica_owner = __esm({
         this.#rows = nativeRowsForLease(lease);
         if (priorCols === this.#cols && priorRows === this.#rows) return;
         this.#reseedRetryCount = 0;
+        this.#cancelBackfill();
         if (!this.#bootstrapped || this.#reseed || this.#waitingForGeometryCapture) return;
         this.#waitingForGeometryCapture = true;
         this.#historyAnchors.invalidate();
@@ -65888,6 +66421,7 @@ var init_terminal_replica_owner = __esm({
         this.#noteLifecycle("reseed-retry", diagnostic4);
         this.#reseedRetryCount += 1;
         this.#waitingForGeometryCapture = true;
+        this.#cancelBackfill();
         this.#historyAnchors.invalidate();
         void this.#start.then(() => {
           if (!this.#disposed) this.#upstream?.reseed();
@@ -74876,7 +75410,8 @@ function projectTrustedMirrorInventory(trusted2, workspaceName, expectedSessionN
       ...pane.nameSource ? { nameSource: nullable2(pane.nameSource) } : {},
       type: nullable2(pane.type),
       missionStamp: nullable2(pane.missionStamp),
-      dir: boundedWireValue(pane.dir, 4096)
+      dir: boundedWireValue(pane.dir, 4096),
+      ...pane.floating === true ? { floating: true } : {}
     });
   });
   if (activeCount !== 1 || panes.some(
@@ -74904,6 +75439,7 @@ function analyzeInventoryPanes(panes) {
         interactionEndpoint: _interactionEndpoint,
         nativeIdentity: _nativeIdentity,
         nativePaneBirthId: _nativePaneBirthId,
+        floating: _floating,
         ...row
       }) => row
     )
@@ -74990,7 +75526,7 @@ function parsePaneSnapshot(stdout, expected) {
   const links = /* @__PURE__ */ new Map();
   for (const line of strictLines2(stdout, MAX_DISCOVERED_PANES)) {
     const fields = line.split(WIRE_SEPARATOR);
-    if (fields.length !== 21 || fields[20] !== PANE_WIRE_SENTINEL) {
+    if (fields.length !== 22 || fields[21] !== PANE_WIRE_SENTINEL) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
     }
     const [
@@ -75013,7 +75549,8 @@ function parsePaneSnapshot(stdout, expected) {
       dir,
       windowStampValue,
       windowIndexValue,
-      nativePaneBirthId
+      nativePaneBirthId,
+      floating
     ] = fields;
     if (sessionName !== expected.name || sessionId !== expected.id || !RUNTIME_WINDOW_ID.test(windowId) || !RUNTIME_PANE_ID2.test(runtimePaneId) || !["0", "1"].includes(windowActive) || !["0", "1"].includes(paneActive)) {
       throw new NativeTerminalAttachmentRuntimeError("invalid-tmux-output");
@@ -75041,7 +75578,8 @@ function parsePaneSnapshot(stdout, expected) {
       // foreground pipeline after its process-group leader exits. The
       // registered workspace remains the trusted application-shell root, so
       // keep discovery available and carry the empty presentation value.
-      dir: boundedWireValue(dir, 4096)
+      dir: boundedWireValue(dir, 4096),
+      ...floating === "1" ? { floating: true } : {}
     };
     const windowIndex = nonnegativeInteger(windowIndexValue);
     const link3 = links.get(windowIndex) ?? {
@@ -75160,6 +75698,7 @@ async function discoverWorkspaceRegistryTerminalInventory(registry, runner, sign
         interactionEndpoint: _interactionEndpoint,
         nativeIdentity: _nativeIdentity,
         nativePaneBirthId: _nativePaneBirthId,
+        floating: _floating,
         ...row
       }) => row
     )
@@ -75280,6 +75819,8 @@ var init_native_runtime = __esm({
       "#{@tmux_ide_window_id}",
       "#{window_index}",
       "#{pane_birth_id}",
+      // #882: a floating pane (tmux 3.7+) has no tiled cell; older tmux prints "".
+      "#{pane_floating_flag}",
       PANE_WIRE_SENTINEL
     ].join(WIRE_SEPARATOR);
     INVENTORY_FENCE_ATTEMPTS = 4;
@@ -75430,6 +75971,7 @@ var init_native_runtime = __esm({
                 interactionEndpoint: _interactionEndpoint,
                 nativeIdentity: _nativeIdentity,
                 nativePaneBirthId: _nativePaneBirthId,
+                floating: _floating,
                 ...row
               }) => row
             );
@@ -75992,6 +76534,7 @@ var init_native_runtime = __esm({
                 interactionEndpoint: _interactionEndpoint,
                 nativeIdentity: _nativeIdentity,
                 nativePaneBirthId: _nativePaneBirthId,
+                floating: _floating,
                 ...row
               }) => row
             );
@@ -76220,6 +76763,7 @@ var init_native_runtime = __esm({
               interactionEndpoint: _interactionEndpoint,
               nativeIdentity: _nativeIdentity,
               nativePaneBirthId: _nativePaneBirthId,
+              floating: _floating,
               ...row
             }) => row
           )
@@ -76853,6 +77397,7 @@ var init_lease_manager2 = __esm({
           runtimeSessionId: state.runtimeSessionId,
           panes: [...state.request.panes],
           semanticWindowId: state.request.semanticWindowId ?? null,
+          retryAskedByPerson: state.request.retryAskedByPerson === true,
           viewerMode: state.request.viewerMode,
           terminalDelivery: state.request.terminalDelivery ?? null,
           status: state.status,
@@ -77167,6 +77712,9 @@ function semanticBackendRefusal(error) {
   }
   return null;
 }
+function tiledPanes(described) {
+  return described.panes.filter((pane) => pane.floating !== true);
+}
 function startsWithBuffer(raw, prefix) {
   return raw.length >= prefix.length && raw.compare(prefix, 0, prefix.length, 0, prefix.length) === 0;
 }
@@ -77192,6 +77740,24 @@ function sendControl2(socket, frame) {
     throw new TypeError("Pane-stream control frame exceeded its bound.");
   }
   socket.send(encoded, { binary: false });
+}
+function heldOnly(settled) {
+  let retryInMs = 0;
+  let tooLarge = false;
+  for (const result2 of settled) {
+    if (result2.status === "fulfilled") {
+      if (!result2.value.delivery.negotiation.accepted) return null;
+      continue;
+    }
+    const reason = result2.reason;
+    if (!(reason instanceof MirrorPaneHeldError)) return null;
+    retryInMs = Math.max(retryInMs, reason.hold.retryInMs);
+    tooLarge ||= reason.hold.why === "too-large";
+  }
+  return { retryInMs, why: tooLarge ? "too-large" : "failed" };
+}
+function errorText(error) {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 300);
 }
 function errorFrameCode(error) {
   if (error instanceof PaneStreamLeaseError && error.code === "ticket-expired") {
@@ -77268,7 +77834,7 @@ function chunkBytes(data, maxChunk) {
   }
   return chunks;
 }
-var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PANE_STREAM_TOPOLOGY_SETTLE_MS, PANE_STREAM_OPEN_RETRY_DELAYS_MS, PANE_STREAM_OWNERSHIP_WAIT_MS, PANE_STREAM_OWNERSHIP_HELD_FRAMES, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
+var PANE_STREAM_MAX_REDEMPTION_BYTES, PANE_STREAM_MAX_CONTROL_BYTES, PANE_STREAM_DAEMON_SHUTDOWN_CLOSE, PANE_STREAM_OWNER_RETIRED_CLOSE, PANE_STREAM_DAEMON_RESTARTING_CLOSE, PANE_STREAM_MAX_REDEMPTION_MS, WS_OPEN3, CANONICAL_KEY_INPUT_FRAME_PREFIX, CANONICAL_TEXT_INPUT_FRAME_PREFIX, SEMANTIC_BACKEND_REFUSALS, TYPE_FIRST_INPUT_FRAME_PREFIX, TicketPattern3, BindingIdSchemaZ4, PaneStreamAdmissionError, PaneStreamAdmissionCoordinator, PreAuthAdmission2, PANE_STREAM_TOPOLOGY_SETTLE_MS, PANE_STREAM_OPEN_RETRY_DELAYS_MS, PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS, PANE_STREAM_OWNERSHIP_WAIT_MS, PANE_STREAM_OWNERSHIP_HELD_FRAMES, GRAPHICS_MAX_QUEUED_DIGESTS, GRAPHICS_SEND_WINDOW_BYTES, PaneStreamLiveConnection;
 var init_pane_stream_websocket = __esm({
   "packages/daemon/src/terminal/pane-stream/pane-stream-websocket.ts"() {
     "use strict";
@@ -77277,6 +77843,7 @@ var init_pane_stream_websocket = __esm({
     init_compress_chunk();
     init_src2();
     init_src2();
+    init_pane_hold();
     init_src2();
     init_log();
     init_src2();
@@ -77334,6 +77901,7 @@ var init_pane_stream_websocket = __esm({
       #flowBudgets;
       #drainTickMs;
       #openRetryDelaysMs;
+      #deferredPaneRetryDelaysMs;
       #ownershipWaitMs;
       #maxSocketBufferedBytes;
       #maxInputFrames;
@@ -77375,6 +77943,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger = new PaneStreamWireLedger(this.#flowBudgets);
         this.#drainTickMs = boundedInteger2(options.drainTickMs, 15, 1e3);
         this.#openRetryDelaysMs = options.openRetryDelaysMs ?? PANE_STREAM_OPEN_RETRY_DELAYS_MS;
+        this.#deferredPaneRetryDelaysMs = options.deferredPaneRetryDelaysMs ?? PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS;
         this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
         this.#maxSocketBufferedBytes = boundedInteger2(
           options.maxSocketBufferedBytes,
@@ -77447,13 +78016,19 @@ var init_pane_stream_websocket = __esm({
                 this.#observability.nowMicros(),
                 trace
               );
-          } catch {
+          } catch (error) {
+            logger.info("pane-stream", "stream refused", {
+              step: "issue",
+              cause: "describe-session-failed",
+              session: context.sessionName,
+              error: errorText(error)
+            });
             throw new PaneStreamAdmissionError(
               "stream-unavailable",
               "The workspace session could not be described."
             );
           }
-          const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+          const known = new Set(tiledPanes(described).map((pane) => pane.semanticPaneId));
           for (const pane of request3.panes) {
             if (!known.has(pane)) {
               throw new PaneStreamAdmissionError(
@@ -77464,7 +78039,7 @@ var init_pane_stream_websocket = __esm({
           }
           if (request3.semanticWindowId !== void 0) {
             const windowPanes = new Set(
-              described.panes.filter((pane) => pane.semanticWindowId === request3.semanticWindowId).map((pane) => pane.semanticPaneId)
+              tiledPanes(described).filter((pane) => pane.semanticWindowId === request3.semanticWindowId).map((pane) => pane.semanticPaneId)
             );
             if (windowPanes.size !== request3.panes.length || request3.panes.some((pane) => !windowPanes.has(pane)))
               throw new PaneStreamAdmissionError(
@@ -77711,6 +78286,7 @@ var init_pane_stream_websocket = __esm({
                 ledger: this.#ledger,
                 drainTickMs: this.#drainTickMs,
                 openRetryDelaysMs: this.#openRetryDelaysMs,
+                deferredPaneRetryDelaysMs: this.#deferredPaneRetryDelaysMs,
                 ownershipWaitMs: this.#ownershipWaitMs,
                 maxSocketBufferedBytes: this.#maxSocketBufferedBytes,
                 maxInputFrames: this.#maxInputFrames,
@@ -77866,6 +78442,11 @@ var init_pane_stream_websocket = __esm({
         void this.#onRedeem(this, frame, socket).catch((error) => {
           if (!this.#open) return;
           const code2 = errorFrameCode(error);
+          logger.info("pane-stream", "stream refused", {
+            step: "redeem",
+            code: code2,
+            error: errorText(error)
+          });
           try {
             sendControl2(socket, {
               type: "error",
@@ -77890,6 +78471,7 @@ var init_pane_stream_websocket = __esm({
     };
     PANE_STREAM_TOPOLOGY_SETTLE_MS = 500;
     PANE_STREAM_OPEN_RETRY_DELAYS_MS = [150, 400];
+    PANE_STREAM_DEFERRED_PANE_RETRY_DELAYS_MS = [1e3, 2e3, 4e3];
     PANE_STREAM_OWNERSHIP_WAIT_MS = 2e3;
     PANE_STREAM_OWNERSHIP_HELD_FRAMES = 256;
     GRAPHICS_MAX_QUEUED_DIGESTS = 256;
@@ -77917,6 +78499,9 @@ var init_pane_stream_websocket = __esm({
       #ledger;
       #drainTickMs;
       #openRetryDelaysMs;
+      /** Waits of `#deferPane`; a close ends them at once (#585). */
+      #deferralWaits = /* @__PURE__ */ new Set();
+      #deferredPaneRetryDelaysMs;
       #ownershipWaitMs;
       #maxSocketBufferedBytes;
       #maxInputFrames;
@@ -78029,6 +78614,7 @@ var init_pane_stream_websocket = __esm({
         this.#ledger = options.ledger;
         this.#drainTickMs = options.drainTickMs;
         this.#openRetryDelaysMs = options.openRetryDelaysMs;
+        this.#deferredPaneRetryDelaysMs = options.deferredPaneRetryDelaysMs;
         this.#ownershipWaitMs = options.ownershipWaitMs ?? PANE_STREAM_OWNERSHIP_WAIT_MS;
         this.#maxSocketBufferedBytes = options.maxSocketBufferedBytes;
         this.#maxInputFrames = options.maxInputFrames;
@@ -78096,13 +78682,24 @@ var init_pane_stream_websocket = __esm({
        * none of them. The log says which one, with the error text, so a stream
        * that "just closed" can be traced without a reproduction.
        */
-      #fail(cause, error) {
+      #fail(cause, error, pane) {
         if (this.#closed) return;
         this.#closeCause = {
           cause,
+          ...pane === void 0 ? {} : { pane },
           ...error === void 0 ? {} : { error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }
         };
         this.close(1011, "stream-unavailable");
+      }
+      /**
+       * #872: every pane that did not open is held back after failed recoveries.
+       * "Try again later", with the time left and why, so a client can say so
+       * instead of counting attempts. The client reconnects as for any close.
+       */
+      #closeHeld(hold, pane) {
+        if (this.#closed) return;
+        this.#closeCause = { cause: "pane-held", ...pane === void 0 ? {} : { pane } };
+        this.close(PANE_STREAM_PANE_HELD_CLOSE_CODE, paneHeldCloseReason(hold));
       }
       close(code2 = 1e3, reason = "stream-closed") {
         if (this.#closed) return;
@@ -78120,6 +78717,11 @@ var init_pane_stream_websocket = __esm({
           ...this.#inputLifetimeEndedDropped > 0 ? { droppedEndedLifetimeInputs: this.#inputLifetimeEndedDropped } : {}
         });
         this.#closed = true;
+        for (const { timer, wake } of this.#deferralWaits) {
+          clearTimeout(timer);
+          wake();
+        }
+        this.#deferralWaits.clear();
         this.#ownershipHeld.length = 0;
         this.#ownershipWake?.();
         for (const demand of this.#surfaceDemands.values()) demand.close();
@@ -78190,7 +78792,7 @@ var init_pane_stream_websocket = __esm({
           return;
         }
         if (this.#closed) return;
-        const known = new Set(described.panes.map((pane) => pane.semanticPaneId));
+        const known = new Set(tiledPanes(described).map((pane) => pane.semanticPaneId));
         if (this.#descriptor.terminalDelivery) {
           await this.#subscribeSemantic(known);
           return;
@@ -78338,17 +78940,36 @@ var init_pane_stream_websocket = __esm({
         channels.sort(
           (left, right) => Number(visibleAtOpen.has(right.semanticPaneId)) - Number(visibleAtOpen.has(left.semanticPaneId))
         );
+        if (this.#descriptor.retryAskedByPerson)
+          this.#mirror.liftRecoveryHolds?.(
+            this.#descriptor.sessionName,
+            channels.map((channel) => channel.semanticPaneId)
+          );
         const openings = channels.map((channel) => this.#openPaneDelivery(binding, offer, channel));
         const settled = await Promise.allSettled(openings);
         const opened = settled.flatMap(
           (result2) => result2.status === "fulfilled" ? [result2.value] : []
         );
-        if (this.#closed || settled.some(
+        const deferred = channels.flatMap((channel, index) => {
+          const result2 = settled[index];
+          return result2.status === "rejected" ? [{ channel, error: result2.reason }] : [];
+        });
+        const deferrable = deferred.length > 0 && deferred.length < channels.length && this.#deferredPaneRetryDelaysMs.length > 0 && opened.every(({ delivery }) => delivery.negotiation.accepted) && // A held pane is refused until its hold ends: deferred tries only
+        // repeat the refusal, so it closes at once with its hold (#872).
+        deferred.every(
+          ({ error }) => !(error instanceof SessionRuntimeControllerLeaseError) && !(error instanceof MirrorPaneHeldError)
+        );
+        if (this.#closed || !deferrable && settled.some(
           (result2) => result2.status === "rejected" || !result2.value.delivery.negotiation.accepted
         )) {
           await Promise.all(opened.map(({ delivery }) => delivery.close().catch(() => void 0)));
           if (!this.#closed) {
             const rejected = settled.find((result2) => result2.status === "rejected");
+            const hold = heldOnly(settled);
+            if (hold) {
+              this.#closeHeld(hold);
+              return;
+            }
             this.#fail(
               "delivery-negotiation-failed",
               rejected?.status === "rejected" ? rejected.reason : "a pane's delivery offer was refused"
@@ -78399,14 +79020,75 @@ var init_pane_stream_websocket = __esm({
           (left, right) => Number(visibleAtDelivery.has(right.channel.semanticPaneId)) - Number(visibleAtDelivery.has(left.channel.semanticPaneId))
         );
         await this.#publishOpenedDeliveries(opened);
+        if (deferrable)
+          for (const { channel, error } of deferred)
+            void this.#deferPane(binding, offer, channel, error);
         this.#closeIfAllPanesGone();
       }
+      /**
+       * A pane left out of the opening (#585): try its delivery again after each
+       * deferred delay and announce it like a pane added in place. Only when
+       * every try failed does the stream close, naming the pane.
+       */
+      async #deferPane(binding, offer, channel, firstError) {
+        const gone = () => this.#closed || channel.closed || this.#panes.get(channel.semanticPaneId) !== channel;
+        let error = firstError;
+        for (const [index, delayMs] of this.#deferredPaneRetryDelaysMs.entries()) {
+          if (gone()) return;
+          logger.info("pane-stream", "pane delivery deferred", {
+            session: this.#descriptor.sessionName,
+            clientId: this.#clientId,
+            pane: channel.semanticPaneId,
+            attempt: index + 1,
+            error: errorText(error)
+          });
+          await new Promise((resolve47) => {
+            const wait = {
+              timer: setTimeout(() => {
+                this.#deferralWaits.delete(wait);
+                resolve47();
+              }, delayMs),
+              wake: resolve47
+            };
+            wait.timer.unref?.();
+            this.#deferralWaits.add(wait);
+          });
+          if (gone()) return;
+          let entry;
+          try {
+            entry = await this.#openPaneDelivery(binding, offer, channel, false);
+          } catch (cause) {
+            if (cause instanceof SessionRuntimeControllerLeaseError) {
+              this.#fail("pane-delivery-open-failed", cause, channel.semanticPaneId);
+              return;
+            }
+            if (cause instanceof MirrorPaneHeldError) {
+              if (!gone()) this.#closeHeld(cause.hold, channel.semanticPaneId);
+              return;
+            }
+            error = cause;
+            continue;
+          }
+          if (gone()) {
+            await entry.delivery.close().catch(() => void 0);
+            return;
+          }
+          if (!entry.delivery.negotiation.accepted || this.#deliveryIdentityChanged(entry)) {
+            await entry.delivery.close().catch(() => void 0);
+            this.#failTopologyChanged();
+            return;
+          }
+          await this.#publishOpenedDeliveries([entry]);
+          return;
+        }
+        if (!gone()) this.#fail("pane-delivery-open-failed", error, channel.semanticPaneId);
+      }
       /** Open one pane's delivery; its messages wait until the pane is announced. */
-      async #openPaneDelivery(binding, offer, channel) {
+      async #openPaneDelivery(binding, offer, channel, retry = true) {
         const pending = [];
         let ready = false;
         let negotiated = false;
-        const delivery = await this.#retryOpenStep("pane-delivery-open", () => {
+        const open5 = () => {
           pending.length = 0;
           return binding.openTerminalDelivery(
             channel.semanticPaneId,
@@ -78418,7 +79100,12 @@ var init_pane_stream_websocket = __esm({
             },
             this.#descriptor.workspaceName
           );
-        });
+        };
+        const delivery = retry ? await this.#retryOpenStep(
+          "pane-delivery-open",
+          open5,
+          (error) => error instanceof MirrorPaneHeldError
+        ) : await open5();
         return {
           channel,
           delivery,
@@ -79127,7 +79814,7 @@ var init_pane_stream_websocket = __esm({
           return this.#topologyFailed("session inventory unavailable", error);
         }
         if (this.#closed) return this.#topologyFailed("closed");
-        const next = [...new Set(described.panes.map((pane) => pane.semanticPaneId))].sort();
+        const next = [...new Set(tiledPanes(described).map((pane) => pane.semanticPaneId))].sort();
         if (next.length === 0) return this.#topologyFailed("session has no panes");
         const frames = this.#validateInitialLayout(snapshot3.layouts, next);
         if (!frames) return "stale";
@@ -79143,7 +79830,7 @@ var init_pane_stream_websocket = __esm({
         if (window2 !== null) {
           windowPanes = [
             ...new Set(
-              described.panes.filter((pane) => pane.semanticWindowId === window2).map((pane) => pane.semanticPaneId)
+              tiledPanes(described).filter((pane) => pane.semanticWindowId === window2).map((pane) => pane.semanticPaneId)
             )
           ].sort();
           if (windowPanes.length === 0) return this.#topologyFailed("the stream's window is gone");
@@ -93232,8 +93919,16 @@ var init_tmux_server_attach = __esm({
 });
 
 // packages/daemon/src/command-center/resources/terminal-runtime-inventory.ts
+function floatingPaneIds(session) {
+  return new Set(
+    session.panes.flatMap(
+      (pane) => pane.floating === true && pane.semanticPaneId !== null ? [pane.semanticPaneId] : []
+    )
+  );
+}
 function projectTerminalRuntimeInventory(session, resourceRevision) {
   const shell = projectApplicationShellResource(session);
+  const floating = floatingPaneIds(session);
   return TerminalRuntimeInventoryProjectionV1SchemaZ.parse({
     workspaceName: session.workspaceName,
     workspaceId: shell.workspace.id,
@@ -93242,7 +93937,7 @@ function projectTerminalRuntimeInventory(session, resourceRevision) {
     semanticPaneIds: [
       ...new Set(
         shell.terminalInventory.resources.flatMap(
-          (resource3) => resource3.attachability.status === "available" ? [resource3.attachability.semanticPaneId] : []
+          (resource3) => resource3.attachability.status === "available" && !floating.has(resource3.attachability.semanticPaneId) ? [resource3.attachability.semanticPaneId] : []
         )
       )
     ].sort()
@@ -93261,10 +93956,11 @@ function projectTerminalRuntimeInventoryV2(session, resourceRevision) {
       complete: true
     };
     windows.set(pane.windowId, entry);
+    if (pane.active) entry.active = true;
+    if (pane.floating === true) return;
     const attachability = identities[index].attachability;
     if (attachability.status === "available") entry.panes.push(attachability.semanticPaneId);
     else entry.complete = false;
-    if (pane.active) entry.active = true;
   });
   return TerminalRuntimeInventoryProjectionV2SchemaZ.parse({
     ...projectTerminalRuntimeInventory(session, resourceRevision),
@@ -93781,7 +94477,10 @@ function mountTmuxServerRoutes(app, options) {
           () => void 0,
           {
             expectedRuntimeSessionId: identity4.runtimeSessionId,
-            expectedSemanticPaneIds: identity4.description.panes.map((pane) => pane.semanticPaneId),
+            // #882: a floating pane has no tiled cell; the layout fence leaves it out.
+            expectedSemanticPaneIds: identity4.description.panes.flatMap(
+              (pane) => pane.floating === true ? [] : [pane.semanticPaneId]
+            ),
             onAuthority(snapshot3) {
               if (snapshot3.windowLinks.liveSessionId !== c.req.query("liveSessionId")) {
                 sessionReplaced = true;
