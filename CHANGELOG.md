@@ -12,7 +12,7 @@ Daemon and CLI:
 - One pane that fails to open no longer closes the whole stream (#480). The stream opens without it and tries it again after 1, 2 and 4 s; only if every try fails does it close, with cause `pane-delivery-open-failed` and the pane id. The two refusals that dropped their cause are logged.
 - `tmux-ide app` no longer stays on "connecting" for a session with more than 24 panes (#480). It says: "Session too large to stream here: 26 panes, the limit is 24. Move some windows to another session, or open it in the Mac app." (with the session's counts).
 - A session that holds a floating pane (tmux 3.7 and later) or a modal pane (tmux 3.8) opens (#486). Before, it failed with "Session has no attachable terminal panes", and the bundled build's layout sync threw "window layout truth is malformed". Floating panes are listed and marked `floating`, not placed in the layout; a floating pane that closes leaves the listing (#487).
-- Closing a socket that is still connecting, or one whose peer then sends a bad frame, no longer throws an uncaught `error` in the host process (#479). This covers the fallback event connection, the daemon-mismatch close and the pane-stream client.
+- Closing a socket that is still connecting, or one whose peer then sends a bad frame, no longer throws an uncaught `error` in the host process (#469, #479). Under load this crashed the browser helper when Home's catalog connection closed; the same order is fixed in the fallback event connection, the daemon-mismatch close and the pane-stream client.
 - The terminal app's responsiveness test caps the event loop's blocked CPU time, not its wall-clock delay, so a busy CI runner no longer fails it (#484).
 
 Mac app 0.1.22 (with this daemon where noted):
