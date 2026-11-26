@@ -106,7 +106,11 @@ export function sameSessionPaneInventory(
   );
 }
 
-/** Decode the escapes emitted by tmux's `qa` format modifier. */
+/**
+ * Decode the escapes emitted by tmux's `qa` format modifier. Its encoder is
+ * `utf8_stravis` with VIS_CSTYLE, so it writes `\a \b \f \n \r \t \v`,
+ * `\ooo` octal, `\u…` and an escaped `\\ \" \'`.
+ */
 export function decodeTmuxArgument(value: string): string {
   const encoded =
     value.length >= 2 &&
@@ -122,10 +126,14 @@ export function decodeTmuxArgument(value: string): string {
       continue;
     }
     const escaped = encoded[++index]!;
-    if (escaped === "e") decoded += "\x1b";
+    if (escaped === "a") decoded += "\x07";
+    else if (escaped === "b") decoded += "\b";
+    else if (escaped === "e") decoded += "\x1b";
+    else if (escaped === "f") decoded += "\f";
     else if (escaped === "n") decoded += "\n";
     else if (escaped === "r") decoded += "\r";
     else if (escaped === "t") decoded += "\t";
+    else if (escaped === "v") decoded += "\v";
     else if (/[0-7]/u.test(escaped)) {
       let octal = escaped;
       while (octal.length < 3 && /[0-7]/u.test(encoded[index + 1] ?? "")) {
