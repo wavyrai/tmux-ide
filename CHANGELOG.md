@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2.9.28
+
+Daemon and CLI:
+
+- A pane opens on stock tmux 3.8 whatever its history holds (#473). The daemon's check for tmux-ide's own tmux build used `capture-pane -R -S -`, which tmux 3.8 answers with the whole grid as text (28 MB for about 2,000 lines at 120 columns); the open timed out, and every retry closed with 1011. The check is now `capture-pane -V -R -S 0 -E 0`. A pane whose recoveries keep failing is held from the second failure in a row, 2 s doubling to 30 s, instead of being asked again by every new stream.
+- With the bundled tmux, a pane larger than 1,000,000 cells opens (#481). Its first screen carries the newest history that fits 262,144 cells; older rows follow in pieces of the same size. The daemon keeps at most 10,000 history rows per pane, whatever tmux's `history-limit`; tmux keeps the rest.
+- A pane held after failed recoveries closes with its own reason, `1013 "pane-held:<ms>:<why>"`, and the time left, instead of `1011 "stream-unavailable"` (#482). Clearing the pane's history ends the hold. A retry the person asks for (`retryAskedByPerson`) lifts the hold for that try; Mac app 0.1.22 sends it from "Retry now".
+- One pane that fails to open no longer closes the whole stream (#480). The stream opens without it and tries it again after 1, 2 and 4 s; only if every try fails does it close, with cause `pane-delivery-open-failed` and the pane id. The two refusals that dropped their cause are logged.
+- `tmux-ide app` no longer stays on "connecting" for a session with more than 24 panes (#480). It says: "Session too large to stream here: 26 panes, the limit is 24. Move some windows to another session, or open it in the Mac app." (with the session's counts).
+- A session that holds a floating pane (tmux 3.7 and later) or a modal pane (tmux 3.8) opens (#486). Before, it failed with "Session has no attachable terminal panes", and the bundled build's layout sync threw "window layout truth is malformed". Floating panes are listed and marked `floating`, not placed in the layout; a floating pane that closes leaves the listing (#487).
+- Closing a socket that is still connecting, or one whose peer then sends a bad frame, no longer throws an uncaught `error` in the host process (#479). This covers the fallback event connection, the daemon-mismatch close and the pane-stream client.
+- The terminal app's responsiveness test caps the event loop's blocked CPU time, not its wall-clock delay, so a busy CI runner no longer fails it (#484).
+
+Mac app 0.1.22 (with this daemon where noted):
+
+- Keys typed while a session reconnects are held, up to 512 keys or 64 KiB for 5 s, and sent once, in order, to the same pane (#472). Anything in doubt drops all of them, and the pane says "N keys not sent. Type them again when the connection is back." A link that gives no answer for 5 s is replaced; waking the Mac or a network change checks every open link at once. From 2 s into a drop the pane shows "Reconnecting…" with "Retry now".
+- Keys that cannot be delivered are announced, never sent late (#477, #485). Keys typed as the window loses focus: "Keys typed as the window lost focus were not sent. Type them again." Keys queued when the session's connection is replaced (a pane added by another client, a closed or split pane, a new window): "Keys typed as the terminal reconnected were not sent. Type them again." The same covers the rest of a paste cut short. Each shows once the window is back on that session, until the next key.
+- A pane the daemon holds back says why and when it tries again (#482): "Can't open this session: a pane's scrollback is too long to send. Clear it with tmux clear-history, or wait. Trying again in 12 s." or "Can't open this session: tmux could not send a pane twice in a row. Trying again in 12 s.", counting down. The footer and window title say "Can't open this session" instead of "Reconnecting… attempt N". "Retry now" tries at once and reads "Trying…" while it runs (needs daemon 2.9.28).
+- Over SSH, a slow link no longer ends in "Couldn't reconnect. Refresh sessions to try again." (#476): an identity check that did not finish is retried. A window opened for one SSH destination reopens its session after the remote daemon restarts.
+- A saved SSH machine's Home reloads by itself after a failed load, as the local one does (#475). An SSH connection whose forward has exited is replaced instead of failing for ever. A machine that answers as a different machine stops with "A different machine answered at this address. Check the machine, then refresh sessions."
+- Switching to another app and back no longer reconnects Home or the sidebar, and the agent rows stay (#478). With saved SSH machines, the agent rows follow each machine's updates instead of re-reading every session every 5 s.
+- A focus change that meets a dead connection no longer stops the window's terminals (#474); the connection is replaced as after any drop. If the terminal loop ever ends while the window is open, it restarts on its own and reopens the session (#483), showing "Connection lost. Reconnecting…" meanwhile; after five quick restarts it shows "Connection lost. Reopen Tmux IDE to reconnect." with the reason.
+
 ## 2.9.27
 
 - An npm install of tmux-ide needs Node.js 24 or newer (`engines` is `>=24`); Node.js 20 reached end of life on 30 April 2026, and Node.js 22 is no longer tested. On an older Node.js the CLI exits at once with a message naming Node.js 24 and the running version, instead of failing later with an unrelated error. `tmux-ide doctor` checks for Node.js 24. The website installer is unaffected: it brings its own Node.js 24 runtime (#451).
