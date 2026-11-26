@@ -653,7 +653,7 @@ if [ "${1:-}" = --native-alpha ]; then
   trap 'rm -rf "$native_stage"' 0
   trap 'exit 1' INT TERM
   fetch https://github.com/wavyrai/tmux-ide/releases/download/native-alpha-2026112601/install-native-alpha-v18.sh "$native_stage/install.sh"
-  [ "$(digest "$native_stage/install.sh")" = @INSTALLER_V18_SHA256@ ] || fail 'Native installer checksum mismatch'
+  [ "$(digest "$native_stage/install.sh")" = f96890fba4a0906855f92934ac83d121e400b56ec794772f68533796c957936b ] || fail 'Native installer checksum mismatch'
   sh "$native_stage/install.sh" "$@"
 else
   main "$@"
