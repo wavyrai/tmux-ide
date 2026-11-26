@@ -9,6 +9,15 @@ use bezel_ui::widgets::{ButtonStyle, Buttons as _};
 /// "Earlier" collects what came before versions were listed.
 pub(in crate::tmux_snapshot) const RELEASES: &[(&str, &[&str])] = &[
     (
+        "0.1.22",
+        &[
+            "Sessions come back by themselves after a dropped link, sleep, a slow SSH link or a remote restart.",
+            "Keys typed during a drop are sent once it's back, or the pane says they weren't sent.",
+            "Panes with a long scrollback open, and a pane that can't open says why, with Retry now.",
+            "Sessions with floating panes open, and switching apps no longer reconnects Home.",
+        ],
+    ),
+    (
         "0.1.21",
         &[
             "A setup guide for the window's look and the keys you'll use: Commands, Welcome to Tmux IDE…",
